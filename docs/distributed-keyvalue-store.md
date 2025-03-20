@@ -1,64 +1,39 @@
----
-sidebar_position: 4
----
 
-# Distributed Key/Value Store
+# Overview
 
 A **distributed key/value store** is a type of **database system** designed to store, retrieve, and manage data across multiple nodes in a cluster or distributed environment. It follows a simple **key-value data model**, where **keys** are unique identifiers, and **values** are the associated data objects.
 
 ## Key Characteristics
 
-1. **Scalability** – The system distributes data across multiple machines, allowing it to scale horizontally as demand increases.  
-2. **Fault Tolerance** – By replicating data across multiple nodes, it ensures resilience against failures.  
-3. **High Availability** – Data is accessible even if some nodes go offline, minimizing downtime.  
-4. **Strong Consistency** – Ensures reliable data integrity using the **Raft consensus protocol**.  
-5. **Low Latency** – Optimized for fast read/write operations, making it ideal for caching, real-time applications and distributed computing.  
-6. **Distributed Transactions** – Supports multi-node transactions with **Multi-Version Concurrency Control (MVCC)**, **Pessimistic/Optimistic Locking**, and **Two-Phase Commit (2PC)** for consistency across distributed operations.  
+1. **Scalability** – The system distributes data across multiple machines, allowing it to scale horizontally as demand increases.
+2. **Fault Tolerance** – By replicating data across multiple nodes, it ensures resilience against failures.
+3. **High Availability** – Data is accessible even if some nodes go offline, minimizing downtime.
+4. **Strong Consistency** – Ensures reliable data integrity using the **Raft consensus protocol**.
+5. **Low Latency** – Optimized for fast read/write operations, making it ideal for caching, real-time applications and distributed computing.
+6. **Distributed Transactions** – Supports multi-node transactions with **Multi-Version Concurrency Control (MVCC)**, **Pessimistic/Optimistic Locking**, and **Two-Phase Commit (2PC)** for consistency across distributed operations.
 
 ## Use Cases
 
-- **Configuration Management** – Storing dynamic settings for applications (e.g., feature flags).  
-- **Metadata Storage** – Keeping track of distributed system metadata (e.g., leader election in Raft).  
-- **Session Management** – Storing user sessions across distributed servers.  
-- **Caching** – Speeding up data access by storing frequently used data.  
-- **Distributed Coordination** – Managing distributed locks and leader election.  
-- **Transactional Workloads** – Ensuring atomicity and consistency across distributed transactions.  
+- **Configuration Management** – Storing dynamic settings for applications (e.g., feature flags).
+- **Metadata Storage** – Keeping track of distributed system metadata (e.g., leader election in Raft).
+- **Session Management** – Storing user sessions across distributed servers.
+- **Caching** – Speeding up data access by storing frequently used data.
+- **Distributed Coordination** – Managing distributed locks and leader election.
+- **Transactional Workloads** – Ensuring atomicity and consistency across distributed transactions.
 
 ## Kahuna Distributed Store
 
 In the context of **Kahuna**, its **distributed key/value store** capability allows applications to store and retrieve data efficiently, ensuring **strong consistency, high availability, and low latency**. Additionally, **Kahuna supports distributed transactions**, enabling applications to execute **atomic, consistent, isolated, and durable (ACID) operations** across multiple nodes. This is achieved using:
 
-- **Multi-Version Concurrency Control (MVCC)** – Allowing non-blocking reads and improved concurrency.  
-- **Pessimistic and Optimistic Locking** – Supporting different locking mechanisms to prevent conflicts in concurrent transactions.  
-- **Two-Phase Commit (2PC)** – Ensuring atomicity in distributed transactions across multiple nodes.  
+- **Multi-Version Concurrency Control (MVCC)** – Allowing non-blocking reads and improved concurrency.
+- **Pessimistic and Optimistic Locking** – Supporting different locking mechanisms to prevent conflicts in concurrent transactions.
+- **Two-Phase Commit (2PC)** – Ensuring atomicity in distributed transactions across multiple nodes.
 
-These features make Kahuna a robust solution for transactional workloads requiring **data integrity, consistency, and high availability** in distributed environments.
+These features make Kahuna a great solution for small transactional workloads requiring **data integrity, consistency, and high availability**.
 
 ## Revisions
 
 In Kahuna, a revision is a monotonic, ever-increasing number that represents the global order of modifications in the key-value store. Every time a change (write, delete, or transaction) occurs in Kahuna, the revision number increases, ensuring strong consistency and strict ordering of operations. Each revision is a 64-bit cluster-wide counter.
-
-## Compare-And-Swap (CAS)
-
-A Compare-And-Swap (CAS) operation is critical in a distributed key-value store like Kahuna because it ensures atomic updates and prevents race conditions in environments where multiple clients may try to modify the same key simultaneously. CAS is an atomic operation that:
-
- - Compares a key’s current value (or version) against an expected value.
- - Only updates the key if the current value matches the expected value.
- - Fails safely if another process modified the key in the meantime.
-
-| **Use Case** | **How CAS Helps** |
-|-------------|------------------|
-| **Leader Election** | Ensures only one node becomes leader. |
-| **Distributed Locks** | Prevents multiple nodes from acquiring the same lock. |
-| **Configuration Updates** | Prevents conflicting writes to shared config values. |
-| **Rate Limiting** | Ensures atomic updates to request counters. |
-| **Concurrent Transactions** | Avoids lost updates when multiple clients modify the same key. |
-
-- **Ensures atomic updates** in distributed stores.  
-- **Prevents race conditions** when multiple clients write to the same key.  
-- **Guarantees strong consistency** by checking versioning before updating.  
-- **Used in leader election, distributed locks, and state coordination.**  
-- **Prevents lost updates** and ensures correct data modifications.
 
 ## API
 

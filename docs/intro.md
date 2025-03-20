@@ -20,20 +20,20 @@ After installing the necessary components, run the following command:
 
 Within the Kahuna CLI, you can execute commands, transactions, and scripts. Use the following format to set and retrieve key/value pairs:
 
-```bash
+```sql
 ~> kahuna-cli
 Kahuna Shell 0.0.1 (alpha)
 
-kahuna-cli> set myconfig "my-value"                 
+kahuna-cli> set myconfig "my-value"
 r0 set 9ms
 
-kahuna-cli> get myconfig                          
+kahuna-cli> get myconfig
 r0 my-value 7ms
 
-kahuna-cli> set myconfig "my-value-2"                 
+kahuna-cli> set myconfig "my-value-2"
 r1 set 7ms
 
-kahuna-cli> get myconfig                          
+kahuna-cli> get myconfig
 r1 my-value-2 6ms
 ```
 
@@ -43,15 +43,15 @@ The `set` command stores key/value pairs durably in the cluster. Internally, the
 
 By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period. You can set an expiration when creating a key or modify it later using the `extend` command:
 
-```bash
+```sql
 kahuna-cli> set myconfig "my-value" ex 30000
-r2 set 181ms
+r2 set 18ms
 
-kahuna-cli> set myconfig "my-value"                 
-r3 set 40ms
+kahuna-cli> set myconfig "my-value"
+r3 set 20ms
 
-kahuna-cli> extend myconfig 30000              
-r3 extended 36ms
+kahuna-cli> extend myconfig 30000
+r3 extended 16ms
 ```
 
 Expiration times are specified in milliseconds.
@@ -64,11 +64,11 @@ In high-performance scenarios or when working with ephemeral data, on-disk durab
 
 Commands using ephemeral durability are prefixed with an "e". For example:
 
-```bash
-kahuna-cli> eset tempconfig "my-value"              
-r0 set 97ms
+```sql
+kahuna-cli> eset tempconfig "my-value"
+r0 set 47ms
 
-kahuna-cli> eget tempconfig                         
+kahuna-cli> eget tempconfig
 r0 my-value 32ms
 ```
 
@@ -78,27 +78,55 @@ Keep in mind that ephemeral data will be lost if the node crashes or if memory p
 
 Each time a key is updated, you will notice an incrementing revision number (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong consistency and strict ordering.
 
-```bash
-kahuna-cli> set myconf "some config"             
-r0 set 108ms
+```sql
+kahuna-cli> set myconf "some config"
+r0 set 20ms
 
-kahuna-cli> set myconf "some other config"       
-r1 set 30ms
+kahuna-cli> set myconf "some other config"
+r1 set 10ms
 
-kahuna-cli> set myconf "another config"          
-r2 set 50ms
+kahuna-cli> set myconf "another config"
+r2 set 15ms
 
 kahuna-cli> get myconf
-r2 another config 65ms
+r2 another config 13ms
 ```
 
 ## Compare And Swap (CAS)
 
 The Compare-And-Swap (CAS) operation ensures atomic updates and prevents race conditions in environments where multiple clients may attempt to modify the same key simultaneously.
 
+```sql
+kahuna-cli> set myconf "prev config"
+r0 set 14ms
 
-## Scripts
+kahuna-cli> set myconf "new config" cmp "prev config"
+r1 set 18ms
 
+kahuna-cli> set myconf "some config" cmp "prev config"
+r1 not set 13ms
+```
 
+## Scripts and Transactions
 
----
+Kahuna offers a scripting system that allows executing distributed transactions on the key/value store. Scripts can be run from an application using the appropriate connector for a programming language/platform or directly from `kahuna-cli`. Transactions allow executing multiple operations (such as modifying or consistently reading keys across multiple nodes) and are applied in an **all-or-nothing** manner.
+
+In the following example, a user's balance is transferred to another user. The keys may or may not be led by the same node, but the transaction coordinator ensures that changes are applied across all participating nodes. If an error occurs, the transaction will abort and no changes will be applied:
+
+```sql
+kahuna-cli> begin
+       ...>   balance_user1_value = get balance_user1
+       ...>   balance_user2_value = get balance_user2
+       ...>
+       ...>   if balance_user1_value > 0 then
+       ...>      set balance_user1 balance_user1_value - 50
+       ...>      set balance_user2 balance_user1_value + 50
+       ...>      commit
+       ...>   end
+       ...> end
+
+r0 set 14ms
+```
+
+This ensures **atomicity and consistency** across distributed nodes.
+
