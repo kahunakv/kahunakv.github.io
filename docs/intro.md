@@ -2,56 +2,103 @@
 sidebar_position: 1
 ---
 
-# Getting Started
+# Tutorial: Key/Value Store
 
-Kahuna is an open-source solution designed to provide robust coordination for modern 
-distributed systems by integrating three critical functionalities: 
-**distributed locking, a distributed key/value store, and a distributed sequencer**. 
+Kahuna provides the building blocks to construct distributed systems. The **key/value store** can be used to store **configuration, service discoverability, metadata, caching, sessions, and more**. In this tutorial, you will learn how it works.
 
-> _Kahuna_ is a Hawaiian word that refers to an expert in any field. Historically, it has been used to refer to doctors, surgeons and dentists, as well as priests, ministers, and sorcerers.
+## Starting Kahuna
 
-By ensuring synchronized access to shared resources, efficient data storage and retrieval, 
-and globally ordered event sequencing, Kahuna offers a unified approach 
-to managing distributed workloads. Built on a partitioned architecture coordinated via **Raft Groups**, 
-it delivers **scalability, reliability, and simplicity**, making it an ideal choice for 
-applications requiring strong consistency and high availability.
+Before you proceed, make sure that Kahuna is running on your system. Refer to the [Server Installation](server-installation) section for instructions. You will also need the [Kahuna CLI](kahuna-cli) to execute commands on the server.
 
-By seamlessly integrating these three functionalities, Kahuna provides a comprehensive 
-foundation for building reliable and scalable distributed applications.
+After installing the necessary components, run the following command:
+
+```bash
+~> kahuna-cli --version
+```
+
+## Setting and Retrieving Keys
+
+Within the Kahuna CLI, you can execute commands, transactions, and scripts. Use the following format to set and retrieve key/value pairs:
+
+```bash
+~> kahuna-cli
+Kahuna Shell 0.0.1 (alpha)
+
+kahuna-cli> set myconfig "my-value"                 
+r0 set 9ms
+
+kahuna-cli> get myconfig                          
+r0 my-value 7ms
+
+kahuna-cli> set myconfig "my-value-2"                 
+r1 set 7ms
+
+kahuna-cli> get myconfig                          
+r1 my-value-2 6ms
+```
+
+The `set` command stores key/value pairs durably in the cluster. Internally, the system uses consistent hashing to redirect the request to the leader node of the corresponding Raft group, which coordinates the operation, achieves consensus, and ensures durable storage and replication. The `get` command retrieves the most recent value consistently from the appropriate leader node.
+
+## Expiration
+
+By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period. You can set an expiration when creating a key or modify it later using the `extend` command:
+
+```bash
+kahuna-cli> set myconfig "my-value" ex 30000
+r2 set 181ms
+
+kahuna-cli> set myconfig "my-value"                 
+r3 set 40ms
+
+kahuna-cli> extend myconfig 30000              
+r3 extended 36ms
+```
+
+Expiration times are specified in milliseconds.
+
+## Durability
+
+By default, Kahuna ensures strong consistency for durability, meaning that all values are replicated, and the client is notified of a successful operation only after receiving confirmation from the majority of nodes in the cluster.
+
+In high-performance scenarios or when working with ephemeral data, on-disk durability may not be necessary or practical. For these cases, Kahuna offers an "ephemeral" durability mode, in which data is stored only in the leader node's volatile memory.
+
+Commands using ephemeral durability are prefixed with an "e". For example:
+
+```bash
+kahuna-cli> eset tempconfig "my-value"              
+r0 set 97ms
+
+kahuna-cli> eget tempconfig                         
+r0 my-value 32ms
+```
+
+Keep in mind that ephemeral data will be lost if the node crashes or if memory pressure forces the system to free up space by removing the least-used keys. You can also specify an explicit expiration time for ephemeral keys. Ephemeral storage provides faster operations without the overhead of replication and persistence.
+
+## Revisions
+
+Each time a key is updated, you will notice an incrementing revision number (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong consistency and strict ordering.
+
+```bash
+kahuna-cli> set myconf "some config"             
+r0 set 108ms
+
+kahuna-cli> set myconf "some other config"       
+r1 set 30ms
+
+kahuna-cli> set myconf "another config"          
+r2 set 50ms
+
+kahuna-cli> get myconf
+r2 another config 65ms
+```
+
+## Compare And Swap (CAS)
+
+The Compare-And-Swap (CAS) operation ensures atomic updates and prevents race conditions in environments where multiple clients may attempt to modify the same key simultaneously.
 
 
-### **Distributed Locking**
-Kahuna addresses the challenge of synchronizing access to shared resources across multiple 
-nodes or processes, ensuring consistency and preventing race conditions. Its partitioned locking 
-mechanism ensures efficient coordination for databases, files, and other shared services.
+## Scripts
 
-[See More](distributed-locks)
 
-### **Distributed Key/Value Store**
-Beyond locking, Kahuna operates as a distributed key/value store, enabling fault-tolerant, 
-high-performance storage and retrieval of structured data. This makes it a powerful tool 
-for managing metadata, caching, and application state in distributed environments.
-
-[See More](distributed-keyvalue-store)
-
-### **Distributed Sequencer**
-Kahuna also functions as a distributed sequencer, ensuring a globally ordered execution 
-of events or transactions. This capability is essential for use cases such as distributed 
-databases, message queues, and event-driven systems that require precise ordering of 
-operations.
-
-[See More](distributed-sequencer)
 
 ---
-
-## Consistency Levels
-
-Kahuna provides different consistency levels to meet the requirements of various applications:
-
-## License
-
-Kahuna is licensed under the MIT License. See the [LICENSE](https://github.com/kahunakv/kahuna/blob/main/LICENSE) file for details.
-
----
-
-

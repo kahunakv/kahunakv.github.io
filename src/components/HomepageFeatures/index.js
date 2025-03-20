@@ -8,8 +8,7 @@ const FeatureList = [
     Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
     description: (
       <>
-        Kahuna was designed from the ground up to be easily installed and
-        used to get your website up and running quickly.
+        Kahuna provides distributed locking, a distributed key/value store and a distributed sequencer: all in one easy to use package. 
       </>
     ),
   },
@@ -18,19 +17,16 @@ const FeatureList = [
     Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
     description: (
       <>
-        Kahuna lets you focus on your docs, and we&apos;ll do the chores. Go
-        ahead and move your docs into the <code>docs</code> directory.
+        Kahuna is designed to be simple to use, and easy to integrate into your existing application.
       </>
     ),
   },
   {
-    title: 'Powered by React',
+    title: 'Modern Codebase',
     Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
     description: (
       <>
-        Extend or customize your website layout by reusing React. Kahuna can
-        be extended while reusing the same header and footer.
-      </>
+        Kahuna is written in modern .NET C#, and runs efficiently on almost any platform. It works equally well on Windows and Linux, and is designed to not incur garbage collection overheads.      </>
     ),
   },
 ];

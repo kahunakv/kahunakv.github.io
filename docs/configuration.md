@@ -2,7 +2,7 @@
 sidebar_position: 7
 ---
 
-# Configuration
+# Server Configuration
 
 | Command Line Option(s)                              | Description                                                                                     | Default Value   |
 |-----------------------------------------------------|-------------------------------------------------------------------------------------------------|-----------------|

@@ -1,32 +1,44 @@
 ---
-sidebar_position: 3
+sidebar_position: 4
 ---
 
 # Distributed Key/Value Store
 
 A **distributed key/value store** is a type of **database system** designed to store, retrieve, and manage data across multiple nodes in a cluster or distributed environment. It follows a simple **key-value data model**, where **keys** are unique identifiers, and **values** are the associated data objects.
 
-### **Key Characteristics**  
+## Key Characteristics
+
 1. **Scalability** – The system distributes data across multiple machines, allowing it to scale horizontally as demand increases.  
 2. **Fault Tolerance** – By replicating data across multiple nodes, it ensures resilience against failures.  
 3. **High Availability** – Data is accessible even if some nodes go offline, minimizing downtime.  
-4. **Strong Consistency** – Using the consensus protocol called **Raft**
-5. **Low Latency** – Optimized for fast read/write operations, making it ideal for caching, real-time applications, and distributed computing.  
+4. **Strong Consistency** – Ensures reliable data integrity using the **Raft consensus protocol**.  
+5. **Low Latency** – Optimized for fast read/write operations, making it ideal for caching, real-time applications and distributed computing.  
+6. **Distributed Transactions** – Supports multi-node transactions with **Multi-Version Concurrency Control (MVCC)**, **Pessimistic/Optimistic Locking**, and **Two-Phase Commit (2PC)** for consistency across distributed operations.  
 
-### **Use Cases**  
+## Use Cases
+
 - **Configuration Management** – Storing dynamic settings for applications (e.g., feature flags).  
 - **Metadata Storage** – Keeping track of distributed system metadata (e.g., leader election in Raft).  
 - **Session Management** – Storing user sessions across distributed servers.  
 - **Caching** – Speeding up data access by storing frequently used data.  
 - **Distributed Coordination** – Managing distributed locks and leader election.  
+- **Transactional Workloads** – Ensuring atomicity and consistency across distributed transactions.  
 
-In the context of **Kahuna**, its **distributed key/value store** capability allows applications to store and retrieve structured data efficiently, ensuring **strong consistency and high availability** while supporting distributed locking and sequencing.
+## Kahuna Distributed Store
 
-### Revisions
+In the context of **Kahuna**, its **distributed key/value store** capability allows applications to store and retrieve data efficiently, ensuring **strong consistency, high availability, and low latency**. Additionally, **Kahuna supports distributed transactions**, enabling applications to execute **atomic, consistent, isolated, and durable (ACID) operations** across multiple nodes. This is achieved using:
+
+- **Multi-Version Concurrency Control (MVCC)** – Allowing non-blocking reads and improved concurrency.  
+- **Pessimistic and Optimistic Locking** – Supporting different locking mechanisms to prevent conflicts in concurrent transactions.  
+- **Two-Phase Commit (2PC)** – Ensuring atomicity in distributed transactions across multiple nodes.  
+
+These features make Kahuna a robust solution for transactional workloads requiring **data integrity, consistency, and high availability** in distributed environments.
+
+## Revisions
 
 In Kahuna, a revision is a monotonic, ever-increasing number that represents the global order of modifications in the key-value store. Every time a change (write, delete, or transaction) occurs in Kahuna, the revision number increases, ensuring strong consistency and strict ordering of operations. Each revision is a 64-bit cluster-wide counter.
 
-### Compare-And-Swap (CAS)
+## Compare-And-Swap (CAS)
 
 A Compare-And-Swap (CAS) operation is critical in a distributed key-value store like Kahuna because it ensures atomic updates and prevents race conditions in environments where multiple clients may try to modify the same key simultaneously. CAS is an atomic operation that:
 
@@ -36,7 +48,7 @@ A Compare-And-Swap (CAS) operation is critical in a distributed key-value store 
 
 | **Use Case** | **How CAS Helps** |
 |-------------|------------------|
-| **Leader Election** | Ensures only **one node** becomes leader. |
+| **Leader Election** | Ensures only one node becomes leader. |
 | **Distributed Locks** | Prevents multiple nodes from acquiring the same lock. |
 | **Configuration Updates** | Prevents conflicting writes to shared config values. |
 | **Rate Limiting** | Ensures atomic updates to request counters. |
@@ -48,11 +60,11 @@ A Compare-And-Swap (CAS) operation is critical in a distributed key-value store 
 - **Used in leader election, distributed locks, and state coordination.**  
 - **Prevents lost updates** and ensures correct data modifications.
 
-### API
+## API
 
 Kahuna provides an API for performing various operations on key/value pairs.
 
-#### Set
+### Set
 
 Sets or overwrites key/value pairs. The behavior of the API is modified based on the provided flags, which determine whether the operation occurs depending on the key's existence, current value, or current revision.
 
@@ -72,7 +84,7 @@ Sets or overwrites key/value pairs. The behavior of the API is modified based on
 - **Set:** `true` if the key's value was modified.
 - **Revision:** A global counter indicating how many times the key has been modified.
 
-#### Compare-Value-And-Set (CVAS)
+### Compare-Value-And-Set (CVAS)
 
 Sets or overwrites key/value pairs, but only if the current value matches a specified comparison value.
 
@@ -90,7 +102,7 @@ Sets or overwrites key/value pairs, but only if the current value matches a spec
 - **Set:** `true` if the key's value was modified.
 - **Revision:** A global counter indicating how many times the key has been modified.
 
-#### Compare-Revision-And-Set (CRAS)
+### Compare-Revision-And-Set (CRAS)
 
 Sets or overwrites key/value pairs, but only if the current revision matches a specified comparison revision.
 
@@ -108,7 +120,7 @@ Sets or overwrites key/value pairs, but only if the current revision matches a s
 - **Set:** `true` if the key's value was modified.
 - **Revision:** A global counter indicating how many times the key has been modified.
 
-#### Get
+### Get
 
 Retrieves the value of a key along with its revision. If the key does not exist, the special value `nil` is returned.
 
@@ -132,8 +144,22 @@ Deletes a key and its associated value.
 ```
 
 - **key:** A unique identifier for the key/value pair.
-- **expiresMs:** The expiration time of the key in milliseconds.
 
 **Returns:**
 - **Deleted:** `true` if the key/value pair was deleted.
 - **Revision:** The global counter indicating how many times the key was modified at the time of deletion. Deleting a key does **not** increment the revision counter.
+
+### Extend
+
+Extends a key timeout. The key will be deleted after the key expires.
+
+```csharp
+(bool Extended, long Revision) TryExtend(string key, int expiresMs);
+```
+
+- **key:** A unique identifier for the key/value pair.
+- **expiresMs:** The expiration time of the key in milliseconds.
+
+**Returns:**
+- **Extended:** `true` if the key/value pair was deleted.
+- **Revision:** The global counter indicating how many times the key was modified at the time of deletion. Extending the key does **not** increment the revision counter.
