@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkkahunakv_docs=self.webpackChunkkahunakv_docs||[]).push([[121],{8070:a=>{a.exports=JSON.parse('{"tags":[{"label":"kahuna","permalink":"/blog/tags/kahuna","count":1}]}')}}]);
