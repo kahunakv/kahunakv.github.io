@@ -50,7 +50,7 @@ Kahuna provides different consistency levels to meet the requirements of various
 
 ## License
 
-Kahuna is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+Kahuna is licensed under the MIT License. See the [LICENSE](https://github.com/kahunakv/kahuna/blob/main/LICENSE) file for details.
 
 ---
 
