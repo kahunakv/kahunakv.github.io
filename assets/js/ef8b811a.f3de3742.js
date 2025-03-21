@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkkahunakv_docs=self.webpackChunkkahunakv_docs||[]).push([[947],{6600:e=>{e.exports=JSON.parse('{"authors":[{"name":"Andres Gutierrez","title":"Maintainer of Kahuna","url":"https://github.com/andresgutierrez","imageURL":"https://github.com/andresgutierrez.png","key":"andresgutierrez","page":null,"count":1}]}')}}]);
