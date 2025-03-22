@@ -13,8 +13,7 @@ To run a local cluster of Kahuna servers using Docker Compose:
 ```bash
 git clone https://github.com/kahunakv/kahuna
 cd kahuna
-export COMPOSE_FILE=docker/dev.yml
-docker compose up --build
+docker compose -f docker/local.yml up --build
 ```
 
 The 3 node cluster will accept connections on the following urls: `https://localhost:8082`, `https://localhost:8084` and `https://localhost:8086`

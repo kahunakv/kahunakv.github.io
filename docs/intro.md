@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Tutorial: Key/Value Store
 
-Kahuna provides the building blocks to construct distributed systems. The **key/value store** can be used to store **configuration, service discoverability, metadata, caching, sessions, and more**. In this tutorial, you will learn how it works.
+Kahuna provides building blocks to help construct distributed systems. The **key/value store** can be used to store **configuration, service discoverability, metadata, caching, sessions, and more**. In this tutorial, you will learn how it works.
 
 ## Starting Kahuna
 
@@ -58,7 +58,7 @@ Expiration times are specified in milliseconds.
 
 ## Durability
 
-By default, Kahuna ensures strong consistency for durability, meaning that all values are replicated, and the client is notified of a successful operation only after receiving confirmation from the majority of nodes in the cluster.
+By default, Kahuna ensures strong durability by replicating the key/value pairs across many instances. The client is notified of a successful operation only after receiving confirmation from the majority of nodes in the cluster.
 
 In high-performance scenarios or when working with ephemeral data, on-disk durability may not be necessary or practical. For these cases, Kahuna offers an "ephemeral" durability mode, in which data is stored only in the leader node's volatile memory.
 
@@ -114,18 +114,24 @@ Kahuna offers a scripting system that allows executing distributed transactions 
 In the following example, a user's balance is transferred to another user. The keys may or may not be led by the same node, but the transaction coordinator ensures that changes are applied across all participating nodes. If an error occurs, the transaction will abort and no changes will be applied:
 
 ```sql
-kahuna-cli> begin
-       ...>   balance_user1_value = get balance_user1
-       ...>   balance_user2_value = get balance_user2
+kahuna-cli> set balance_user1 1000 nx 
+       ...> set balance_user2 1000 nx 
        ...>
-       ...>   if balance_user1_value > 0 then
-       ...>      set balance_user1 balance_user1_value - 50
-       ...>      set balance_user2 balance_user1_value + 50
-       ...>      commit
-       ...>   end
+       ...> begin    
+       ...>  let balance_user1_value = get balance_user1
+       ...>  let balance_user2_value = get balance_user2
+       ...>  
+       ...>  let balance_user1_num = to_int(balance_user1_value)
+       ...>  let balance_user2_num = to_int(balance_user2_value)
+       ...>      
+       ...>  if balance_user1_num > 0 then
+       ...>     set balance_user1 balance_user1_num - 50
+       ...>     set balance_user2 balance_user2_num + 50
+       ...>     commit
+       ...>  end
        ...> end
 
-r0 set 14ms
+r0 set 34ms
 ```
 
 This ensures **atomicity and consistency** across distributed nodes.

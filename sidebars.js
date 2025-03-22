@@ -18,24 +18,28 @@ const sidebars = {
 
   // But you can create a sidebar manually
   tutorialSidebar: [
-    'intro',
-    'getting-started',
-    'distributed-locks',
+    {
+      type: 'category',
+      label: 'Tutorials',
+      items: ['intro', 'tutorials/distributed-locking'],
+    },    
+    'getting-started',    
+    {
+      type: 'category',
+      label: 'Distributed Locks',
+      items: ['distributed-locks', 'distributed-locks/leases', 'distributed-locks/fencing-tokens'],
+    },
     {
       type: 'category',
       label: 'Distributed Key/Value Store',
-      items: ['distributed-keyvalue-store', 'distributed-keyvalue-store/cas', 'distributed-keyvalue-store/transactions'],
+      items: ['distributed-keyvalue-store', 'distributed-keyvalue-store/cas', 'distributed-keyvalue-store/revisions', 'distributed-keyvalue-store/transactions'],
     },
+    'distributed-sequencer',
     {
       type: 'category',
       label: 'Scripts',
       items: ['scripts', 'scripts/set'],
-    },
-    {
-      type: 'category',
-      label: 'Tutorials',
-      items: ['tutorials/distributed-locking'],
-    },
+    },    
     {
       type: 'category',
       label: 'Server',
@@ -45,6 +49,16 @@ const sidebars = {
       type: 'category',
       label: 'Client',
       items: ['kahuna-cli', 'dotnet-client'],
+    },
+    {
+      type: 'category',
+      label: 'Architecture',
+      items: ['architecture/overview', 'architecture/distributed-transactions', 'architecture/raft'],
+    },
+    {
+      type: 'category',
+      label: 'Recipes',
+      items: ['recipes/rate-limiting', 'recipes/service-discoverability'],
     },
   ],
 };

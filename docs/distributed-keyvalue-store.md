@@ -5,7 +5,7 @@ A **distributed key/value store** is a type of **database system** designed to s
 
 ## Key Characteristics
 
-1. **Scalability** – The system distributes data across multiple machines, allowing it to scale horizontally as demand increases.
+1. **Scalability** – The system distributes data across multiple machines, allowing it to scale horizontally as demand increases. If the nodes are multi-processor, Kahuna can process multiple requests in parallel.
 2. **Fault Tolerance** – By replicating data across multiple nodes, it ensures resilience against failures.
 3. **High Availability** – Data is accessible even if some nodes go offline, minimizing downtime.
 4. **Strong Consistency** – Ensures reliable data integrity using the **Raft consensus protocol**.
@@ -110,7 +110,7 @@ Retrieves the value of a key along with its revision. If the key does not exist,
 - **Value:** The value associated with the key.
 - **Revision:** A global counter indicating how many times the key has been modified.
 
-#### Delete
+### Delete
 
 Deletes a key and its associated value.
 
