@@ -17,7 +17,7 @@ const FeatureList = [
     Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
     description: (
       <>
-        Kahuna is designed to be simple to use, and easy to integrate into your existing application.
+        Kahuna has a fully decentralized architecture that is designed to be fault tolerant and highly available.        
       </>
     ),
   },
@@ -26,7 +26,7 @@ const FeatureList = [
     Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
     description: (
       <>
-        Kahuna is written in modern .NET C#, and runs efficiently on almost any platform. It works equally well on Windows and Linux, and is designed to not incur garbage collection overheads.      </>
+        Kahuna is written in modern .NET C# and runs efficiently on almost any platform. It works equally well on Windows, Mac and Linux, and is designed to incur in lower garbage collection overheads.      </>
     ),
   },
 ];
