@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkkahunakv_docs=self.webpackChunkkahunakv_docs||[]).push([[7472],{5513:e=>{e.exports=JSON.parse('{"title":"Recent posts","items":[{"title":"Why I Built Kahuna - A New Take on Distributed Key/Value Storage","permalink":"/blog/welcome","unlisted":false,"date":"2025-03-25T00:00:00.000Z"}]}')}}]);
