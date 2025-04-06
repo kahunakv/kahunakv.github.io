@@ -1,8 +1,10 @@
----
-sidebar_position: 5
----
+import Kahuna6 from './assets/kahuna6.png';
 
 # Distributed Sequencer
+
+<div style={{textAlign: 'center'}}>
+<img src={Kahuna6} height="350" />
+</div>
 
 Kahuna's distributed sequencer enables clients to generate unique, sequential numbers. Clients can request sequences from either a single range or a pool of allowed ranges, ensuring flexibility in how numbers are allocated.
 

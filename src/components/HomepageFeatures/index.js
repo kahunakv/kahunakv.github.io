@@ -5,7 +5,7 @@ import styles from './styles.module.css';
 const FeatureList = [
   {
     title: 'Easy to Use',
-    Svg: require('@site/static/img/undraw_docusaurus_mountain.svg').default,
+    Png: require('@site/static/img/image1.png').default,
     description: (
       <>
         Kahuna provides distributed locking, a distributed key/value store and a distributed sequencer: all in one easy to use package. 
@@ -14,7 +14,7 @@ const FeatureList = [
   },
   {
     title: 'Focus on What Matters',
-    Svg: require('@site/static/img/undraw_docusaurus_tree.svg').default,
+    Png: require('@site/static/img/image2.png').default,
     description: (
       <>
         Kahuna has a fully decentralized architecture that is designed to be fault tolerant and highly available.        
@@ -23,7 +23,7 @@ const FeatureList = [
   },
   {
     title: 'Modern Codebase',
-    Svg: require('@site/static/img/undraw_docusaurus_react.svg').default,
+    Png: require('@site/static/img/image3.png').default,
     description: (
       <>
         Kahuna is written in modern .NET C# and runs efficiently on almost any platform. It works equally well on Windows, Mac and Linux, and is designed to incur in lower garbage collection overheads.      </>
@@ -31,11 +31,11 @@ const FeatureList = [
   },
 ];
 
-function Feature({Svg, title, description}) {
+function Feature({Png, title, description}) {
   return (
     <div className={clsx('col col--4')}>
       <div className="text--center">
-        <Svg className={styles.featureSvg} role="img" />
+        <img className={styles.featureSvg} role="img" src={Png}/>
       </div>
       <div className="text--center padding-horiz--md">
         <Heading as="h3">{title}</Heading>

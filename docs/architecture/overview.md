@@ -1,5 +1,7 @@
 # Architecture Overview
 
+![Architecture](../assets/architecture.png)
+
 ## Distributed Storage Engine
 
 Kahuna's architecture operates as a highly scalable, fault-tolerant distributed system that combines lock management, key-value storage, and sequencing capabilities. At its foundation lies a distributed key-value storage model where data is organized into discrete partitions similar to sharding mechanisms in other distributed systems. These partitions function as independent units that can be distributed and managed across the entire node cluster.

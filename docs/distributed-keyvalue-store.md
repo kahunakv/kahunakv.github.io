@@ -1,5 +1,10 @@
+import Kahuna4 from './assets/kahuna4.png';
 
-# Overview
+# Distributed Key/Value Store
+
+<div style={{textAlign: 'center'}}>
+<img src={Kahuna4} height="350" />
+</div>
 
 A **distributed key/value store** is a type of **database system** designed to store, retrieve, and manage data across multiple nodes in a cluster or distributed environment. It follows a simple **key-value data model**, where **keys** are unique identifiers, and **values** are arbitrary byte stream associated data objects.
 

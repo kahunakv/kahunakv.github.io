@@ -1,8 +1,10 @@
----
-sidebar_position: 2
----
+import Kahuna3 from './assets/kahuna3.png';
 
 # Getting Started
+
+<div style={{textAlign: 'center'}}>
+<img src={Kahuna3} height="350" />
+</div>
 
 Kahuna is an open-source solution designed to provide robust coordination for modern 
 distributed systems by integrating three critical functionalities: 
