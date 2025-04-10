@@ -1,6 +1,3 @@
----
-sidebar_position: 9
----
 
 # Client for .NET
 
@@ -11,20 +8,20 @@ Kahuna also provides a client tailored for .NET developers. This client simplifi
 Kahuna Client for .NET is available as a NuGet package. You can install it via the .NET CLI:
 
 ```bash
-dotnet add package Kahuna.Client --version 0.0.4
+dotnet add package Kahuna.Client
 ```
 
 Or via the NuGet Package Manager:
 
 ```powershell
-Install-Package Kahuna.Client -Version 0.0.4
+Install-Package Kahuna.Client
 ```
 
 ## Usage & Examples
 
 ### Single attempt to acquire a lock
 
-Below is a basic example to demonstrate how to use Kahuna in a C# project:
+Below is a basic example to demonstrate how to use Kahuna Distributed Locks in a C# project:
 
 ```csharp
 using Kahuna.Client;
@@ -60,25 +57,29 @@ public async Task UpdateBalance(KahunaClient client, string userId)
 
 ### Multiple attempts to acquire a lock
 
-The following example shows how to make multiple attempts to
-acquire a lock (lease) for 10 seconds, retrying every 100 ms:
+The following example shows how to make multiple attempts to acquire a lock (lease) for 10 seconds, retrying every 150 ms.
+
+Why Frequent Retries? Given that inventory updates are very short operations (typically milliseconds to a few seconds),
+each update releases the lock quickly. Still, with a massive volume of concurrent purchase attempts, the lock is rapidly cycled through many clients.
+As a result, individual servers might find that the lock is released often, but due to high contention,
+they need to retry multiple times until one of them succeeds.
 
 ```csharp
 using Kahuna.Client;
 
 public async Task UpdateBalance(KahunaClient client, string userId)
 {
-    // try to lock on a resource using a keyName composed of a prefix and the user's id,
-    // if acquired then automatically release the lock after 5 seconds (if not extended),
-    // if not acquired retry to acquire the lock every 100 milliseconds for 10 seconds,
+    // try to lock on a resource using a keyName composed of a prefix (balance) and the user's id,
+    // if acquired then automatically release the lock after 5 seconds or when leaving the method (if not extended),
+    // if not acquired retry to acquire the lock every 150 milliseconds for 10 seconds,
     // it will give up after 10 seconds if the lock is not available,
-    // if the lock is acquired it will prevent the same user from changing the same data concurrently
+    // if the lock is acquired it will prevent the same user from changing the balance concurrently
 
     await using KahunaLock myLock = await client.GetOrCreateLock(
         "balance-" + userId,
         expiry: TimeSpan.FromSeconds(5),
         wait: TimeSpan.FromSeconds(10),
-        retry: TimeSpan.FromMilliseconds(100)
+        retry: TimeSpan.FromMilliseconds(150)
     );
 
     if (myLock.IsAcquired)
@@ -147,10 +148,8 @@ public async Task IncreaseBalance(KahunaClient client, string userId, long amoun
 
 ### Periodically extend a lock
 
-At times, it is useful to periodically extend the lock's expiration
-time while a client holds it, for example, in a leader election scenario.
-As long as the leader node is alive and healthy, it can extend the
-lock duration to signal that it can continue acting as the leader:
+At times, it is useful to periodically extend the lock's expiration time while a client holds it, for example, in a leader election scenario.
+As long as the leader node is alive and healthy, it can extend the lock duration to signal that it can continue acting as the leader:
 
 ```csharp
 using Kahuna.Client;
@@ -167,7 +166,7 @@ public async Task TryChooseLeader(KahunaClient client, string groupId)
         Console.WriteLine("Lock not acquired!");
         return;
     }
-    
+
     long acquireFencingToken = myLock.FencingToken;
 
     while (true)
@@ -178,7 +177,7 @@ public async Task TryChooseLeader(KahunaClient client, string groupId)
             Console.WriteLine("Lock extension failed!");
             break;
         }
-        
+
         if (fencingToken != acquireFencingToken)
         {
             Console.WriteLine("Lock fencing token changed! Someone else took the lock");
@@ -193,8 +192,7 @@ public async Task TryChooseLeader(KahunaClient client, string groupId)
 
 ### Retrieve information about a lock
 
-You can also retrieve information about a lock, such as the current lock's owner
-and remaining time for the lock to expire:
+You can also retrieve information about a lock, such as the current lock's owner and remaining time for the lock to expire:
 
 ```csharp
 using Kahuna.Client;

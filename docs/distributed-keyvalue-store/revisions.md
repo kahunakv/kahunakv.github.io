@@ -7,24 +7,24 @@ In Kahuna, a `revision` is a monotonic version number that tracks when a key was
 
 Keys are always created at revision `r0`:
 
-```sql
-kahuna-cli>  set `example` 'value1'                
+```visual-basic
+kahuna-cli>  set `example` 'value1'
 r0 set 17ms
 ```
 
 Modify the key and revision will change to `r1` and then to `r2`:
 
-```sql
-kahuna-cli>  set `example` 'value2'     
+```visual-basic
+kahuna-cli>  set `example` 'value2'
 r1 set 12ms
 
-kahuna-cli>  set `example` 'value3'     
+kahuna-cli>  set `example` 'value3'
 r2 set 9ms
 ```
 
 When querying a key, you can see its current revision. The revision does not change during read operations:
 
-```sql
+```visual-basic
 kahuna-cli>  get `example`
 r2 value3 10ms
 
@@ -36,7 +36,7 @@ r2 value3 9ms
 
 Kahuna works like a time machine, allowing you to query the value of a key at any particular point-in-time:
 
-```sql
+```visual-basic
 kahuna-cli>  get `example` at 0
 r0 value1 11ms
 

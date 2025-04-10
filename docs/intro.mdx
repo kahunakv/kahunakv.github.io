@@ -6,11 +6,13 @@ import Kahuna1 from './assets/kahuna1.png';
 <img src={Kahuna1} height="350" />
 </div>
 
-Kahuna provides building blocks to help construct distributed systems. The **key/value store** can be used to store **configuration, service discoverability, metadata, caching, sessions, and more**. In this tutorial, you will learn how it works.
+Kahuna provides building blocks to help construct distributed systems. The **key/value store** can be used to store **configuration, service discoverability,
+metadata, caching, sessions, and more**. In this tutorial, you will learn how it works.
 
 ## Starting Kahuna
 
-Before you proceed, make sure that Kahuna is running on your system. Refer to the [Server Installation](server-installation) section for instructions. You will also need the [Kahuna CLI](kahuna-cli) to execute commands on the server.
+Before you proceed, make sure that Kahuna is running on your system. Refer to the **[Server Installation](server-installation)** section for instructions.
+You will also need the **[Kahuna CLI](kahuna-cli)** to execute commands on the server.
 
 After installing the necessary components, run the following command:
 
@@ -22,7 +24,7 @@ After installing the necessary components, run the following command:
 
 Within the Kahuna CLI, you can execute commands, transactions, and scripts. Use the following format to set and retrieve key/value pairs:
 
-```sql
+```visual-basic
 ~> kahuna-cli
 Kahuna Shell 0.0.1 (alpha)
 
@@ -39,13 +41,16 @@ kahuna-cli> get myconfig
 r1 my-value-2 6ms
 ```
 
-The `set` command stores key/value pairs durably in the cluster. Internally, the system uses consistent hashing to redirect the request to the leader node of the corresponding Raft group, which coordinates the operation, achieves consensus, and ensures durable storage and replication. The `get` command retrieves the most recent value consistently from the appropriate leader node.
+The `set` command stores key/value pairs durably in the cluster. Internally, the system uses consistent hashing to redirect the request to the leader
+node of the corresponding Raft group, which coordinates the operation, achieves consensus, and ensures durable storage and replication. The `get`
+command retrieves the most recent value consistently from the appropriate leader node.
 
 ## Expiration
 
-By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period. You can set an expiration when creating a key or modify it later using the `extend` command:
+By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period. You
+can set an expiration when creating a key or modify it later using the `extend` command:
 
-```sql
+```visual-basic
 kahuna-cli> set myconfig "my-value" ex 30000
 r2 set 18ms
 
@@ -60,13 +65,15 @@ Expiration times are specified in milliseconds.
 
 ## Durability
 
-By default, Kahuna ensures strong durability by replicating the key/value pairs across many instances. The client is notified of a successful operation only after receiving confirmation from the majority of nodes in the cluster.
+By default, Kahuna ensures strong durability by replicating the key/value pairs across many instances. The client is notified of a successful operation
+only after receiving confirmation from the majority of nodes in the cluster.
 
-In high-performance scenarios or when working with ephemeral data, on-disk durability may not be necessary or practical. For these cases, Kahuna offers an "ephemeral" durability mode, in which data is stored only in the leader node's volatile memory.
+In high-performance scenarios or when working with ephemeral data, on-disk durability may not be necessary or practical. For these cases, Kahuna offers
+an "ephemeral" durability mode, in which data is stored only in the leader node's volatile memory.
 
 Commands using ephemeral durability are prefixed with an "e". For example:
 
-```sql
+```visual-basic
 kahuna-cli> eset tempconfig "my-value"
 r0 set 47ms
 
@@ -74,13 +81,17 @@ kahuna-cli> eget tempconfig
 r0 my-value 32ms
 ```
 
-Keep in mind that ephemeral data will be lost if the node crashes or if memory pressure forces the system to free up space by removing the least-used keys. You can also specify an explicit expiration time for ephemeral keys. Ephemeral storage provides faster operations without the overhead of replication and persistence.
+Keep in mind that ephemeral data will be lost if the node crashes or if memory pressure forces the system to free up space by removing the least-used keys.
+You can also specify an explicit expiration time for ephemeral keys. Ephemeral storage provides faster operations without the overhead of replication
+and persistence.
 
 ## Revisions
 
-Each time a key is updated, you will notice an incrementing revision number (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong consistency and strict ordering.
+Each time a key is updated, you will notice an incrementing revision number (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic
+version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong
+consistency and strict ordering.
 
-```sql
+```visual-basic
 kahuna-cli> set myconf "some config"
 r0 set 20ms
 
@@ -98,7 +109,7 @@ r2 another config 13ms
 
 The Compare-And-Swap (CAS) operation ensures atomic updates and prevents race conditions in environments where multiple clients may attempt to modify the same key simultaneously.
 
-```sql
+```visual-basic
 kahuna-cli> set myconf "prev config"
 r0 set 14ms
 
@@ -111,21 +122,50 @@ r1 not set 13ms
 
 ## Scripts and Transactions
 
-Kahuna offers a scripting system that allows executing distributed transactions on the key/value store. Scripts can be run from an application using the appropriate connector for a programming language/platform or directly from `kahuna-cli`. Transactions allow executing multiple operations (such as modifying or consistently reading keys across multiple nodes) and are applied in an **all-or-nothing** manner.
+Kahuna offers a scripting system that allows executing distributed transactions on the key/value store. Scripts can be run from an application using
+the appropriate connector for a programming language/platform or directly from `kahuna-cli`. Transactions allow executing multiple operations
+(such as modifying or consistently reading keys across multiple nodes) and are applied in an **all-or-nothing** manner.
 
-In the following example, a user's balance is transferred to another user. The keys may or may not be led by the same node, but the transaction coordinator ensures that changes are applied across all participating nodes. If an error occurs, the transaction will abort and no changes will be applied:
+For example, if we wanted to decrement the value of one key based on the limit configured in another key, we could do the following:
 
-```sql
-kahuna-cli> set balance_user1 1000 nx 
-       ...> set balance_user2 1000 nx 
+```visual-basic
+kahuna-cli>  set max_rate_limit 100
+r0 set 13ms
+
+kahuna-cli> let limit = get max_rate_limit
+       ...> let current_rate = get rate_limit_user1
        ...>
-       ...> begin    
+       ...> if current_rate <= 0 then
+       ...>  throw "Rate limit exceeded. Please try again later."
+       ...> end
+       ...>
+       ...> let new_current_rate = current_rate - 1
+       ...> set current_rate new_current_rate ex 60000
+       ...>
+       ...> return new_current_rate
+r1 99 18ms
+
+kahuna-cli> get rate_limit_user1
+r1 99 4ms
+```
+
+In this other example, we’re going to make a transfer between two keys. The keys may or may not be led by the same node, but the transaction
+coordinator ensures that changes are applied across all participating nodes. If an error occurs, the transaction will abort and no changes will be applied:
+
+```visual-basic
+kahuna-cli>  set balance_user1 1000 nx
+r0 set 14ms
+
+kahuna-cli>  set balance_user2 1000 nx
+r0 set 12ms
+
+kahuna-cli> begin
        ...>  let balance_user1_value = get balance_user1
        ...>  let balance_user2_value = get balance_user2
-       ...>  
+       ...>
        ...>  let balance_user1_num = to_int(balance_user1_value)
        ...>  let balance_user2_num = to_int(balance_user2_value)
-       ...>      
+       ...>
        ...>  if balance_user1_num > 0 then
        ...>     set balance_user1 balance_user1_num - 50
        ...>     set balance_user2 balance_user2_num + 50
@@ -133,7 +173,7 @@ kahuna-cli> set balance_user1 1000 nx
        ...>  end
        ...> end
 
-r0 set 34ms
+r1 set 24ms
 ```
 
 This ensures **atomicity and consistency** across distributed nodes.

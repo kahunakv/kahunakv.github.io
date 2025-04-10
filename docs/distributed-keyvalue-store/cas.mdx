@@ -39,14 +39,14 @@ Use Case: Multiple workers process tasks from a queue but each task should only 
 
 Sets the initial value as usual if it hasn't been assigned previously:
 
-```sql
+```visual-basic
 kahuna-cli>  set `locks/tasks/123` "node1" ex 10000 nx
 r0 set 15ms
 ```
 
 Mark the task as completed if this node still hold the key:
 
-```sql
+```visual-basic
 kahuna-cli>  set `locks/tasks/123` "completed" cmp "node1"
 r1 set 11ms
 ```
@@ -64,9 +64,9 @@ public async Task HandleTask(KahunaClient client, string taskId)
 
     // Sets the initial value as usual if it hasn't been assigned previously
     (bool success, long revision) = await client.SetKeyValue(
-        keyName, 
-        machineName, 
-        10000, 
+        keyName,
+        machineName,
+        10000,
         KeyValueFlags.SetIfNotExists
     );
 
@@ -75,7 +75,7 @@ public async Task HandleTask(KahunaClient client, string taskId)
         Console.WriteLine("Other node acquired the task");
         return;
     }
-    
+
     // Process the task here
     // ...
 
@@ -102,21 +102,21 @@ Use Case: Update a feature flag, but only if it hasn’t changed since you last 
 
 Obtains the current value of the feature flag:
 
-```sql
-get `feature/new-landing`                 
+```visual-basic
+get `feature/new-landing`
 r0 disabled 12ms
 ```
 
 Change the flag if the revision is still 0:
 
-```sql
+```visual-basic
 kahuna-cli>  set `feature/new-landing` 'enabled' cmprev 0
 r1 set 19ms
 ```
 
 The flag won't change if the revision is not 0:
 
-```sql
+```visual-basic
 kahuna-cli>  set `feature/new-landing` 'disabled' cmprev 0
 r1 not set 14ms
 ```
@@ -129,11 +129,11 @@ using Kahuna.Client;
 
 public async Task CheckFeatureFlag(KahunaClient client, string featureName)
 {
-    string featureKey = "feature/" + featureName;    
+    string featureKey = "feature/" + featureName;
 
     // Obtains the current value of the feature flag
     (byte[]? _, long revision) = await client.GetKeyValue(featureKey);
-            
+
     // ...
 
     // Check if the flag was changed

@@ -21,9 +21,9 @@ const sidebars = {
     {
       type: 'category',
       label: 'Tutorials',
-      items: ['intro', 'tutorials/distributed-locking'],
-    },    
-    'getting-started',    
+      items: ['intro', 'tutorials/distributed-locking', 'tutorials/distributed-sequencer'],
+    },
+    'getting-started',
     {
       type: 'category',
       label: 'Distributed Locks',
@@ -39,7 +39,7 @@ const sidebars = {
       type: 'category',
       label: 'Scripts',
       items: ['scripts', 'scripts/set'],
-    },    
+    },
     {
       type: 'category',
       label: 'Server',
