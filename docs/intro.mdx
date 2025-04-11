@@ -47,15 +47,19 @@ command retrieves the most recent value consistently from the appropriate leader
 
 ## Expiration
 
-By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period. You
-can set an expiration when creating a key or modify it later using the `extend` command:
+By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period. 
+The time-to-live of the key can set an expiration when creating a key with the `EX` parameter:
 
 ```visual-basic
 kahuna-cli> set myconfig "my-value" ex 30000
 r2 set 18ms
+```
 
+or modify it later using the `extend` command:
+
+```visual-basic
 kahuna-cli> set myconfig "my-value"
-r3 set 20ms
+r3 set 12ms
 
 kahuna-cli> extend myconfig 30000
 r3 extended 16ms
@@ -81,15 +85,11 @@ kahuna-cli> eget tempconfig
 r0 my-value 32ms
 ```
 
-Keep in mind that ephemeral data will be lost if the node crashes or if memory pressure forces the system to free up space by removing the least-used keys.
-You can also specify an explicit expiration time for ephemeral keys. Ephemeral storage provides faster operations without the overhead of replication
-and persistence.
+Keep in mind that ephemeral data will be lost if the node crashes or if memory pressure forces the system to free up space by removing the least-used keys. You can also specify an explicit expiration time for ephemeral keys. Ephemeral storage provides faster operations without the overhead of replication and persistence.
 
 ## Revisions
 
-Each time a key is updated, you will notice an incrementing revision number (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic
-version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong
-consistency and strict ordering.
+Each time a key is updated, you will notice an incrementing **[revision number](distributed-keyvalue-store/revisions)** (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong consistency and strict ordering.
 
 ```visual-basic
 kahuna-cli> set myconf "some config"
@@ -107,7 +107,7 @@ r2 another config 13ms
 
 ## Compare And Swap (CAS)
 
-The Compare-And-Swap (CAS) operation ensures atomic updates and prevents race conditions in environments where multiple clients may attempt to modify the same key simultaneously.
+The **[Compare-And-Swap (CAS)](distributed-keyvalue-store/cas)** operation ensures atomic updates and prevents race conditions in environments where multiple clients may attempt to modify the same key simultaneously.
 
 ```visual-basic
 kahuna-cli> set myconf "prev config"
@@ -119,6 +119,8 @@ r1 set 18ms
 kahuna-cli> set myconf "some config" cmp "prev config"
 r1 not set 13ms
 ```
+
+In the previous example, the CAS (Compare-And-Swap) operation is used to ensure that the value is only changed if its current value matches the one specified in the `"cmp"` parameter.
 
 ## Scripts and Transactions
 
@@ -176,5 +178,5 @@ kahuna-cli> begin
 r1 set 24ms
 ```
 
-This ensures **atomicity and consistency** across distributed nodes.
+This ensures **atomicity and consistency** across distributed nodes. In the next section, we’ll learn how to use **Distributed Locks** with Kahuna.
 
