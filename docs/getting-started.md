@@ -45,10 +45,6 @@ operations.
 
 ---
 
-## Consistency Levels
-
-Kahuna provides different consistency levels to meet the requirements of various applications:
-
 ## License
 
 Kahuna is licensed under the MIT License. See the [LICENSE](https://github.com/kahunakv/kahuna/blob/main/LICENSE) file for details.

@@ -1,6 +1,3 @@
----
-sidebar_position: 3
----
 
 # Distributed Locks
 
@@ -19,7 +16,7 @@ By partitioning locks among nodes controlled by Raft Groups, Kahuna offers:
 
 - **Leader Election**: Elect a single leader in a cluster of services. Only one node should act as the leader at any time (e.g., for scheduling, replication). A distributed lock ensures only one process "wins" and holds the leadership.
 - **Preventing Double Execution of Scheduled Jobs**: Ensure a cron job or background worker is executed only once across multiple nodes. In a horizontally scaled system, multiple nodes might try to run the same job. A distributed lock prevents multiple executions of the same scheduled task.
-- **Safe Deployment / CI/CD Coordination**: Prevent multiple CI/CD pipelines from deploying the same environment simultaneously. Two deployment jobs could conflict and cause downtime. Use a lock to serialize deployments.
+- **Safe Deployment CI/CD Coordination**: Prevent multiple CI/CD pipelines from deploying the same environment simultaneously. Two deployment jobs could conflict and cause downtime. Use a lock to serialize deployments.
 - **Database Migration Coordination**: Ensure that only one service performs schema migration at startup. If multiple services run migrate up concurrently, it may corrupt the schema. Use a lock to ensure only the first instance runs migrations.
 - **Session Control / Login Exclusivity**: Allow only one active session per user. Used in banking apps, gaming, admin consoles, etc.
 - **Distributed Queue Consumer Coordination**: Ensure that a message from a queue is only processed once, even with multiple consumers.
