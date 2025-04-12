@@ -58,7 +58,7 @@ Sets or overwrites key/value pairs. The behavior of the API is modified based on
 - **flags:**
   - If `Flags.SetIfExists` is specified, the value is set only if the key already exists.
   - If `Flags.SetIfNotExists` is specified, the value is set only if the key does not exist.
-- **consistency:** Defines whether the key is **Ephemeral** or **Strongly Consistent**.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Set:** `true` if the key's value was modified.
@@ -78,7 +78,7 @@ Sets or overwrites key/value pairs, but only if the current value matches a spec
 - **value:** The data object associated with the key.
 - **compareValue:** If specified with `Flags.SetIfEqualToValue`, the value is changed only if the current value matches the provided one.
 - **expiresMs:** The expiration time of the key in milliseconds.
-- **consistency:** Defines whether the key is **Ephemeral** or **Strongly Consistent**.
+- **durability:** Defines whether the key is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Set:** `true` if the key's value was modified.
@@ -98,7 +98,7 @@ Sets or overwrites key/value pairs, but only if the current revision matches a s
 - **value:** The data object associated with the key.
 - **compareRevision:** If specified with `Flags.SetIfEqualToRevision`, the value is changed only if the current revision matches the provided one.
 - **expiresMs:** The expiration time of the key in milliseconds.
-- **consistency:** Defines whether the key is **Ephemeral** or **Strongly Consistent**.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Set:** `true` if the key's value was modified.
