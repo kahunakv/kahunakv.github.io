@@ -35,6 +35,7 @@ Example Flow:
 ## Additional Recommendations:
 
 Since long GC pauses or occasional poor network conditions can lead to situations where two processes believe they hold the same lock, it’s important to follow these best practices:
-	•	In clients built with garbage-collected languages and platforms, prioritize using concurrent or low-pause GC algorithms to avoid prolonged stop-the-world events that could delay lease renewals or lock releases.
-	•	Use fencing tokens whenever possible to prevent conflicts and duplicate processing in cases where two clients mistakenly assume ownership of the same lock.
-	•	Configure automatic lease expiration with a safety buffer that accounts for potential GC pauses, poor network conditions, retry delays, and temporary unavailability of external services.
+
+ - In clients built with garbage-collected languages and platforms, prioritize using concurrent or low-pause GC algorithms to avoid prolonged stop-the-world events that could delay lease renewals or lock releases.
+ - Use fencing tokens whenever possible to prevent conflicts and duplicate processing in cases where two clients mistakenly assume ownership of the same lock.
+ - Configure automatic lease expiration with a safety buffer that accounts for potential GC pauses, poor network conditions, retry delays, and temporary unavailability of external services.
