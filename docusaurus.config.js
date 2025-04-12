@@ -69,7 +69,7 @@ const config = {
       navbar: {
         title: 'Kahuna',
         logo: {
-          alt: 'My Site Logo',
+          alt: 'Kahuna Logo',
           src: 'img/logo.svg',
         },
         items: [
@@ -79,12 +79,21 @@ const config = {
             position: 'left',
             label: 'Tutorial',
           },
-          {to: '/blog', label: 'Blog', position: 'left'},
           {
-            href: 'https://github.com/kahunakv/kahunakv.github.io',
+            to: '/docs/getting-started', 
+            label: 'Documentation', 
+            position: 'left'
+          },
+          {
+            to: '/blog', 
+            label: 'Blog', 
+            position: 'left'
+          },
+          {
+            href: 'https://github.com/kahunakv/kahuna',
             label: 'GitHub',
             position: 'right',
-          },
+          }
         ],
       },
       footer: {
@@ -94,8 +103,16 @@ const config = {
             title: 'Docs',
             items: [
               {
-                label: 'Tutorial',
+                label: 'Tutorials',
                 to: '/docs/intro',
+              },
+              {
+                label: 'Architecture',
+                to: '/docs/architecture/overview',
+              },
+              {
+                label: 'Recipes',
+                to: '/docs/recipes/rate-limiting',
               },
             ],
           },
@@ -103,17 +120,9 @@ const config = {
             title: 'Community',
             items: [
               {
-                label: 'Stack Overflow',
-                href: 'https://stackoverflow.com/questions/tagged/docusaurus',
-              },
-              {
-                label: 'Discord',
-                href: 'https://discordapp.com/invite/docusaurus',
-              },
-              {
-                label: 'Twitter',
-                href: 'https://twitter.com/docusaurus',
-              },
+                label: 'Github Discussions',
+                href: 'https://github.com/kahunakv/kahuna/discussions',
+              }
             ],
           },
           {
@@ -125,7 +134,7 @@ const config = {
               },
               {
                 label: 'GitHub',
-                href: 'https://github.com/kahunakv/kahunakv.github.io',
+                href: 'https://github.com/kahunakv/kahuna',
               },
             ],
           },

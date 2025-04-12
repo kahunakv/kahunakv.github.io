@@ -38,7 +38,10 @@ public async Task UpdateBalance(KahunaClient client, string userId)
     // it will give up immediately if the lock is not available,
     // if the lock is acquired it will prevent the same user from changing the same data concurrently
 
-    await using KahunaLock myLock = await client.GetOrCreateLock("balance-" + userId, TimeSpan.FromSeconds(5));
+    await using KahunaLock myLock = await client.GetOrCreateLock(
+        "balance-" + userId, 
+        TimeSpan.FromSeconds(5)
+    );
 
     if (myLock.IsAcquired)
     {

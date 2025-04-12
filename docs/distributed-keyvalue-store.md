@@ -64,6 +64,8 @@ Sets or overwrites key/value pairs. The behavior of the API is modified based on
 - **Set:** `true` if the key's value was modified.
 - **Revision:** A global counter indicating how many times the key has been modified.
 
+---
+
 ### Compare-Value-And-Set (CVAS)
 
 Sets or overwrites key/value pairs, but only if the current value matches a specified comparison value.
@@ -81,6 +83,8 @@ Sets or overwrites key/value pairs, but only if the current value matches a spec
 **Returns:**
 - **Set:** `true` if the key's value was modified.
 - **Revision:** A global counter indicating how many times the key has been modified.
+
+---
 
 ### Compare-Revision-And-Set (CRAS)
 
@@ -100,6 +104,8 @@ Sets or overwrites key/value pairs, but only if the current revision matches a s
 - **Set:** `true` if the key's value was modified.
 - **Revision:** A global counter indicating how many times the key has been modified.
 
+---
+
 ### Get
 
 Retrieves the value of a key along with its revision. If the key does not exist, the special value `nil` is returned.
@@ -115,6 +121,8 @@ Retrieves the value of a key along with its revision. If the key does not exist,
 - **Value:** The value associated with the key.
 - **Revision:** A global counter indicating how many times the key has been modified.
 
+---
+
 ### Delete
 
 Deletes a key and its associated value.
@@ -128,6 +136,8 @@ Deletes a key and its associated value.
 **Returns:**
 - **Deleted:** `true` if the key/value pair was deleted.
 - **Revision:** The global counter indicating how many times the key was modified at the time of deletion. Deleting a key does **not** increment the revision counter.
+
+---
 
 ### Extend
 
@@ -143,3 +153,19 @@ Extends a key timeout. The key will be deleted after the key expires.
 **Returns:**
 - **Extended:** `true` if the key/value pair was deleted.
 - **Revision:** The global counter indicating how many times the key was modified at the time of deletion. Extending the key does **not** increment the revision counter.
+
+---
+
+### Exists
+
+Returns if a key exists. 
+
+```csharp
+(bool Exists, long Revision) Exists(string key);
+```
+
+- **key:** A unique identifier for the key/value pair.
+
+**Returns:**
+- **Exists:** `true` if the key/value pair exists.
+- **Revision:** The global counter indicating how many times the key was modified at the time of the query.

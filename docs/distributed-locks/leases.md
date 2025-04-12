@@ -1,4 +1,12 @@
+
+import Kahuna7 from '../assets/kahuna7.png';
+
 # Leases
+
+<div style={{textAlign: 'center'}}>
+<img src={Kahuna7} height="350" />
+</div>
+
 
 Distributed locks in Kahuna are based on the paper [*"Leases: An Efficient
 Fault-Tolerant Mechanism for Distributed File Cache Consistency"*](https://web.stanford.edu/class/cs240/readings/leases.pdf) by Michael N. Nelson, Brent B. Welch, and John K. Ousterhout. It introduced the concept of **leases** as a way to manage distributed locks efficiently. Leases act as time-bound locks that expire after a specified duration, providing a balance between strong consistency and fault tolerance.

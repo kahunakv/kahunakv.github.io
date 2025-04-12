@@ -5,7 +5,7 @@ Kahuna offers a scripting system in its key/value store called **Kahuna Script**
 
 A script can be something as simple as a single command to set a value on the key/value store: 
 
-```visual-basic
+```swift
 kahuna-cli> set `services/email/instance-3` '{"ip": "10.1.1.22", "port": 9090}'
 r0 set 19ms
 ```

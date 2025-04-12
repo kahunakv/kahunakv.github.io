@@ -54,7 +54,7 @@ If multiple services or workers are trying to process the same payment concurren
 
 Even with the distributed lock in place, we might want to make the payment process idempotent. This can be done by storing the transaction status in a database and ensuring that any re-attempt to process the same payment is recognized as already completed, regardless of whether the lock was acquired.
 
-This combination of a distributed lock with a lease mechanism in etcd and idempotent operations should provide a reliable way to prevent double payments.
+This combination of a distributed lock with a lease mechanism in Kahuna and idempotent operations should provide a reliable way to prevent double payments.
 
 ### High-Volume Job Scheduling in Microservices
 

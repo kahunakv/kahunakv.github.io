@@ -38,7 +38,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Scripts',
-      items: ['scripts', 'scripts/set'],
+      items: ['scripts', 'scripts/commands/set', 'scripts/commands/eset', 'scripts/commands/get'],
     },
     {
       type: 'category',
@@ -53,7 +53,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Architecture',
-      items: ['architecture/overview', 'architecture/distributed-transactions', 'architecture/raft'],
+      items: ['architecture/overview', 'architecture/distributed-transactions', 'architecture/raft', 'architecture/durability-levels'],
     },
     {
       type: 'category',
