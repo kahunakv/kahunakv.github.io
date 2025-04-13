@@ -38,7 +38,7 @@ These features make Kahuna a great solution for small transactional workloads re
 
 ## Revisions
 
-In Kahuna, a revision is a monotonic, ever-increasing number that represents the global order of modifications in the key-value store. Every time a change (write, delete, or transaction) occurs in Kahuna, the revision number increases, ensuring strong consistency and strict ordering of operations. Each revision is a 64-bit cluster-wide counter.
+In Kahuna, a [revision](distributed-keyvalue-store/revisions) is a monotonic, ever-increasing number that represents the global order of modifications in the key-value store. Every time a change (write, delete, or transaction) occurs in Kahuna, the revision number increases, ensuring strong consistency and strict ordering of operations. Each revision is a 64-bit cluster-wide counter.
 
 ## API
 
