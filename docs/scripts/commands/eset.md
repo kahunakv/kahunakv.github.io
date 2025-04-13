@@ -16,7 +16,7 @@ r0 set 12ms
 If the `NX` modifier is passed the key will be only updated if the key doesn't exist.
 
 ```sql
-kahuna-cli> eset cache_user_front_page '{...}' NX
+kahuna-cli> eset cache_user_front_page '{...}' nx
 r0 not set 5ms
 
 kahuna-cli> eset cache_user_front_page '{...}'
@@ -28,13 +28,13 @@ r0 set 10ms
 If the `XX` modifier is passed the key will be only updated if the key already exists.
 
 ```sql
-kahuna-cli> eset remaining_tickets '100' XX
+kahuna-cli> eset remaining_tickets '100' xx
 r0 not set 7ms
 
 kahuna-cli> eset remaining_tickets '150'
 r0 set 11ms
 
-kahuna-cli> eset remaining_tickets '200' XX
+kahuna-cli> eset remaining_tickets '200' xx
 r1 set 9ms
 ```
 
@@ -44,7 +44,7 @@ The `EX` modifier allows to set the key's expiration in milliseconds (a positive
 The key will be automatically removed from the cache after expiration.
 
 ```sql
-kahuna-cli> set `email/leader` 'node3' EX 60000 
+kahuna-cli> set `email/leader` 'node3' ex 60000
 r0 set 11ms
 ```
 

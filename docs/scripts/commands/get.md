@@ -1,9 +1,9 @@
 
 # Get
 
-Get the value of key from the persistent durable storage. If the key does not exist `null` is returned. 
+Get the value of key from the persistent durable storage. If the key does not exist `null` is returned.
 
-```visual-basic
+```swift
 kahuna-cli> set `config/limits/max-connections` 1000
 r0 set 9ms
 
@@ -15,7 +15,7 @@ r0 1000 7ms
 
 Passing the `AT` modifier allows to retrieve the value of a specific revision:
 
-```visual-basic
+```swift
 kahuna-cli> set `config/limits/max-connections` 1000
 r0 set 9ms
 

@@ -43,7 +43,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Server',
-      items: ['server-installation', 'configuration'],
+      items: ['server-installation', 'server-configuration'],
     },
     {
       type: 'category',
@@ -53,7 +53,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Architecture',
-      items: ['architecture/overview', 'architecture/distributed-transactions', 'architecture/raft', 'architecture/durability-levels'],
+      items: ['architecture/overview', 'architecture/distributed-transactions', 'architecture/raft', 'architecture/hybrid-logical-clocks', 'architecture/durability-levels'],
     },
     {
       type: 'category',

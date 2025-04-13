@@ -3,7 +3,7 @@
 
 Kahuna offers a scripting system in its key/value store called **Kahuna Script**. With these scripts, it's possible to execute logic that consistently reads data from the key/value store and also modifies or manipulates that data in an **all-or-nothing** fashion—that is, changes won’t be partially applied in the event of an error or failure.
 
-A script can be something as simple as a single command to set a value on the key/value store: 
+A script can be something as simple as a single command to set a value on the key/value store:
 
 ```swift
 kahuna-cli> set `services/email/instance-3` '{"ip": "10.1.1.22", "port": 9090}'
@@ -47,9 +47,9 @@ the CAS operation can be completely implemented using basic building blocks and 
 let current_leader = get `election/leader`
 if rev(current_leader) == 0 then
   set `election/leader` "node-A"
-else 
-  throw "election failed"  
-end  
+else
+  throw "election failed"
+end
 ```
 
 ## Leaky Bucket Rate Limiter
@@ -90,7 +90,7 @@ let requested_amount = get @requested_amount
 let inventory = to_int(inventory_key)
 let requested = to_int(requested_amount)
 
-if current >= requested then  
+if current >= requested then
   set inventory_key inventory - requested
   return 1
 else
@@ -110,7 +110,7 @@ let expected_limit = to_int(@expected_limit_param)
 let new_count = current_count + expected_increment
 set @counter_key new_count
 
-if new_count >= expected_limit then  
+if new_count >= expected_limit then
   extend @counter_key @expiration_in_seconds
 end
 
@@ -129,3 +129,4 @@ if exists_key then
 end
 return 0
 ```
+

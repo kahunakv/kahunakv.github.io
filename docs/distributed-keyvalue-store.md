@@ -42,7 +42,7 @@ In Kahuna, a [revision](distributed-keyvalue-store/revisions) is a monotonic, ev
 
 ## API
 
-Kahuna provides an API for performing various operations on key/value pairs.
+Kahuna provides an API for performing various operations on key/value pairs:
 
 ### Set
 
@@ -58,7 +58,7 @@ Sets or overwrites key/value pairs. The behavior of the API is modified based on
 - **flags:**
   - If `Flags.SetIfExists` is specified, the value is set only if the key already exists.
   - If `Flags.SetIfNotExists` is specified, the value is set only if the key does not exist.
-- **consistency:** Defines whether the key is **Ephemeral** or **Strongly Consistent**.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Set:** `true` if the key's value was modified.
@@ -66,19 +66,19 @@ Sets or overwrites key/value pairs. The behavior of the API is modified based on
 
 ---
 
-### Compare-Value-And-Set (CVAS)
+### Compare-Value-And-Swap (CVAS)
 
 Sets or overwrites key/value pairs, but only if the current value matches a specified comparison value.
 
 ```csharp
-(bool Set, long Revision) TryCompareValueAndSet(string key, byte[] value, byte[] compareValue, Consistency consistency);
+(bool Set, long Revision) TryCompareValueAndSet(string key, byte[] value, byte[] compareValue, Durability durability);
 ```
 
 - **key:** A unique identifier for the key/value pair.
 - **value:** The data object associated with the key.
-- **compareValue:** If specified with `Flags.SetIfEqualToValue`, the value is changed only if the current value matches the provided one.
+- **compareValue:** The value is changed only if the current value matches the provided one.
 - **expiresMs:** The expiration time of the key in milliseconds.
-- **consistency:** Defines whether the key is **Ephemeral** or **Strongly Consistent**.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Set:** `true` if the key's value was modified.
@@ -86,19 +86,19 @@ Sets or overwrites key/value pairs, but only if the current value matches a spec
 
 ---
 
-### Compare-Revision-And-Set (CRAS)
+### Compare-Revision-And-Swap (CRAS)
 
 Sets or overwrites key/value pairs, but only if the current revision matches a specified comparison revision.
 
 ```csharp
-(bool Set, long Revision) TryCompareRevisionAndSet(string key, byte[] value, long compareRevision, Consistency consistency);
+(bool Set, long Revision) TryCompareRevisionAndSet(string key, byte[] value, long compareRevision, Durability durability);
 ```
 
 - **key:** A unique identifier for the key/value pair.
 - **value:** The data object associated with the key.
-- **compareRevision:** If specified with `Flags.SetIfEqualToRevision`, the value is changed only if the current revision matches the provided one.
+- **compareRevision:** The value is changed only if the current revision matches the provided one.
 - **expiresMs:** The expiration time of the key in milliseconds.
-- **consistency:** Defines whether the key is **Ephemeral** or **Strongly Consistent**.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Set:** `true` if the key's value was modified.
@@ -111,10 +111,11 @@ Sets or overwrites key/value pairs, but only if the current revision matches a s
 Retrieves the value of a key along with its revision. If the key does not exist, the special value `nil` is returned.
 
 ```csharp
-(bool Found, byte[] Value, long Revision) TryGet(string key);
+(bool Found, byte[] Value, long Revision) TryGet(string key, Durability durability);
 ```
 
-- **key:** A unique identifier for the key/value pair.
+- **key:** The key to be queried.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Found:** `true` if the key exists.
@@ -123,15 +124,78 @@ Retrieves the value of a key along with its revision. If the key does not exist,
 
 ---
 
-### Delete
+### Get Revision
 
-Deletes a key and its associated value.
+Retrieves the value of a key at the specific revision. If the key/revision combination does not exist in the key/value store, the special value `nil` is returned.
 
 ```csharp
-(bool Deleted, long Revision) TryDelete(string key);
+(bool Found, byte[] Value, long Revision) TryGet(string key, long revision, Durability durability);
 ```
 
-- **key:** A unique identifier for the key/value pair.
+- **key:** The key to be queried.
+- **revision:** The revision to be returned.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+- **Found:** `true` if the key exists.
+- **Value:** The value associated with the key.
+- **Revision:** The queried revision.
+
+---
+
+### Get By Prefix
+
+Retrieves the key/value pairs that share the same prefix. The key/value pairs are returned in a consistent way if a common bucket is passed as prefix.
+
+```csharp
+(KeyValuePair[]) GetByPrefix(string prefix, Durability durability);
+```
+
+- **key:** The key to be queried.
+- **revision:** The revision to be returned.
+- **durability:** Defines whether the keys durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+**KeyValuePair:**
+ - **Key:** The key found.
+ - **Value:** The value associated with the key.
+ - **Revision:** The current revision of the key.
+ - **Expires:** The unix timestamp in milliseconds when the key will expire.
+
+---
+
+### Scan By Prefix
+
+Scan all nodes in the cluster searching for key/value pairs where the key start with the specified prefix. The key/value pairs data are taken from the moment
+the node is visited. It can contain stale data. This API is slow because it scans all nodes and internal workers for keys.
+
+```csharp
+(KeyValuePair[]) ScanByPrefix(string prefix, Durability durability);
+```
+
+- **key:** The key to be queried.
+- **revision:** The revision to be returned.
+- **durability:** Defines whether the keys durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+**KeyValuePair:**
+ - **Key:** The key found.
+ - **Value:** The value associated with the key.
+ - **Revision:** The current revision of the key.
+ - **Expires:** The unix timestamp in milliseconds when the key will expire.
+
+---
+
+### Delete
+
+Deletes a key and its associated value. Deleting a key does not remove the key history.
+
+```csharp
+(bool Deleted, long Revision) TryDelete(string key, Durability durability);
+```
+
+- **key:** The key to be deleted.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Deleted:** `true` if the key/value pair was deleted.
@@ -141,30 +205,32 @@ Deletes a key and its associated value.
 
 ### Extend
 
-Extends a key timeout. The key will be deleted after the key expires.
+Extends a key timeout. The key will be deleted after the key expires. If the expiration is 0 the key will not be expired or removed.
 
 ```csharp
-(bool Extended, long Revision) TryExtend(string key, int expiresMs);
+(bool Extended, long Revision) TryExtend(string key, int expiresMs, Durability durability);
 ```
 
-- **key:** A unique identifier for the key/value pair.
+- **key:** The key to be extended.
 - **expiresMs:** The expiration time of the key in milliseconds.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Extended:** `true` if the key/value pair was deleted.
+- **Extended:** `true` if the key/value pair was extended.
 - **Revision:** The global counter indicating how many times the key was modified at the time of deletion. Extending the key does **not** increment the revision counter.
 
 ---
 
 ### Exists
 
-Returns if a key exists. 
+Returns if a key exists.
 
 ```csharp
-(bool Exists, long Revision) Exists(string key);
+(bool Exists, long Revision) Exists(string key, Durability durability);
 ```
 
-- **key:** A unique identifier for the key/value pair.
+- **key:** The key to be checked if exists.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Exists:** `true` if the key/value pair exists.

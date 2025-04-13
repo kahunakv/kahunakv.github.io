@@ -33,3 +33,7 @@
 div.markdown a {
   text-decoration: underline;
 }
+
+div.markdown img {
+  margin-bottom: 10px;
+}
