@@ -1,5 +1,5 @@
 
-# Get
+# Command: Get
 
 Get the value of key from the volatile storage. If the key does not exist `null` is returned.
 

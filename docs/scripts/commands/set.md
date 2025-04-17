@@ -1,5 +1,5 @@
 
-# Set
+# Command: Set
 
 Allows to create or update a key/value in a persistent durable way.
 
@@ -75,3 +75,4 @@ The prev `set` returned revision 7. Mark the task as completed if the revision i
 kahuna-cli>  set `locks/tasks/123` "completed" cmprev 7
 r8 set 11ms
 ```
+

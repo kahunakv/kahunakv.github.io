@@ -1,5 +1,6 @@
 
 import Architecture2 from '../assets/architecture2.png';
+import Architecture3 from '../assets/architecture3.png';
 
 # Distributed Transactions
 
@@ -81,6 +82,38 @@ If the example transaction were executed using **optimistic locking**, the follo
 - **No explicit lock release is needed**, since no exclusive locks were acquired. Consistency is guaranteed through **version validation** before commit.
 
 This approach improves concurrency for **read-heavy workloads** but requires conflict detection and retry logic in the presence of contention.
+
+## Key Buckets
+
+In the previous example, we saw how a semi-random distribution of keys across different partitions—based on consistent hashing helps distribute processing across multiple nodes, workers and partitions **to potentially take full advantage of the compute capacity** in the Kahuna cluster. However, a multi-node key distribution can increase the number of network round-trips required to complete the transaction. While Kahuna performs optimizations like batching and pipelining to reduce the impact of this, using Key Buckets can help enforce that all keys reside in the same partition and worker:
+
+```visual-basic
+let us1_amount = get `data-centers/robots_us1`
+let us2_amount = get `data-centers/robots_us2`
+let eu1_amount = get `data-centers/robots_eu1`
+let sa1_amount = get `data-centers/robots_sa1`
+
+let total = to_int(us1_amount) + to_int(us2_amount) + to_int(eu1_amount) + to_int(sa1_amount)
+
+if (total + @amount_to_incr) > @global_cap then
+    throw "global cap amount exceeded"
+end
+
+set `data-centers/robots_us1` us1_amount + @amount_to_incr
+set `data-centers/robots_us2` us2_amount + @amount_to_incr
+set `data-centers/robots_eu1` eu1_amount + @amount_to_incr
+set `data-centers/robots_sa1` sa1_amount + @amount_to_incr
+```
+
+By using a common key bucket like `data-centers/`, you’re telling Kahuna that **consistent hashing should be limited to the bucket rather than the full key**. This causes all keys under that bucket to be hashed together and routed to the same partition.
+
+The new partition distribution would look like this:
+
+<div style={{textAlign: 'center'}}>
+<img src={Architecture2} height="350" />
+</div>
+
+This approach helps **ensure that related keys are co-located, reducing cross-partition communication and improving transaction performance**.
 
 ## Concurrency Control and Versioning
 

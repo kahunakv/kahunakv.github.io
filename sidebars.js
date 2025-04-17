@@ -38,7 +38,17 @@ const sidebars = {
     {
       type: 'category',
       label: 'Scripts',
-      items: ['scripts', 'scripts/commands/set', 'scripts/commands/eset', 'scripts/commands/get'],
+      items: [
+        'scripts',
+        'scripts/basic-syntax',
+        'scripts/types',
+        'scripts/expressions',
+        'scripts/control-structures',
+        'scripts/commands/set',
+        'scripts/commands/eset',
+        'scripts/commands/get',
+        'scripts/commands/eget'
+      ],
     },
     {
       type: 'category',
