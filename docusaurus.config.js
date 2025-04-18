@@ -80,13 +80,13 @@ const config = {
             label: 'Tutorial',
           },
           {
-            to: '/docs/getting-started', 
-            label: 'Documentation', 
+            to: '/docs/getting-started',
+            label: 'Documentation',
             position: 'left'
           },
           {
-            to: '/blog', 
-            label: 'Blog', 
+            to: '/blog',
+            label: 'Blog',
             position: 'left'
           },
           {
@@ -144,7 +144,7 @@ const config = {
       prism: {
         theme: prismThemes.github,
         darkTheme: prismThemes.dracula,
-        additionalLanguages: ['csharp', 'visual-basic', 'bash'],
+        additionalLanguages: ['csharp', 'visual-basic', 'bash', 'ruby'],
       },
     }),
 };
