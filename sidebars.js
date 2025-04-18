@@ -21,18 +21,32 @@ const sidebars = {
     {
       type: 'category',
       label: 'Tutorials',
-      items: ['intro', 'tutorials/distributed-locking', 'tutorials/distributed-sequencer'],
+      items: [
+        'intro', 
+        'tutorials/distributed-locking', 
+        'tutorials/distributed-sequencer'
+      ],
     },
     'getting-started',
     {
       type: 'category',
       label: 'Distributed Locks',
-      items: ['distributed-locks', 'distributed-locks/leases', 'distributed-locks/fencing-tokens'],
+      items: [
+        'distributed-locks', 
+        'distributed-locks/leases', 
+        'distributed-locks/fencing-tokens'
+      ],
     },
     {
       type: 'category',
       label: 'Distributed Key/Value Store',
-      items: ['distributed-keyvalue-store', 'distributed-keyvalue-store/cas', 'distributed-keyvalue-store/revisions', 'distributed-keyvalue-store/transactions'],
+      items: [
+        'distributed-keyvalue-store', 
+        'distributed-keyvalue-store/cas', 
+        'distributed-keyvalue-store/revisions', 
+        'distributed-keyvalue-store/buckets', 
+        'distributed-keyvalue-store/transactions'
+      ],
     },
     'distributed-sequencer',
     {
@@ -47,7 +61,16 @@ const sidebars = {
         'scripts/commands/set',
         'scripts/commands/eset',
         'scripts/commands/get',
-        'scripts/commands/eget'
+        'scripts/commands/eget',
+        'scripts/commands/extend',
+        'scripts/commands/eextend',
+        'scripts/commands/delete',
+        'scripts/commands/edelete',
+        'scripts/commands/exists',
+        'scripts/commands/eexists',
+        'scripts/functions/math',
+        'scripts/functions/string',
+        'scripts/functions/type',
       ],
     },
     {
@@ -63,7 +86,14 @@ const sidebars = {
     {
       type: 'category',
       label: 'Architecture',
-      items: ['architecture/overview', 'architecture/distributed-transactions', 'architecture/raft', 'architecture/hybrid-logical-clocks', 'architecture/durability-levels'],
+      items: [
+        'architecture/overview', 
+        'architecture/distributed-transactions', 
+        'architecture/raft', 
+        'architecture/hybrid-logical-clocks', 
+        'architecture/durability-levels',
+        'architecture/keys-eviction'
+      ],
     },
     {
       type: 'category',

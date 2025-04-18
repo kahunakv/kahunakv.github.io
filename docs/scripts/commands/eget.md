@@ -1,13 +1,13 @@
 
-# Command: Get
+# Command: EGet
 
 Get the value of key from the volatile storage. If the key does not exist `null` is returned.
 
 ```swift
-kahuna-cli> eset `config/limits/max-connections` 1000
+eset `config/limits/max-connections` 1000
 r0 set 9ms
 
-kahuna-cli> eget `config/limits/max-connections`
+eget `config/limits/max-connections`
 r0 1000 7ms
 ```
 
@@ -16,25 +16,25 @@ r0 1000 7ms
 Passing the `AT` modifier allows to retrieve the value of a specific revision:
 
 ```swift
-kahuna-cli> eset `config/limits/max-connections` 1000
+eset `config/limits/max-connections` 1000
 r0 set 9ms
 
-kahuna-cli> eget `config/limits/max-connections`
+eget `config/limits/max-connections`
 r0 1000 7ms
 
-kahuna-cli> eset `config/limits/max-connections` 500
+eset `config/limits/max-connections` 500
 r1 set 11ms
 
-kahuna-cli> eset `config/limits/max-connections` 200
+eset `config/limits/max-connections` 200
 r2 set 11ms
 
-kahuna-cli> eget `config/limits/max-connections`
+eget `config/limits/max-connections`
 r2 200 8ms
 
-kahuna-cli> eget `config/limits/max-connections` at 0
+eget `config/limits/max-connections` at 0
 r0 1000 9ms
 
-kahuna-cli> eget `config/limits/max-connections` at 1
+eget `config/limits/max-connections` at 1
 r1 500 8ms
 ```
 

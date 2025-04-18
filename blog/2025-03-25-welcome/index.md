@@ -5,10 +5,12 @@ authors: [andresgutierrez]
 tags: [kahuna]
 ---
 
-# Why I Built Kahuna: A New Take on Distributed Key/Value Storage  
+# Why I Built Kahuna: A New Take on Distributed System Tooling
 
 About eight years ago, I had the opportunity to build systems for my company using **[Erlang](https://www.erlang.org/)**. Discovering the actor model was a turning point in how I designed systems from that moment on. However, for strategic reasons, we had to move away from Erlang and focus on the .NET ecosystem. While robust and well-established actor model libraries for C# exist, they included many features we didn’t need, and their performance wasn’t entirely satisfactory for our use cases. 
 This led me to the idea of building a lightweight library.
+
+<!-- truncate -->
 
 The goal of creating a simple library led me to develop **[Nixie](https://github.com/andresgutierrez/nixie)**. By leveraging **[lock-free structures](https://learn.microsoft.com/en-us/dotnet/standard/collections/thread-safe/)**, strongly typed actors, low-level programming, and the **[Task Processing Library (TPL)](https://learn.microsoft.com/en-us/dotnet/standard/parallel-programming/task-parallel-library-tpl)**, I built a powerful foundation for application development. It immediately delivered the results we expected: fewer errors and higher performance.
 

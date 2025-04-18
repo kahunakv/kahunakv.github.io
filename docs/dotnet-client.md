@@ -17,7 +17,7 @@ Or via the NuGet Package Manager:
 Install-Package Kahuna.Client
 ```
 
-## Usage & Examples
+## Locks: Usage & Examples
 
 ### Single attempt to acquire a lock
 
@@ -27,7 +27,7 @@ Below is a basic example to demonstrate how to use Kahuna Distributed Locks in a
 using Kahuna.Client;
 
 // Create a Kahuna client (it can be a global instance)
-var client = new KahunaClient("http://localhost:2070");
+var client = new KahunaClient("https://localhost:8082");
 
 // ...
 
@@ -221,39 +221,44 @@ public async Task TryChooseLeader(KahunaClient client, string groupId)
 
 ### Configure a pool of endpoints
 
-If you want to configure a pool of Kahuna endpoints belonging to the
-same cluster so that traffic is distributed in a round-robin manner:
+If you want to configure a pool of Kahuna endpoints belonging to the same cluster so that traffic is distributed in a round-robin manner:
 
 ```csharp
 using Kahuna.Client;
 
 // Create a Kahuna client with a pool of endpoints
 var client = new KahunaClient([
-    "http://localhost:8081",
-    "http://localhost:8082",
-    "http://localhost:8083"
+    "https://localhost:8082",
+    "https://localhost:8084",
+    "https://localhost:8086"
 ]);
 
 // ...
 ```
 
-### Specify consistency level
+Using a pool of reachable endpoints instead of a load balancer can help reduce network latency, as the client can connect directly to healthy nodes without going through an additional proxy layer.
 
-You can also specify the desired consistency level when acquiring a lock:
+However, this comes at the cost of reduced flexibility when adding, removing, or reconfiguring nodes in the cluster. Without a centralized load balancer, the client must be manually updated or be able to discover and manage endpoint changes dynamically.
+
+This trade-off is common in high-performance distributed systems that prioritize low latency and direct communication over automatic infrastructure abstraction.
+
+### Specify durability type
+
+You can also specify the desired durability type when acquiring a lock:
 
 ```csharp
 using Kahuna.Client;
 
 public async Task UpdateBalance(KahunaClient client, string userId)
 {
-    // acquire a lock with strong consistency, ensuring that the lock state is
+    // acquire a lock with persistent durability, ensuring that the lock state is
     // replicated across all nodes in the Kahuna cluster
-    // in case of failure or network partition, the lock state is guaranteed to be consistent
+    // in case of failure or network partition, the lock state is guaranteed to be durable
 
     await using KahunaLock myLock = await client.GetOrCreateLock(
         "balance-" + userId,
         TimeSpan.FromSeconds(300), // lock for 5 mins
-        consistency: LockConsistency.Linearizable
+        durability: LockDurability.Persistent
     );
 
     if (myLock.IsAcquired)
@@ -270,3 +275,9 @@ public async Task UpdateBalance(KahunaClient client, string userId)
     // myLock is automatically released after leaving the method
 }
 ```
+
+Learn more about the supported [durabilities](architecture/durability-levels.md).
+
+## Key/Values: Usage & Examples
+
+### Transactions 

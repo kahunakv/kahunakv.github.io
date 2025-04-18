@@ -40,14 +40,14 @@ Use Case: Multiple workers process tasks from a queue but each task should only 
 Sets the initial value as usual if it hasn't been assigned previously:
 
 ```visual-basic
-kahuna-cli>  set `locks/tasks/123` "node1" ex 10000 nx
+kahuna-cli> set `locks/tasks/123` "node1" ex 10000 nx
 r0 set 15ms
 ```
 
 Mark the task as completed if this node still hold the key:
 
 ```visual-basic
-kahuna-cli>  set `locks/tasks/123` "completed" cmp "node1"
+kahuna-cli> set `locks/tasks/123` "completed" cmp "node1"
 r1 set 11ms
 ```
 
@@ -110,14 +110,14 @@ r0 disabled 12ms
 Change the flag if the revision is still 0:
 
 ```visual-basic
-kahuna-cli>  set `feature/new-landing` 'enabled' cmprev 0
+kahuna-cli> set `feature/new-landing` "enabled" cmprev 0
 r1 set 19ms
 ```
 
 The flag won't change if the revision is not 0:
 
 ```visual-basic
-kahuna-cli>  set `feature/new-landing` 'disabled' cmprev 0
+kahuna-cli> set `feature/new-landing` "disabled" cmprev 0
 r1 not set 14ms
 ```
 

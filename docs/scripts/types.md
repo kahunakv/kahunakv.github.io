@@ -11,6 +11,7 @@ Every single expression in **Kahuna Script** has one of the following built-in t
 - float64
 - string
 - array
+- bytes
 
 These data types can be used in scripts or key/value pairs as needed.
 
@@ -69,4 +70,14 @@ Arrays are useful for grouping values, iterating over elements, or returning str
 
 ```visual-basic
 let statuses = ["active", "inactive"]
+```
+
+## Bytes
+
+By default all values stored in the key/value store are byte streams but they can be converted to
+the previously mentioned types for ease of manipulation:
+
+```visual-basic
+let my_config = get `config/connection-settings`
+return is_bytes(my_config) # true
 ```

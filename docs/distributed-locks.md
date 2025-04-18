@@ -28,7 +28,7 @@ By partitioning locks among nodes controlled by Raft Groups, Kahuna offers:
 
 ## API
 
-Kahuna exposes a simple API for acquiring and releasing locks. The main functions are:
+Kahuna exposes a simple API for acquiring, releasing and extending locks. The main functions are:
 
 #### Lock
 
@@ -42,7 +42,7 @@ Kahuna exposes a simple API for acquiring and releasing locks. The main function
 - **resource:** The identifier for the resource you want to lock.
 - **owner:** A unique identifier for the lock, usually associated with the client or process requesting the lock.
 - **expiresMs:** The expiration time for the lock in milliseconds.
-- **durability:** Persistent or Ephemeral.
+- **durability:** Defines whether the lock durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Locked:** `true` if the lock was successfully acquired.
@@ -53,14 +53,14 @@ Kahuna exposes a simple API for acquiring and releasing locks. The main function
 Acquire a lease on the resource `locks/tasks/123` for 10 seconds in the interactive shell:
 
 ```visual-basic
-kahuna-cli>  lock locks/tasks/123 10000               
+kahuna-cli> lock locks/tasks/123 10000               
 f1 acquired 786f947d8a6643f0b939865f72aa512a
 ```
 
 Acquire a lease using command line arguments:
 
 ```bash
-~> kahuna-cli --lock locks/tasks/123 --format console
+~> kahuna-cli --lock locks/tasks/123 --expires 10000
 f4 acquired 4e3c5d8ee76a4a1db268c81b048a002a
 ```
 
@@ -89,7 +89,7 @@ if (myLock.IsAcquired)
 Acquiring a lock from the Rest API:
 
 ```bash
-curl --location 'https://localhost:8082/v1/locks/try-lock' \
+curl --location 'https://kahuna-dev.company.internal/v1/locks/try-lock' \
     --header 'Content-Type: application/json' \
     --data '{"resource":"locks/tasks/123", "owner":"e5943062358144b4b0bbff8868f7063d", "expiresMs":10000, "durability":0 }'
 ```
@@ -112,11 +112,12 @@ Response:
 <TabItem value="API">
 
 ```csharp
-(bool Unlocked) Unlock(string resource, string owner);
+(bool Unlocked) Unlock(string resource, string owner, Durability durability);
 ```
 
 - **resource:** The identifier for the resource to unlock.
-- **owner:** The unique identifier for the lock previously used to acquire the lock. 
+- **owner:** The unique identifier for the lock previously used to acquire the lock.
+- **durability:** Defines whether the lock durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Unlocked:** `false` if the resource was successfully unlocked.
@@ -169,9 +170,9 @@ await myLock.DisposeAsync();
 <TabItem value="Rest">
 
 ```bash
-curl --location 'http://localhost:8083/v1/locks/try-unlock' \
---header 'Content-Type: application/json' \
---data '{"resource": "locks/tasks/123", "owner": "e5943062358144b4b0bbff8868f7063d", "durability": 1}'
+curl --location 'http://kahuna-dev.company.internal/v1/locks/try-unlock' \
+    --header 'Content-Type: application/json' \
+    --data '{"resource":"locks/tasks/123", "owner":"e5943062358144b4b0bbff8868f7063d", "durability":0}'
 ```
 
 Response:
@@ -191,12 +192,13 @@ Response:
 <TabItem value="API">
 
 ```csharp
-(bool Extended, long FencingToken) Extend(string resource, string owner, int expiresMs);
+(bool Extended, long FencingToken) Extend(string resource, string owner, int expiresMs, Durability durability);
 ```
 
 - **resource:** The identifier for the resource you want to extend.
 - **owner:** A unique identifier for the lock, usually associated with the client or process requesting the lock. It must be the current owner of the lock.
 - **expiresMs:** The expiration time for the lock in milliseconds.
+- **durability:** Defines whether the lock durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Extended:** `true` if the lock was successfully extended.
@@ -250,9 +252,9 @@ if (myLock.IsAcquired)
 <TabItem value="Rest">
 
 ```bash
-curl --location 'http://localhost:8083/v1/locks/try-extend' \
---header 'Content-Type: application/json' \
---data '{"resource": "locks/tasks/123", "owner": "e5943062358144b4b0bbff8868f7063d", "expiresMs": 60000, "durability": 0}'
+curl --location 'http://kahuna-dev.company.internal/v1/locks/try-extend' \
+    --header 'Content-Type: application/json' \
+    --data '{"resource": "locks/tasks/123", "owner": "e5943062358144b4b0bbff8868f7063d", "expiresMs": 60000, "durability": 0}'
 ```
 
 Response:
@@ -273,10 +275,11 @@ Response:
 <TabItem value="API">
 
 ```csharp
-(string Owner, long FencingToken) Get(string resource);
+(string Owner, long FencingToken) Get(string resource, Durability durability);
 ```
 
 - **resource:** The identifier for the resource you want to get information.
+- **durability:** Defines whether the lock durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Owner:** The current owner of the lock.
@@ -330,9 +333,9 @@ if (!myLock.IsAcquired)
 <TabItem value="Rest">
 
 ```bash
-curl --location 'http://localhost:8083/v1/locks/get-info' \
---header 'Content-Type: application/json' \
---data '{"resource": "locks/tasks/123", "durability": 0}'
+curl --location 'https://kahuna-dev.company.internal/v1/locks/get-info' \
+    --header 'Content-Type: application/json' \
+    --data '{"resource": "locks/tasks/123", "durability": 0}'
 ```
 
 Response:
