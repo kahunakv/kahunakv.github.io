@@ -22,8 +22,8 @@ const sidebars = {
       type: 'category',
       label: 'Tutorials',
       items: [
-        'intro', 
-        'tutorials/distributed-locking', 
+        'intro',
+        'tutorials/distributed-locking',
         'tutorials/distributed-sequencer'
       ],
     },
@@ -32,8 +32,8 @@ const sidebars = {
       type: 'category',
       label: 'Distributed Locks',
       items: [
-        'distributed-locks', 
-        'distributed-locks/leases', 
+        'distributed-locks',
+        'distributed-locks/leases',
         'distributed-locks/fencing-tokens'
       ],
     },
@@ -41,10 +41,10 @@ const sidebars = {
       type: 'category',
       label: 'Distributed Key/Value Store',
       items: [
-        'distributed-keyvalue-store', 
-        'distributed-keyvalue-store/cas', 
-        'distributed-keyvalue-store/revisions', 
-        'distributed-keyvalue-store/buckets', 
+        'distributed-keyvalue-store',
+        'distributed-keyvalue-store/cas',
+        'distributed-keyvalue-store/revisions',
+        'distributed-keyvalue-store/buckets',
         'distributed-keyvalue-store/transactions'
       ],
     },
@@ -87,13 +87,18 @@ const sidebars = {
       type: 'category',
       label: 'Architecture',
       items: [
-        'architecture/overview', 
-        'architecture/distributed-transactions', 
-        'architecture/raft', 
-        'architecture/hybrid-logical-clocks', 
+        'architecture/overview',
+        'architecture/distributed-transactions',
+        'architecture/raft',
+        'architecture/hybrid-logical-clocks',
         'architecture/durability-levels',
         'architecture/keys-eviction'
       ],
+    },
+    {
+      type: 'category',
+      label: 'Storage',
+      items: ['storage/overview'],
     },
     {
       type: 'category',
