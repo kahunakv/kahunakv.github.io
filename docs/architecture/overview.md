@@ -4,7 +4,7 @@ import Architecture1 from '../assets/architecture.png';
 
 Kahuna is designed to be **scalable, consistent, and easy to use**. Developers might wonder how this is achieved which is why this section aims to explain the key concepts behind Kahuna’s architecture.
 
-Kahuna's architecture operates as a highly scalable, fault-tolerant distributed system that combines [lock management](../distributed-locks), [key-value storage](../distributed-keyvalue-store), and [sequencing](../distributed-sequencer) capabilities. At its foundation lies a distributed key-value storage model where data is organized into discrete partitions similar to sharding mechanisms in other distributed systems. These **partitions function as independent units that can be distributed and managed** across the entire node cluster.
+Kahuna's architecture operates as a highly scalable, fault-tolerant distributed system that combines [lock management](/docs/distributed-locks), [key-value storage](/docs/distributed-keyvalue-store), and [sequencing](/docs/distributed-sequencer) capabilities. At its foundation lies a distributed key-value storage model where data is organized into discrete partitions similar to sharding mechanisms in other distributed systems. These **partitions function as independent units that can be distributed and managed** across the entire node cluster.
 
 <div style={{textAlign: 'center'}}>
 <img src={Architecture1} height="350" />

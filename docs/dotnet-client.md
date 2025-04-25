@@ -39,7 +39,7 @@ public async Task UpdateBalance(KahunaClient client, string userId)
     // if the lock is acquired it will prevent the same user from changing the same data concurrently
 
     await using KahunaLock myLock = await client.GetOrCreateLock(
-        "balance-" + userId, 
+        "balance-" + userId,
         TimeSpan.FromSeconds(5)
     );
 
@@ -276,8 +276,18 @@ public async Task UpdateBalance(KahunaClient client, string userId)
 }
 ```
 
-Learn more about the supported [durabilities](architecture/durability-levels.md).
+Learn more about the supported [durabilities](/docs/architecture/durability-levels.md).
 
 ## Key/Values: Usage & Examples
 
-### Transactions 
+### Transactions
+
+...
+
+#### Scripts
+
+...
+
+#### Interactive Transactions
+
+...

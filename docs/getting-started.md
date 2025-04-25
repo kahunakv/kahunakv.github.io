@@ -20,14 +20,14 @@ Kahuna addresses the challenge of synchronizing access to shared resources acros
 nodes or processes, ensuring consistency and preventing race conditions. Its locking
 mechanism ensures efficient coordination for many use cases.
 
-[See More](distributed-locks)
+[See More](/docs/distributed-locks)
 
 ## Distributed Key/Value Store
 Beyond locking, Kahuna operates as a distributed key/value store, enabling fault-tolerant,
 high-performance storage and retrieval of structured data. This makes it a powerful tool
 for managing metadata, caching, and application state in distributed environments.
 
-[See More](distributed-keyvalue-store)
+[See More](/docs/distributed-keyvalue-store)
 
 ## Distributed Sequencer
 Kahuna also functions as a distributed sequencer, ensuring a globally ordered execution
@@ -35,7 +35,7 @@ of events or transactions. This is essential for use cases such as sequence gene
 message queues, and event-driven systems that require precise ordering of
 operations.
 
-[See More](distributed-sequencer)
+[See More](/docs/distributed-sequencer)
 
 ---
 

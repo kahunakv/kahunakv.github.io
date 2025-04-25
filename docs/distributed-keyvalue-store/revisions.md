@@ -52,10 +52,10 @@ While many systems only care about the latest value, Kahuna's ability to retriev
 
 - **Audit Trails and Change History:** Kahuna stores each change at a new revision, so you can inspect historical values. Useful for debugging, compliance, or postmortem analysis. With revisions we can see how a config flag looked at a specific point in time. Helps trace misconfigurations or unauthorized changes.
 - **Debugging State Changes Over Time**: Understand how and why a system entered a bad state. Distributed systems can be hard to debug after the fact and Retrieving old revisions helps you reconstruct the timeline of state changes. It's useful when investigating failures that occurred hours or days ago.
-- **Safe Rollbacks of Configuration or State**: Roll back to a previous known-good configuration. If a new config breaks the system, you can pull a previous value and restore it. Provides a quick and clean rollback mechanism. 
+- **Safe Rollbacks of Configuration or State**: Roll back to a previous known-good configuration. If a new config breaks the system, you can pull a previous value and restore it. Provides a quick and clean rollback mechanism.
 - **Data Versioning for CI/CD or Experiments**: Compare previous and current values during deploys or A/B tests. You can track how configs or feature flags evolved over time. Useful for debugging failed deployments or verifying that changes had intended effects.
 
-> **Kahuna** supports two types of durability: `ephemeral`, which uses only the volatile memory (RAM) of the leader node where the key/value is stored, and `persistent`, which uses durable disk-based storage. In case of memory pressure, ephemeral keys may be evicted if they haven’t been accessed recently. In the case of ephemeral storage, the server stores a limited number of recent revisions. If you need to store all revisions of a key, you should use persistent storage. Learn more in the [supported durabilities](../architecture/durability-levels) section
+> **Kahuna** supports two types of durability: `ephemeral`, which uses only the volatile memory (RAM) of the leader node where the key/value is stored, and `persistent`, which uses durable disk-based storage. In case of memory pressure, ephemeral keys may be evicted if they haven’t been accessed recently. In the case of ephemeral storage, the server stores a limited number of recent revisions. If you need to store all revisions of a key, you should use persistent storage. Learn more in the [supported durabilities](/docs/architecture/durability-levels) section
 
 ## Summary
 

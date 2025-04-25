@@ -49,14 +49,14 @@ r0 set 11ms
 A Compare-Value-And-Swap (CAS) operation ensures atomic updates and prevents race conditions where multiple clients may try to modify the same key simultaneously:
 
 ```swift
- set `locks/tasks/123` "node1" ex 10000 nx
+set `locks/tasks/123` "node1" ex 10000 nx
 r0 set 14ms
 ```
 
 Mark the task as completed if this node still hold the key:
 
 ```swift
- set `locks/tasks/123` "completed" cmp "node1"
+set `locks/tasks/123` "completed" cmp "node1"
 r1 set 9ms
 ```
 
@@ -65,14 +65,14 @@ r1 set 9ms
 A Compare-Revision-And-Swap (CRAS) does the same as CVAS but the revision is compared:
 
 ```swift
- set `locks/tasks/123` "node1" ex 10000 nx
+set `locks/tasks/123` "node1" ex 10000 nx
 r7 set 15ms
 ```
 
 The prev `set` returned revision 7. Mark the task as completed if the revision is known by the process:
 
 ```swift
- set `locks/tasks/123` "completed" cmprev 7
+set `locks/tasks/123` "completed" cmprev 7
 r8 set 11ms
 ```
 

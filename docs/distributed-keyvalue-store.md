@@ -40,7 +40,7 @@ These features make Kahuna a great solution for small transactional workloads re
 
 ## Revisions
 
-In Kahuna, a [revision](distributed-keyvalue-store/revisions) is a monotonic, ever-increasing number that represents the global order of modifications in the key-value store. Every time a change (write, delete, or transaction) occurs in Kahuna, the revision number increases, ensuring strong consistency and strict ordering of operations. Each revision is a 64-bit cluster-wide counter.
+In Kahuna, a [revision](/docs/distributed-keyvalue-store/revisions) is a monotonic, ever-increasing number that represents the global order of modifications in the key-value store. Every time a change (write, delete, or transaction) occurs in Kahuna, the revision number increases, ensuring strong consistency and strict ordering of operations. Each revision is a 64-bit cluster-wide counter.
 
 ## API
 
@@ -75,21 +75,21 @@ Sets or overwrites key/value pairs. The behavior of the API is modified based on
 Sets a key/value only if not exists:
 
 ```visual-basic
-kahuna-cli> set `my-config` "my-value" nx            
+kahuna-cli> set `my-config` "my-value" nx
 r3 set 11ms
 ```
 
 Sets a key/value only if exists:
 
 ```visual-basic
-kahuna-cli> set `my-config` "my-value" xx      
+kahuna-cli> set `my-config` "my-value" xx
 r4 set 10ms
 ```
 
 Sets a key/value:
 
 ```visual-basic
-kahuna-cli> set `my-config` "my-value"    
+kahuna-cli> set `my-config` "my-value"
 r5 set 13ms
 ```
 
@@ -116,10 +116,10 @@ r4 set 10ms
 ```csharp
 // Create or update a key/value pair and set an expiration of 10 seconds:
 var result = await client.SetKeyValue(
-  "my-config", 
-  "some-value", 
-  10000, 
-  durability: KeyValueDurability.Persistent 
+  "my-config",
+  "some-value",
+  10000,
+  durability: KeyValueDurability.Persistent
 );
 
 if (result.Success)
@@ -127,36 +127,36 @@ if (result.Success)
 
 // Update a key/value pair without expiration
 result = await client.SetKeyValue(
-  "my-config", 
-  "some-value", 
-  0,   
-  durability: KeyValueDurability.Persistent 
+  "my-config",
+  "some-value",
+  0,
+  durability: KeyValueDurability.Persistent
 );
 
 // Create a key/value pair only if it does not exist
 result = await client.SetKeyValue(
-  "my-config", 
-  "some-value", 
-  0,   
+  "my-config",
+  "some-value",
+  0,
   flags: SetIfNotExists,
-  durability: KeyValueDurability.Persistent 
+  durability: KeyValueDurability.Persistent
 );
 
 // Update a key/value pair only if it does exist
 result = await client.SetKeyValue(
-  "my-config", 
-  "some-value", 
-  0,   
+  "my-config",
+  "some-value",
+  0,
   flags: SetIfExists,
-  durability: KeyValueDurability.Persistent 
+  durability: KeyValueDurability.Persistent
 );
 
 // Create or update an ephemeral key/value pair
 result = await client.SetKeyValue(
-  "my-config", 
-  "some-value", 
-  10000, 
-  durability: KeyValueDurability.Ephemeral 
+  "my-config",
+  "some-value",
+  10000,
+  durability: KeyValueDurability.Ephemeral
 );
 
 ```
@@ -292,8 +292,8 @@ Gets key/value pair:
 
 ```csharp
 var result = await client.GetKeyValue(
-  "my-config",   
-  KeyValueDurability.Persistent 
+  "my-config",
+  KeyValueDurability.Persistent
 );
 
 if (result.Success)
@@ -394,7 +394,7 @@ r0 services/auth/instance-1 node1
 r0 services/auth/instance-2 node2
 ```
 
-</TabItem>  
+</TabItem>
 </Tabs>
 
 ---

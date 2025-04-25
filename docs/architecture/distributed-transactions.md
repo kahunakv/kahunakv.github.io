@@ -110,7 +110,7 @@ By using a common key bucket like `data-centers/`, you’re telling Kahuna that 
 The new partition distribution would look like this:
 
 <div style={{textAlign: 'center'}}>
-<img src={Architecture2} height="350" />
+<img src={Architecture3} height="350" />
 </div>
 
 This approach helps **ensure that related keys are co-located, reducing cross-partition communication and improving transaction performance**.

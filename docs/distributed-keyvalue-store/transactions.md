@@ -1,4 +1,7 @@
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Transactions
 
 ## Overview
@@ -46,7 +49,7 @@ set "services/inventory" "localhost:8083"
 ### Basic Usage
 
 ```ruby
-begin 
+begin
  let current_alice = get "balance:alice"
  let current_bob = get "balance:alice"
  if current_alice >= 50 then
@@ -82,7 +85,7 @@ begin
   set "services/users" "localhost:8084"
  end
  commit
-end 
+end
 ```
 
 Learn more about buckets and keys distribution in the [previous section](buckets)
@@ -110,11 +113,11 @@ Learn more about transaction lifecycle in the [architecture](../architecture/dis
 Example:
 
 ```ruby
-begin 
+begin
  eset "session:abc" "active" # session is stored in ephemeral durability (in-memory)
  set "session:xyz" "active" # session is stored in persistent durability (disk)
  commit
-end 
+end
 ```
 
 Learn more about durabilities in the [dedicated section](../architecture/durability-levels.md)
@@ -128,7 +131,7 @@ Learn more about durabilities in the [dedicated section](../architecture/durabil
 
 ## Transaction Options
 
-You can specify **transaction options** to fine-tune how the transaction is executed:
+You can specify **transaction options** to fine-tune how the transaction is executed. These options provide greater flexibility and control over **performance**, **consistency**, and **responsiveness**:
 
 ### Timeout
 
@@ -205,4 +208,70 @@ begin (autoCommit=false)
 end
 ```
 
-These options provide greater flexibility and control over **performance**, **consistency**, and **responsiveness** in your Kahuna transactions.
+## Interactive Transactions
+
+Interactive transactions are an option for developers who prefer not to use Kahuna Scripts and instead want access to the libraries and functions of their favorite programming language.
+
+These transactions work similarly to traditional database transactions, where the client must manually start a transaction and then commit or rollback it as needed, depending on the outcome:
+
+<Tabs>
+<TabItem value="C#">
+
+The Kahuna client for C# offers full support for interactive transactions.
+
+This allows developers to start, manage, and complete transactions directly from their C# applications, giving them fine-grained control over the flow of operations while maintaining strong consistency guarantees provided by Kahuna:
+
+```csharp
+await using KahunaTransactionSession session = await client.StartTransactionSession(
+    new() {
+      Locking = KeyValueTransactionLocking.Optimistic,
+      Timeout = 5000
+    }
+);
+
+KahunaKeyValue balance1 = await session.GetKeyValue(keyNameA);
+KahunaKeyValue balance2 = await session.GetKeyValue(keyNameB);
+
+if (int.Parse(balance1.ValueAsString() ?? "0") + int.Parse(balance2.ValueAsString() ?? "0") == 20)
+    await session.SetKeyValue(keyNameA, "0");
+
+await session2.Commit();
+```
+
+</TabItem>
+</Tabs>
+
+This approach gives developers more flexibility to build complex logic in the application layer while still benefiting from Kahuna’s consistency and durability guarantees.
+
+## Interactive Transactions vs Kahuna Scripts
+
+Both Interactive Transactions and Kahuna Scripts offer powerful ways to work with Kahuna’s distributed system, each with distinct trade-offs.
+Interactive Transactions provide greater flexibility and ease of integration with application code but at the cost of higher network latency and complexity in failure scenarios.
+
+Kahuna Scripts, on the other hand, deliver atomicity, reduced latency, and automatic lock management, making them ideal for critical operations that need to execute entirely on the server — although they require familiarity with a specialized scripting environment.
+
+Choosing between the two approaches depends on the specific needs of your application, the complexity of your logic, and your tolerance for latency versus maintenance effort:
+
+### Interactive Transactions
+
+**Advantages**
+- **Familiarity and Easier Debugging**: You write the logic in your primary programming language (C#, JavaScript, etc.), making it easier to debug, maintain, and integrate with your development tools.
+- **Better Integration**: Interactive transactions work seamlessly with application-level logic, error handling, and native data structures.
+
+**Disadvantages**
+- **Increased Latency**: Requires multiple round-trips between the client and server, which can introduce additional delays.
+- **Graceful Degradation Challenges**: In the event of partial failures (e.g., network partitions), the client may be unable to manually commit or roll back transactions. Locks could be held until the transaction times out. This can be mitigated by setting short transaction timeouts (a few seconds).
+
+### Kahuna Scripts
+
+**Advantages**
+- **Atomic Execution**: The entire script executes atomically on the server (transaction coordinator), as long as there are no node failures or abnormal inter-node network conditions.
+- **Automatic Lock Management**: Kahuna Scripts automatically release acquired locks in the presence of conflicts, reducing complexity and avoiding unwanted delays or retries.
+- **Supports Complex Logic**: Scripts can include conditionals (`if`, `while`, etc.), loops, functions, and branching logic directly on the server.
+- **Shared and Portable Logic**: The same Kahuna Script can be executed from multiple programming languages without modification or extra maintenance.
+- **Reduced Round-Trips**: Operations are fully executed server-side, minimizing network latency between client and server.
+
+**Disadvantages**
+- **Potentially Harder to Maintain**: Kahuna Script syntax may be less familiar and harder to debug or test compared to your main programming language.
+- **Script Size Limitations**: Large or complex business logic may be difficult to express and maintain within Kahuna Scripts.
+

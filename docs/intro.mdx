@@ -47,7 +47,7 @@ command retrieves the most recent value consistently from the appropriate leader
 
 ## Expiration
 
-By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period. 
+By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period.
 The time-to-live of the key can set an expiration when creating a key with the `EX` parameter:
 
 ```visual-basic
@@ -89,7 +89,7 @@ Keep in mind that ephemeral data will be lost if the node crashes or if memory p
 
 ## Revisions
 
-Each time a key is updated, you will notice an incrementing **[revision number](distributed-keyvalue-store/revisions)** (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong consistency and strict ordering.
+Each time a key is updated, you will notice an incrementing **[revision number](/docs/distributed-keyvalue-store/revisions)** (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong consistency and strict ordering.
 
 ```visual-basic
 kahuna-cli> set myconf "some config"
@@ -107,7 +107,7 @@ r2 another config 13ms
 
 ## Compare And Swap (CAS)
 
-The **[Compare-And-Swap (CAS)](distributed-keyvalue-store/cas)** operation ensures atomic updates and prevents race conditions in environments where multiple clients may attempt to modify the same key simultaneously.
+The **[Compare-And-Swap (CAS)](/docs/distributed-keyvalue-store/cas)** operation ensures atomic updates and prevents race conditions in environments where multiple clients may attempt to modify the same key simultaneously.
 
 ```visual-basic
 kahuna-cli> set myconf "prev config"

@@ -44,8 +44,8 @@ const sidebars = {
         'distributed-keyvalue-store',
         'distributed-keyvalue-store/cas',
         'distributed-keyvalue-store/revisions',
-        'distributed-keyvalue-store/buckets',
-        'distributed-keyvalue-store/transactions'
+        'distributed-keyvalue-store/transactions',
+        'distributed-keyvalue-store/buckets'
       ],
     },
     'distributed-sequencer',

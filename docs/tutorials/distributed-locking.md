@@ -69,7 +69,7 @@ var client = new KahunaClient("http://localhost:8002");
 try
 {
     // Attempt to acquire the queue lock with a lease
-    // if acquired then automatically release the lock after 10 seconds 
+    // if acquired then automatically release the lock after 10 seconds
     // or when the block is left.
     // Wait to acquire the lock for a total time of 8 seconds and retry every 250 ms
     // it will give up if the lock can't be acquired after retrying for 8 seconds
@@ -112,10 +112,12 @@ While the locking system can generally be used from an application via a **[Kahu
 #!/bin/bash
 
 # Try to lock the resource "backup-lock" for 1 min
-IS_BACKUP_RUNNING=$(kahuna-cli --lock backup-lock --expires 60000 --format json | jq .isAcquired)
+export LOCK_DATA=$(kahuna-cli --lock backup-lock --expires 60000 --format json)
 
-if [ "$IS_BACKUP_RUNNING" = "false" ]; then
-   # if the lock is already taken give up and show a message
+export LOCK_IS_ACQUIRED=$(echo $LOCK_DATA | jq .isAcquired)
+export LOCK_OWNER=$(echo $LOCK_DATA | jq -r .owner)
+
+if [ "$LOCK_IS_ACQUIRED" = "false" ]; then # if the lock is already taken give up and show a message
    echo "Backup is already running on another machine!"
    exit 1
 fi
@@ -123,10 +125,10 @@ fi
 # We acquired the lock then we can safely run the backup
 pg_dump -h pgserver-dev.company.internal -U backup-user -d company -f /var/backups/company_backup.sql
 
-# Release the lock if the backup finished before 1 min
+# Release the lock manually if the backup finished before 1 min
 # if the process crashes the lease will be automatically freed after 1 min
-kahuna-cli --unlock backup-lock --format json
+kahuna-cli --unlock backup-lock --owner $LOCK_OWNER --format json
 
 ```
 
-Distributed locks have many more practical use cases in real-world applications. You can find more examples in the **[distributed locks](../distributed-locks)** documentation and in the **[Kahuna Client](../dotnet-client)** page. In the next section, we’ll learn how to use the distributed sequencer.
+Distributed locks have many more practical use cases in real-world applications. You can find more examples in the **[distributed locks](/docs/distributed-locks)** documentation and in the **[Kahuna Client](/docs/dotnet-client)** page. In the next section, we’ll learn how to use the distributed sequencer.
