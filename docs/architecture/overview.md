@@ -61,3 +61,13 @@ High availability is ensured through Raft-based replication mechanisms. The syst
 While Kahuna maintains strong consistency guarantees through the Raft protocol, it also incorporates various performance optimizations. Asynchronous replication techniques are employed where appropriate to enhance data replication efficiency and minimize read operation latency without sacrificing consistency requirements.
 
 Background maintenance processes continuously perform compaction and garbage collection operations to reclaim storage space and memory resources. These automated maintenance routines help preserve system performance by systematically removing obsolete data versions that are no longer needed for transaction isolation or recovery purposes.
+
+## When to use Kahuna?
+
+Kahuna is a distributed key/value database that offers both persistent and ephemeral durability, adapting to many different use cases. It also provides ready-to-use abstractions for locks and sequences. It has many useful applications across different areas, which may also overlap with functionality provided by other existing databases.
+
+Its versatility ranges from strong persistence—with data synchronously replicated across multiple nodes to ensure no data is lost in the event of failures—to the speed of in-memory storage, adapting to workloads that require low latency.
+
+In both cases, strong consistency is guaranteed. Additionally, transactions that manipulate key/value pairs of any durability are fully supported, opening up a world of possibilities for building reliable and scalable systems.
+
+Written in modern C# and running on the latest high-performance versions of .NET 8 and 9, Kahuna offers developers the ability to extend, adapt, and enhance it to meet their own needs easily and efficiently.
