@@ -229,13 +229,46 @@ await using KahunaTransactionSession session = await client.StartTransactionSess
     }
 );
 
-KahunaKeyValue balance1 = await session.GetKeyValue(keyNameA);
-KahunaKeyValue balance2 = await session.GetKeyValue(keyNameB);
+KahunaKeyValue balance1 = await session.GetKeyValue(userA);
+KahunaKeyValue balance2 = await session.GetKeyValue(userB);
 
-if (int.Parse(balance1.ValueAsString() ?? "0") + int.Parse(balance2.ValueAsString() ?? "0") == 20)
-    await session.SetKeyValue(keyNameA, "0");
+if (balance1.ValueAsLong() >= 50)
+{
+    await session.SetKeyValue(userA, balance1.ValueAsLong() - 50);
+    await session.SetKeyValue(userB, balance2.ValueAsLong() + 50);
+}
 
-await session2.Commit();
+await session.Commit();
+```
+
+In case of conflicts or encountering exclusive locks (under pessimistic locking), transactions will be aborted 
+so they can be retried on the client side.
+
+The recommended approach is to use the built-in retry mechanism provided by Kahuna clients, which automatically 
+retries aborted transactions using a short backoff interval, helping reduce contention while ensuring consistency 
+and forward progress:
+
+```csharp
+
+KahunaTransactionOptions txOptions = new() { 
+    Locking = KeyValueTransactionLocking.Pessimistic,
+    Timeout = 5000
+};
+
+await client.RetryableTransaction(txOptions, async (session, cancellationToken) =>
+{
+    KahunaKeyValue balance1 = await session.GetKeyValue(userA);
+    KahunaKeyValue balance2 = await session.GetKeyValue(userB);
+
+    if (balance1.ValueAsLong() >= 50)
+    {
+        await session.SetKeyValue(userA, balance1.ValueAsLong() - 50);
+        await session.SetKeyValue(userB, balance2.ValueAsLong() + 50);
+    }
+
+    await session.Commit();
+});
+
 ```
 
 </TabItem>

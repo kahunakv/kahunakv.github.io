@@ -280,14 +280,165 @@ Learn more about the supported [durabilities](/docs/architecture/durability-leve
 
 ## Key/Values: Usage & Examples
 
-### Transactions
+## Basic Usage
 
 ...
 
-#### Scripts
+## Transactions
 
-...
+Using the **C# client**, developers can execute both **Kahuna Scripts** and **interactive transactions**, depending on what best suits their use case.
 
-#### Interactive Transactions
+This flexibility allows for choosing between:
 
-...
+- **Kahuna Scripts** for atomic, server-side logic with minimal latency.
+- **Interactive transactions** for full control using C# code and external libraries.
+
+Developers can switch between both approaches as needed to balance performance, maintainability, and complexity.
+
+### Scripts
+
+Kahuna Scripts can be loaded from their string representation and executed in C# like this:
+
+```csharp
+const string script = """
+let inventory_key = get @inventory_key
+let requested_amount = get @requested_amount
+
+let inventory = to_int(inventory_key)
+let requested = to_int(requested_amount)
+
+if current >= requested then
+  set inventory_key inventory - requested
+  return 1
+else
+  return 0
+end
+""";
+
+var result = await client.ExecuteKeyValueTransactionScript(
+    script,
+    null, 
+    [
+        new() { Key = "@inventory_key", Value = userInventoryKey },
+        new() { Key = "@requested_amount", Value = "100" }        
+    ]
+);
+
+Console.WriteLine("Result={0}", result.FirstValueAsString);
+
+```
+
+The recommended way to execute scripts is to pass all dynamic values as parameters, rather than embedding them directly in the script. This allows the server to reuse the execution plan across different calls with different inputs, improving performance and preventing security issues such as script injection.
+
+Avoid this:
+
+```csharp
+await client.ExecuteKeyValueTransactionScript("SET " + key + " " + value);
+```
+
+Prefer this:
+
+```csharp
+await client.ExecuteKeyValueTransactionScript(
+    "SET @key @value", 
+    null, 
+    [
+        new() { Key = "@key", Value = key },
+        new() { Key = "@value", Value = value }        
+    ]
+);
+```
+
+This pattern leads to safer, faster, and more maintainable use of Kahuna Scripts.
+
+Another good practice is to load scripts during an initialization process so they can be reused many times later. This reduces memory usage and helps the server reuse the execution plan, improving performance and lowering overhead:
+
+```csharp
+public class SessionChecker
+{
+    private readonly KahunaTransactionScript kahunaScript;
+    
+    public SessionChecker(KahunaClient client)
+    {
+        const string myScript = """
+        let exists_key = exists @session_key
+        if exists_key then
+         extend @session_key @ttl_in_seconds
+         return 1
+        end
+        return 0
+        """;
+        
+        kahunaScript = client.LoadTransactionScript(myScript);
+    }
+    
+    public async Task<bool> CheckSession(string sessionKey, string ttlInSeconds)
+    {
+        var result = await kahunaScript.Run([
+            new() { Key = sessionKey, Value = ttlInSeconds }
+        ]);
+
+        var extended = result.FirstValueAsString ?? "0";
+
+        return extended == "1";
+    }
+}
+```
+
+By avoiding re-parsing and re-planning on every call, this approach makes script execution more efficient, especially in high-throughput scenarios. It also makes code easier to maintain by separating logic from runtime logic injection.
+
+### Interactive Transactions
+
+With interactive transactions, developers can execute transactional flows directly from C# without the need to use Kahuna Scripts.
+
+This gives programmers full control over the transaction logic using familiar language constructs, while still benefiting from Kahuna’s consistency guarantees, distributed coordination, and support for multi-key operations:
+
+```csharp
+await using var session = await client.StartTransactionSession(
+    new() {
+      Locking = KeyValueTransactionLocking.Optimistic,
+      Timeout = 5000
+    }
+);
+
+var balance1 = await session.GetKeyValue(userA);
+var balance2 = await session.GetKeyValue(userB);
+
+if (balance1.ValueAsLong() >= 50)
+{
+    await session.SetKeyValue(userA, balance1.ValueAsLong() - 50);
+    await session.SetKeyValue(userB, balance2.ValueAsLong() + 50);
+}
+
+await session.Commit();
+```
+
+In case of conflicts or encountering exclusive locks (under pessimistic locking), transactions will be aborted 
+so they can be retried on the client side.
+
+The recommended approach is to use the built-in retry mechanism provided by Kahuna clients, which automatically 
+retries aborted transactions using a short backoff interval, helping reduce contention while ensuring consistency 
+and forward progress:
+
+```csharp
+var txOptions = new KahunaTransactionOptions()
+{ 
+    Locking = KeyValueTransactionLocking.Pessimistic,
+    Timeout = 5000
+};
+
+await client.RetryableTransaction(txOptions, async (session, cancellationToken) =>
+{
+    var balance1 = await session.GetKeyValue(userA);
+    var balance2 = await session.GetKeyValue(userB);
+
+    if (balance1.ValueAsLong() >= 50)
+    {
+        await session.SetKeyValue(userA, balance1.ValueAsLong() - 50);
+        await session.SetKeyValue(userB, balance2.ValueAsLong() + 50);
+    }
+
+    await session.Commit();
+});
+
+```
