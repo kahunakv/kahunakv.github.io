@@ -48,7 +48,17 @@ const sidebars = {
         'distributed-keyvalue-store/buckets'
       ],
     },
-    'distributed-sequencer',
+    {
+      type: 'category',
+      label: 'Distributed Sequencer',
+      items: [
+        'distributed-sequencer',
+        'distributed-sequencer/model',
+        'distributed-sequencer/idempotency',
+        'distributed-sequencer/clients',
+        'distributed-sequencer/api'
+      ],
+    },
     {
       type: 'category',
       label: 'Scripts',
