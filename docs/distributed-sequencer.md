@@ -30,5 +30,102 @@ It can be used to answer the question: What happened first? By assigning each op
 - **Efficient Load Distribution:** Leveraging Raft Groups, the system assigns sequences to different nodes. This strategy not only maximizes compute power across the cluster but also enhances performance and fault tolerance.
 - **Seamless Integration:** The distributed sequencer is designed to be easily integrated into various applications, making it an ideal solution for systems requiring reliable, high-volume sequence generation.
 
-In summary, a **distributed sequencer** is what keeps order in a world full of distributed chaos. It’s a foundational building block that makes strong consistency, safe concurrency and ordered replication possible.
+## Sequence Semantics
 
+A sequence is identified by name. Values are monotonically increasing per sequence name, not globally across all sequence names. Mutations for a sequence are routed through the owning Raft partition, so concurrent callers cannot receive the same committed value.
+
+Defaults:
+
+- `initialValue`: `0`
+- `increment`: `1`
+- first `next` value: `1`
+- `maxValue`: no explicit maximum
+- durability: `Persistent`
+
+Kahuna supports contiguous range reservations. For example, if `orders` is currently at `100`, reserving `50` values returns `101..150` and commits `150` as the new current value.
+
+## Idempotent Allocation
+
+`next` and `reserve` accept an optional idempotency key. Reusing the same idempotency key for the same allocation request returns the original committed allocation instead of allocating a new value. This is useful when a client times out after Kahuna committed the operation but before the client received the response.
+
+Without an idempotency key, gaps are possible after timeouts or when a reserved range is not fully consumed. The guarantee is uniqueness and monotonicity for committed allocations, not gaplessness.
+
+## .NET Client
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.Sequences;
+
+var client = new KahunaClient("https://localhost:8082");
+
+KahunaSequence sequence = await client.CreateSequence(
+    "orders",
+    initialValue: 0,
+    increment: 1,
+    maxValue: null,
+    durability: SequenceDurability.Persistent
+);
+
+long nextOrderId = await client.NextSequenceValue(
+    "orders",
+    idempotencyKey: "request-123"
+);
+
+KahunaSequenceRange range = await client.ReserveSequenceRange(
+    "orders",
+    count: 100,
+    idempotencyKey: "batch-456"
+);
+
+KahunaSequence? current = await client.GetSequence("orders");
+bool deleted = await client.DeleteSequence("orders");
+```
+
+## CLI
+
+```bash
+kahuna-cli --create-sequence orders --initial-value 0 --increment 1
+kahuna-cli --next-sequence orders --idempotency-key request-123
+kahuna-cli --reserve-sequence orders --count 100 --idempotency-key batch-456
+kahuna-cli --get-sequence orders
+kahuna-cli --delete-sequence orders
+```
+
+## REST API
+
+All sequence REST operations use `POST`:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/v1/sequences/create` | Create a persistent sequence |
+| `/v1/sequences/get` | Read sequence metadata |
+| `/v1/sequences/next` | Allocate one value |
+| `/v1/sequences/reserve` | Allocate a contiguous range |
+| `/v1/sequences/delete` | Delete a sequence |
+
+Create request:
+
+```json
+{
+  "name": "orders",
+  "initialValue": 0,
+  "increment": 1,
+  "maxValue": null,
+  "durability": "Persistent"
+}
+```
+
+Reserve request:
+
+```json
+{
+  "name": "orders",
+  "count": 100,
+  "idempotencyKey": "batch-456",
+  "durability": "Persistent"
+}
+```
+
+Responses include a `type` field with values such as `Success`, `NotFound`, `AlreadyExists`, `InvalidInput`, `MaxValueExceeded`, `MustRetry`, `Aborted`, or `Error`.
+
+In summary, a **distributed sequencer** is a foundational building block that makes strong consistency, safe concurrency, and ordered allocation possible.

@@ -74,14 +74,14 @@ end
 
 Even if `feature-x` is disabled mid-transaction by another client, the snapshot ensures this transaction still sees the older version and behaves consistently.
 
-## Using `get by prefix` inside a Transaction
+## Using `get by bucket` inside a Transaction
 
-All keys in a given **bucket prefix** (e.g., `services/`) are guaranteed to be on the same partition. This enables **prefix scans** to be consistent and transactional:
+All keys in a given **bucket prefix** (e.g., `services/`) are guaranteed to be on the same partition. This enables **bucket reads** to be consistent and transactional:
 
 ```ruby
 begin
- let services = get by prefix "services"
- if not contains(services, "services/users") then
+ let services = get by bucket "services"
+ if count(services) == 3 then
   set "services/users" "localhost:8084"
  end
  commit
@@ -307,4 +307,3 @@ Choosing between the two approaches depends on the specific needs of your applic
 **Disadvantages**
 - **Potentially Harder to Maintain**: Kahuna Script syntax may be less familiar and harder to debug or test compared to your main programming language.
 - **Script Size Limitations**: Large or complex business logic may be difficult to express and maintain within Kahuna Scripts.
-

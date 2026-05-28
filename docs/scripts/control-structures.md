@@ -18,8 +18,8 @@ The `expression` is evaluated as a boolean (`true` or `false`). If it evaluates 
 Example:
 
 ```ruby
-let candidates = get by prefix `election`
-if count(current_leader) == 0 then
+let candidates = get by bucket `election`
+if count(candidates) == 0 then
    set `election/leader` "node-A"
 end
 ```
@@ -27,8 +27,8 @@ end
 Often, you may want to perform one action when a condition is true, and a different action when it's false. That’s where else comes in. The else clause extends an if statement, allowing you to specify what should happen if the condition in the if evaluates to false.
 
 ```ruby
-let candidates = get by prefix `election`
-if count(current_leader) == 0 then
+let candidates = get by bucket `election`
+if count(candidates) == 0 then
    set `election/leader` "node-A"
    return true
 else
@@ -61,7 +61,7 @@ set `candidates/node-b` true nx
 Iterating over an array of values:
 
 ```ruby
-let candidates = get by prefix "candidates"
+let candidates = get by bucket "candidates"
 for candidate in candidates do
   set `services/email/leader` candidate
   return true

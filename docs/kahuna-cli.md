@@ -64,3 +64,29 @@ $ kahuna-cli -c "https://kahuna-dev.company.internal:8082,https://kahuna-dev.com
 ```
 
 This tells the CLI to connect to the specified Kahuna nodes, enabling interaction with a custom or remote environment.
+
+## Single-Command Mode
+
+The CLI can also execute one operation and exit. Common options include:
+
+```bash
+kahuna-cli --set my-config --value my-value
+kahuna-cli --get my-config
+kahuna-cli --get-by-prefix services/auth
+kahuna-cli --scan-by-prefix services
+kahuna-cli --lock jobs/email --expires 30000
+kahuna-cli --extend-lock jobs/email --owner <owner> --expires 30000
+kahuna-cli --unlock jobs/email --owner <owner>
+```
+
+Distributed sequencer commands:
+
+```bash
+kahuna-cli --create-sequence orders --initial-value 0 --increment 1
+kahuna-cli --get-sequence orders
+kahuna-cli --next-sequence orders --idempotency-key request-123
+kahuna-cli --reserve-sequence orders --count 100 --idempotency-key batch-456
+kahuna-cli --delete-sequence orders
+```
+
+Use `--format json` to request JSON output for commands that support it.

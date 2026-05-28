@@ -62,6 +62,10 @@ const sidebars = {
         'scripts/commands/eset',
         'scripts/commands/get',
         'scripts/commands/eget',
+        'scripts/commands/get-by-bucket',
+        'scripts/commands/eget-by-bucket',
+        'scripts/commands/scan-by-prefix',
+        'scripts/commands/escan-by-prefix',
         'scripts/commands/extend',
         'scripts/commands/eextend',
         'scripts/commands/delete',
@@ -76,7 +80,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Server',
-      items: ['server-installation', 'server-configuration'],
+      items: ['server-installation', 'server-configuration', 'embedded-kahuna-node'],
     },
     {
       type: 'category',

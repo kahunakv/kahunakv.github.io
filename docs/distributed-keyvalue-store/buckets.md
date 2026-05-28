@@ -69,14 +69,14 @@ services/inventory
 CH("services") -> 5
 ```
 
-## Get by Prefix
+## Get by Bucket
 
-The fact that all keys are in the same **bucket** and **partition** allows the use of the `get by prefix` operation, which **consistently returns all keys** belonging to the specified bucket.
+The fact that all keys are in the same **bucket** and **partition** allows the use of the `get by bucket` operation, which **consistently returns all keys** belonging to the specified bucket.
 
 **Example:**
 
 ```ruby
-let configs = get by prefix "services"
+let configs = get by bucket "services"
 ```
 
 This retrieves all keys that start with `services/`, such as:
@@ -87,7 +87,7 @@ This retrieves all keys that start with `services/`, such as:
 
 Because they reside in the **same partition**, this operation is efficient, strongly consistent, and avoids the complexity of querying across multiple partitions and nodes.
 
-Since `get by prefix` is a **consistent operation**, it can also be part of a **transaction**. When used within a transaction, it generates **MVCC (Multi-Version Concurrency Control) entries**, providing **snapshot isolation**. The keys read and modified during the transaction will only be committed if the transaction completes successfully—otherwise, the changes will be discarded.
+Since `get by bucket` is a **consistent operation**, it can also be part of a **transaction**. When used within a transaction, it generates **MVCC (Multi-Version Concurrency Control) entries**, providing **snapshot isolation**. The keys read and modified during the transaction will only be committed if the transaction completes successfully—otherwise, the changes will be discarded.
 
 ### Example:
 
@@ -101,13 +101,13 @@ set "services/inventory" "localhost:8083"
 Later, inside a transaction:
 
 ```ruby
-let all_services = get by prefix "services"
-if contains(all_services, "services/users") then
+let all_services = get by bucket "services"
+if count(all_services) == 3 then
   set "services/users" "localhost:8084"
 end
 
-let all_services = get by prefix "services"
-if contains(all_services, "services/users") then
+let all_services = get by bucket "services"
+if count(all_services) == 4 then
   return true
 end
 
@@ -116,9 +116,9 @@ return false
 
 In this example:
 
-- The first `get by prefix` reads a **consistent snapshot** of all keys under `services/`.
-- The logic conditionally adds a new service only if `"services/users"` doesn’t already exist.
-- The second `get by prefix` confirms whether the new key is present **within the same transactional snapshot**.
+- The first `get by bucket` reads a **consistent snapshot** of all keys under `services/`.
+- The logic conditionally adds a new service based on the number of services in the bucket.
+- The second `get by bucket` confirms the new value is visible **within the same transactional snapshot**.
 - If the transaction commits, all changes become visible atomically; if it fails, none are applied.
 
-This showcases how `get by prefix` can be safely used for **multi-key logic** inside transactional flows.
+This showcases how `get by bucket` can be safely used for **multi-key logic** inside transactional flows.

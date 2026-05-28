@@ -278,6 +278,41 @@ public async Task UpdateBalance(KahunaClient client, string userId)
 
 Learn more about the supported [durabilities](/docs/architecture/durability-levels.md).
 
+## Sequences: Usage & Examples
+
+The .NET client exposes Kahuna's distributed sequencer for named, monotonically increasing values.
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.Sequences;
+
+var client = new KahunaClient("https://localhost:8082");
+
+KahunaSequence sequence = await client.CreateSequence(
+    "orders",
+    initialValue: 0,
+    increment: 1,
+    maxValue: null,
+    durability: SequenceDurability.Persistent
+);
+
+long orderId = await client.NextSequenceValue(
+    "orders",
+    idempotencyKey: "create-order-123"
+);
+
+KahunaSequenceRange range = await client.ReserveSequenceRange(
+    "orders",
+    count: 100,
+    idempotencyKey: "import-batch-456"
+);
+
+KahunaSequence? current = await client.GetSequence("orders");
+bool deleted = await client.DeleteSequence("orders");
+```
+
+Use idempotency keys when retrying allocation requests after a timeout. If the original request was committed, retrying with the same idempotency key returns the original allocation instead of consuming a new value.
+
 ## Key/Values: Usage & Examples
 
 ## Basic Usage

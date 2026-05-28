@@ -8,11 +8,10 @@ Kahuna provides functions to **check the type of a variable** and to **cast valu
 | **Function**      | **Description**                               | **Example**                        |
 |-------------------|-----------------------------------------------|-------------------------------------|
 | `is_null(x)`       | Returns `true` if `x` is `null`               | `is_null(null)` → `true`            |
-| `is_bool(x)`       | Returns `true` if `x` is a boolean            | `is_bool(true)` → `true`            |
-| `is_int(x)`        | Returns `true` if `x` is an integer           | `is_int(42)` → `true`            |
-| `is_double(x)`      | Returns `true` if `x` is an double           | `is_double(42.5)` → `true`            |
-| `is_string(x)`     | Returns `true` if `x` is a string             | `is_string("hello")` → `true`       |
-| `is_bytes(x)`      | Returns `true` if `x` is a byte stream        | `is_bytes(some_bytes)` → `true`       |
+| `is_bool(x)` / `is_boolean(x)` | Returns `true` if `x` is a boolean | `is_bool(true)` → `true` |
+| `is_int(x)` / `is_integer(x)` / `is_long(x)` | Returns `true` if `x` is an integer | `is_int(42)` → `true` |
+| `is_float(x)` / `is_double(x)` | Returns `true` if `x` is a floating-point number | `is_double(42.5)` → `true` |
+| `is_str(x)` / `is_string(x)` | Returns `true` if `x` is a string | `is_string("hello")` → `true` |
 | `is_array(x)`      | Returns `true` if `x` is an array             | `is_array([1, 2, 3])` → `true`       |
 
 ---
@@ -21,12 +20,10 @@ Kahuna provides functions to **check the type of a variable** and to **cast valu
 
 | **Function**      | **Description**                               | **Example**                          |
 |-------------------|-----------------------------------------------|---------------------------------------|
-| `to_bool(x)`       | Casts `x` to a boolean                        | `to_bool("true")` → `true`            |
-| `to_int(x)`        | Casts `x` to a int number                      | `to_int("42")` → `42`              |
-| `to_double(x)`      | Casts `x` to a double                         | `to_float("42.5")` → `42.5`          |
-| `to_string(x)`     | Converts `x` to a string                      | `to_string(99)` → `"99"`              |
-| `to_bytes(x)`      | Converts `x` to a byte stream                 | `to_bytes("99")` → `[57, 57]`          |
-| `to_array(x)`      | Casts a value to an array (if possible)       | `to_array("a,b,c")` → `["a","b","c"]` |
+| `to_bool(x)` / `to_boolean(x)` | Casts `x` to a boolean | `to_bool("true")` → `true` |
+| `to_int(x)` / `to_integer(x)` / `to_long(x)` / `to_number(x)` | Casts `x` to an integer | `to_int("42")` → `42` |
+| `to_float(x)` / `to_double(x)` | Casts `x` to a floating-point number | `to_double("42.5")` → `42.5` |
+| `to_str(x)` / `to_string(x)` | Converts `x` to a string | `to_string(99)` → `"99"` |
 
 ---
 

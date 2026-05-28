@@ -355,20 +355,19 @@ r0 my-value-1 13ms
 
 ---
 
-### Get By Prefix
+### Get By Bucket
 
-Retrieves the key/value pairs that share the same prefix. The key/value pairs are returned in a consistent way if a common bucket is passed as prefix.
+Retrieves key/value pairs that share the same bucket. The operation is consistent when the prefix identifies a bucket, because all keys in that bucket are routed to the same partition.
 
 <Tabs>
 <TabItem value="API">
 
 ```csharp
-(KeyValuePair[]) GetByPrefix(string prefix, Durability durability);
+Task<List<KahunaKeyValue>> GetByBucket(string prefixKey, KeyValueDurability durability);
 ```
 
-- **key:** The key to be queried.
-- **revision:** The revision to be returned.
-- **durability:** Defines whether the keys durability is **Ephemeral** or **Persistent**.
+- **prefixKey:** The bucket prefix to query.
+- **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 **KeyValuePair:**
@@ -380,7 +379,7 @@ Retrieves the key/value pairs that share the same prefix. The key/value pairs ar
  </TabItem>
 <TabItem value="CLI">
 
-Get key/values by prefix:
+Get key/values by bucket prefix:
 
 ```visual-basic
 $ kahuna-cli --set services/auth/instance-1 --value node1
@@ -401,19 +400,18 @@ r0 services/auth/instance-2 node2
 
 ### Scan By Prefix
 
-Scan all nodes in the cluster searching for key/value pairs where the key start with the specified prefix. The key/value pairs data are taken from the moment
+Scan all nodes in the cluster searching for key/value pairs where the key starts with the specified prefix. The key/value pairs data are taken from the moment
 the node is visited. It can contain stale data. This API is slow because it scans all nodes and internal workers for keys.
 
 <Tabs>
 <TabItem value="API">
 
 ```csharp
-(KeyValuePair[]) ScanByPrefix(string prefix, Durability durability);
+Task<List<KahunaKeyValue>> ScanAllByPrefix(string prefixKey, KeyValueDurability durability);
 ```
 
-- **key:** The key to be queried.
-- **revision:** The revision to be returned.
-- **durability:** Defines whether the keys durability is **Ephemeral** or **Persistent**.
+- **prefixKey:** The prefix to scan for.
+- **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 **KeyValuePair:**

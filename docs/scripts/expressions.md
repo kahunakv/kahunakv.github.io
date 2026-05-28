@@ -27,13 +27,11 @@ These allow you to perform basic mathematical operations:
 - `-` Subtraction
 - `*` Multiplication
 - `/` Division
-- `%` Modulo (remainder)
 
 **Example:**
 
 ```visual-basic
 let result = (10 + 5) * 2  # result is 30
-let remainder = 17 % 3     # remainder is 2
 ```
 
 These operators can be used with numeric values and expressions within your script logic.
@@ -107,9 +105,8 @@ function_name(arg1, arg2, ...)
 
 ```ruby
 let name = upper("alice")             # returns "ALICE"
-let a_number = round(10.5)            # rounds a number
+let a_number = round(10.55, 1)        # returns 10.6
 let json_str = to_json([10, 42, 30])  # serializes to JSON
 ```
 
 These functions cover areas like string manipulation, key/value operations, math, time, JSON handling, and more—making Kahuna Script a powerful tool for writing logic close to the data.
-

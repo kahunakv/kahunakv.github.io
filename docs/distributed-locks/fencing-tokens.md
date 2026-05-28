@@ -1,8 +1,7 @@
 
 # Fencing Tokens
 
-A fencing token is a monotonically increasing number (e.g., version number) issued every time a lock is acquired.
-It acts as a logical timestamp to resolve stale client operations.
+A fencing token is a monotonically increasing number (e.g., version number) issued every time a lock is acquired. It acts as a logical timestamp to resolve stale client operations.
 
 How Leases + Fencing Tokens can provide Strong Mutual Exclusion:
 
