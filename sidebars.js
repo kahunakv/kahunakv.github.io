@@ -111,6 +111,18 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Internals',
+      items: [
+        'internals',
+        'internals/actor-model',
+        'internals/wal-and-persistence',
+        'internals/replication',
+        'internals/mvcc',
+        'internals/sequences'
+      ],
+    },
+    {
+      type: 'category',
       label: 'Storage',
       items: ['storage/overview'],
     },

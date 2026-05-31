@@ -40,4 +40,4 @@ r1 500 8ms
 
 > In the case of ephemeral storage, the server stores a limited number of recent revisions. If you need to store all revisions of a key, you should use persistent storage.
 
-Check the [revisions](../../distributed-keyvalue-store/revisions) section for more information about how they work.
+Check the [revisions](/docs/distributed-keyvalue-store/revisions/) section for more information about how they work.

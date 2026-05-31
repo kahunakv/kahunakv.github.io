@@ -38,4 +38,4 @@ get `config/limits/max-connections` at 1
 r1 500 8ms
 ```
 
-Check the [revisions](../../distributed-keyvalue-store/revisions) section for more information about how they work.
+Check the [revisions](/docs/distributed-keyvalue-store/revisions/) section for more information about how they work.

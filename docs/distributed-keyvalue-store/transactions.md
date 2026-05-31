@@ -88,7 +88,7 @@ begin
 end
 ```
 
-Learn more about buckets and keys distribution in the [previous section](buckets)
+Learn more about buckets and keys distribution in the [previous section](/docs/distributed-keyvalue-store/buckets/)
 
 ## Transaction Lifecycle
 

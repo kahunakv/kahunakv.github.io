@@ -14,7 +14,7 @@ The **distributed locks** system can be used for **leader election, safe deploym
 
 The general idea of a distributed lock is that only one process can acquire the lock at a time, while other processes that attempt to acquire it concurrently must either retry or give up. This condition where only one process can hold the lock at a time is what ensures the safety of executing certain critical operations without risking double processing or data duplication.
 
-In this example, the lock key is set with a **[lease](../distributed-locks/leases)**. If the process crashes or fails to delete the lock key, the lock will automatically expire and be cleaned up after the lease time ends (e.g., 60 seconds). This helps ensure that locks are not left dangling if something goes wrong.
+In this example, the lock key is set with a **[lease](/docs/distributed-locks/leases/)**. If the process crashes or fails to delete the lock key, the lock will automatically expire and be cleaned up after the lease time ends (e.g., 60 seconds). This helps ensure that locks are not left dangling if something goes wrong.
 
 ```csharp
 // Create a Kahuna client (it can be a global instance)
@@ -106,7 +106,7 @@ This scenario is common in systems that use distributed task queues (e.g., using
 
 ### Prevent double backup process
 
-While the locking system can generally be used from an application via a **[Kahuna client](../dotnet-client)** for a specific programming language, it can also be used from the command line with **[kahuna-cli](../kahuna-cli)** to assist with DevOps scripts. In the following example, we’ll use a distributed lock to prevent two processes on different nodes from attempting to back up a PostgreSQL database at the same time:
+While the locking system can generally be used from an application via a **[Kahuna client](/docs/dotnet-client/)** for a specific programming language, it can also be used from the command line with **[kahuna-cli](/docs/kahuna-cli/)** to assist with DevOps scripts. In the following example, we’ll use a distributed lock to prevent two processes on different nodes from attempting to back up a PostgreSQL database at the same time:
 
 ```bash
 #!/bin/bash

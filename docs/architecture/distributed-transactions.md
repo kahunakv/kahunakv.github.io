@@ -6,7 +6,7 @@ import Architecture3 from '../assets/architecture3.png';
 
 Kahuna implements a robust distributed transaction system that combines multi-version concurrency control (MVCC), two-phase commit protocol, and Raft consensus to ensure data consistency and high availability across its distributed key-value store infrastructure.
 
-Let’s look at the following [Kahuna script](../scripts) example, where we increment the maximum robots capacity per region as long as it doesn’t exceed the global cap:
+Let’s look at the following [Kahuna script](/docs/scripts/) example, where we increment the maximum robots capacity per region as long as it doesn’t exceed the global cap:
 
 ```visual-basic
 let us1_amount = get robots_us1
