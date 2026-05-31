@@ -2,7 +2,7 @@
 <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
     <channel>
         <title>Kahuna Blog</title>
-        <link>https://kahunakv.github.io/blog</link>
+        <link>https://kahunakv.github.io/blog/</link>
         <description>Kahuna Blog</description>
         <lastBuildDate>Tue, 25 Mar 2025 00:00:00 GMT</lastBuildDate>
         <docs>https://validator.w3.org/feed/docs/rss2.html</docs>
@@ -10,8 +10,8 @@
         <language>en</language>
         <item>
             <title><![CDATA[Why I Built Kahuna - A New Take on Distributed Key/Value Storage]]></title>
-            <link>https://kahunakv.github.io/blog/welcome</link>
-            <guid>https://kahunakv.github.io/blog/welcome</guid>
+            <link>https://kahunakv.github.io/blog/welcome/</link>
+            <guid>https://kahunakv.github.io/blog/welcome/</guid>
             <pubDate>Tue, 25 Mar 2025 00:00:00 GMT</pubDate>
             <description><![CDATA[About eight years ago, I had the opportunity to build systems for my company using Erlang. Discovering the actor model was a turning point in how I designed systems from that moment on. However, for strategic reasons, we had to move away from Erlang and focus on the .NET ecosystem. While robust and well-established actor model libraries for C# exist, they included many features we didn’t need, and their performance wasn’t entirely satisfactory for our use cases.]]></description>
             <content:encoded><![CDATA[<p>About eight years ago, I had the opportunity to build systems for my company using <strong><a href="https://www.erlang.org/" target="_blank" rel="noopener noreferrer" class="">Erlang</a></strong>. Discovering the actor model was a turning point in how I designed systems from that moment on. However, for strategic reasons, we had to move away from Erlang and focus on the .NET ecosystem. While robust and well-established actor model libraries for C# exist, they included many features we didn’t need, and their performance wasn’t entirely satisfactory for our use cases.
@@ -23,11 +23,11 @@ This led me to the idea of building a lightweight library.</p>
 <p>With Kommander and Nixie providing a solid foundation, I recognized additional needs that could be addressed with a new tool based on this technology. This led to the idea of building an auxiliary tool to centralize distributed concerns such as locks, leader election, configuration management, sessions, caching, sequencing, and more.</p>
 <p>In the past, we relied on various tools like Redis, Zookeeper, and even database tables to solve these challenges. However, it was easy to misuse a tool or assume it provided guarantees or performance levels that it actually didn’t.</p>
 <p>Taking all of this into account, I created Kahuna.</p>
-<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-the-name">Why the Name?<a href="https://kahunakv.github.io/blog/welcome#why-the-name" class="hash-link" aria-label="Direct link to Why the Name?" title="Direct link to Why the Name?" translate="no">​</a></h2>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-the-name">Why the Name?<a href="https://kahunakv.github.io/blog/welcome/#why-the-name" class="hash-link" aria-label="Direct link to Why the Name?" title="Direct link to Why the Name?" translate="no">​</a></h2>
 <p>The name "Kahuna" comes from a Hawaiian word traditionally used to describe an expert in a field—a fitting metaphor for a tool that aims to be the expert all services consult for coordination and operation. Inspired by battle-tested systems like Redis, etcd, Zookeeper, and Google Spanner, Kahuna is more than just another key/value store.</p>
-<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-net-breaking-the-language-paradigm">Why .NET? Breaking the Language Paradigm<a href="https://kahunakv.github.io/blog/welcome#why-net-breaking-the-language-paradigm" class="hash-link" aria-label="Direct link to Why .NET? Breaking the Language Paradigm" title="Direct link to Why .NET? Breaking the Language Paradigm" translate="no">​</a></h2>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-net-breaking-the-language-paradigm">Why .NET? Breaking the Language Paradigm<a href="https://kahunakv.github.io/blog/welcome/#why-net-breaking-the-language-paradigm" class="hash-link" aria-label="Direct link to Why .NET? Breaking the Language Paradigm" title="Direct link to Why .NET? Breaking the Language Paradigm" translate="no">​</a></h2>
 <p>One of my primary motivations for building Kahuna was to demonstrate that powerful, low-level systems infrastructure isn’t limited to C++, Rust, Java, or Go. By implementing Kahuna in modern C# and .NET technologies, I wanted to challenge the prevailing notion that high-performance distributed systems can only be built with traditional systems programming languages. This isn’t a hard rule—there are great tools like Garnet, recently led by Microsoft. Similarly, in Java (a language with a garbage collector), you can find powerful distributed systems like Kafka, Cassandra, and Spark. This choice reflects not just a technical preference but a broader vision of expanding the distributed systems development ecosystem.</p>
-<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-three-pillars-of-kahuna">The Three Pillars of Kahuna<a href="https://kahunakv.github.io/blog/welcome#the-three-pillars-of-kahuna" class="hash-link" aria-label="Direct link to The Three Pillars of Kahuna" title="Direct link to The Three Pillars of Kahuna" translate="no">​</a></h2>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-three-pillars-of-kahuna">The Three Pillars of Kahuna<a href="https://kahunakv.github.io/blog/welcome/#the-three-pillars-of-kahuna" class="hash-link" aria-label="Direct link to The Three Pillars of Kahuna" title="Direct link to The Three Pillars of Kahuna" translate="no">​</a></h2>
 <p>Kahuna brings together three critical distributed system primitives in one platform:</p>
 <ol>
 <li class=""><strong>A Distributed Key/Value Store</strong> – for metadata storage, configuration, caching, sessions, and more.</li>
@@ -35,22 +35,22 @@ This led me to the idea of building a lightweight library.</p>
 <li class=""><strong>A Distributed Sequencer</strong> – for generating globally ordered events, crucial for ensuring consistency in distributed workflows.</li>
 </ol>
 <p>Many systems provide these functionalities separately, but I wanted <strong>a single, unified solution</strong> that integrates all three while maintaining strong consistency, high availability, simplicity, and efficient scalability.</p>
-<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-kahuna">Why Kahuna?<a href="https://kahunakv.github.io/blog/welcome#why-kahuna" class="hash-link" aria-label="Direct link to Why Kahuna?" title="Direct link to Why Kahuna?" translate="no">​</a></h2>
-<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="distributed-transactions-with-snapshot-isolation-or-serializable-consistency"><strong>Distributed Transactions with Snapshot Isolation or Serializable Consistency</strong><a href="https://kahunakv.github.io/blog/welcome#distributed-transactions-with-snapshot-isolation-or-serializable-consistency" class="hash-link" aria-label="Direct link to distributed-transactions-with-snapshot-isolation-or-serializable-consistency" title="Direct link to distributed-transactions-with-snapshot-isolation-or-serializable-consistency" translate="no">​</a></h3>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-kahuna">Why Kahuna?<a href="https://kahunakv.github.io/blog/welcome/#why-kahuna" class="hash-link" aria-label="Direct link to Why Kahuna?" title="Direct link to Why Kahuna?" translate="no">​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="distributed-transactions-with-snapshot-isolation-or-serializable-consistency"><strong>Distributed Transactions with Snapshot Isolation or Serializable Consistency</strong><a href="https://kahunakv.github.io/blog/welcome/#distributed-transactions-with-snapshot-isolation-or-serializable-consistency" class="hash-link" aria-label="Direct link to distributed-transactions-with-snapshot-isolation-or-serializable-consistency" title="Direct link to distributed-transactions-with-snapshot-isolation-or-serializable-consistency" translate="no">​</a></h3>
 <p>Kahuna supports multi-node <strong>distributed transactions</strong> with <strong>optimistic or pessimistic locking</strong>, allowing developers to balance performance and strict consistency. Transactions can achieve either:</p>
 <ul>
 <li class=""><strong>Snapshot Isolation</strong> (MVCC-based) for high-performance reads without conflicts.</li>
 <li class=""><strong>Serializable Consistency</strong> for the strongest level of isolation.</li>
 </ul>
 <p>This makes Kahuna ideal for applications requiring strict data integrity guarantees in highly concurrent environments.</p>
-<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="two-durability-modes-persistent--ephemeral"><strong>Two Durability Modes: Persistent &amp; Ephemeral</strong><a href="https://kahunakv.github.io/blog/welcome#two-durability-modes-persistent--ephemeral" class="hash-link" aria-label="Direct link to two-durability-modes-persistent--ephemeral" title="Direct link to two-durability-modes-persistent--ephemeral" translate="no">​</a></h3>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="two-durability-modes-persistent--ephemeral"><strong>Two Durability Modes: Persistent &amp; Ephemeral</strong><a href="https://kahunakv.github.io/blog/welcome/#two-durability-modes-persistent--ephemeral" class="hash-link" aria-label="Direct link to two-durability-modes-persistent--ephemeral" title="Direct link to two-durability-modes-persistent--ephemeral" translate="no">​</a></h3>
 <p>Not all data needs permanent storage. Kahuna supports <strong>two durability modes</strong> to optimize storage and performance:</p>
 <ul>
 <li class=""><strong>Persistent Mode</strong>: Data is replicated across nodes for <strong>durability and fault tolerance</strong>, ensuring high availability even during failures.</li>
 <li class=""><strong>Ephemeral Mode</strong>: Designed for <strong>short-lived objects</strong> such as <strong>caching, short sessions, and temporary leases/locks</strong>, ensuring lightweight storage without unnecessary replication overhead.</li>
 </ul>
 <p>This flexibility allows developers to use Kahuna for both <strong>long-term state storage and temporary coordination needs.</strong></p>
-<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="a-more-powerful-approach-to-distributed-locking"><strong>A More Powerful Approach to Distributed Locking</strong><a href="https://kahunakv.github.io/blog/welcome#a-more-powerful-approach-to-distributed-locking" class="hash-link" aria-label="Direct link to a-more-powerful-approach-to-distributed-locking" title="Direct link to a-more-powerful-approach-to-distributed-locking" translate="no">​</a></h3>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="a-more-powerful-approach-to-distributed-locking"><strong>A More Powerful Approach to Distributed Locking</strong><a href="https://kahunakv.github.io/blog/welcome/#a-more-powerful-approach-to-distributed-locking" class="hash-link" aria-label="Direct link to a-more-powerful-approach-to-distributed-locking" title="Direct link to a-more-powerful-approach-to-distributed-locking" translate="no">​</a></h3>
 <p>Distributed locking is <strong>notoriously difficult</strong> to get right, and perfect distributed locks are nearly impossible. Kahuna provides <strong>tools to help developers mitigate edge cases</strong>, including:</p>
 <ul>
 <li class=""><strong>Persisted Lock State</strong>: Ensuring another node can maintain the lock state if the leader fails.</li>
@@ -58,21 +58,21 @@ This led me to the idea of building a lightweight library.</p>
 <li class=""><strong>Fencing Tokens</strong>: Preventing stale lock holders from causing race conditions.</li>
 </ul>
 <p>These mechanisms <strong>greatly reduce</strong> the risk of deadlocks, split-brain scenarios, and other failure conditions common in distributed environments.</p>
-<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="scripting-language-integration"><strong>Scripting Language Integration</strong><a href="https://kahunakv.github.io/blog/welcome#scripting-language-integration" class="hash-link" aria-label="Direct link to scripting-language-integration" title="Direct link to scripting-language-integration" translate="no">​</a></h2>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="scripting-language-integration"><strong>Scripting Language Integration</strong><a href="https://kahunakv.github.io/blog/welcome/#scripting-language-integration" class="hash-link" aria-label="Direct link to scripting-language-integration" title="Direct link to scripting-language-integration" translate="no">​</a></h2>
 <p>A unique feature of Kahuna is its built-in scripting language, allowing developers to create consistent, transactional code that interacts directly with the key/value store.</p>
-<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="strong-consistency-with-raft-based-consensus"><strong>Strong Consistency with Raft-Based Consensus</strong><a href="https://kahunakv.github.io/blog/welcome#strong-consistency-with-raft-based-consensus" class="hash-link" aria-label="Direct link to strong-consistency-with-raft-based-consensus" title="Direct link to strong-consistency-with-raft-based-consensus" translate="no">​</a></h3>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="strong-consistency-with-raft-based-consensus"><strong>Strong Consistency with Raft-Based Consensus</strong><a href="https://kahunakv.github.io/blog/welcome/#strong-consistency-with-raft-based-consensus" class="hash-link" aria-label="Direct link to strong-consistency-with-raft-based-consensus" title="Direct link to strong-consistency-with-raft-based-consensus" translate="no">​</a></h3>
 <p>Kahuna ensures <strong>strong consistency</strong> using the <strong>Raft consensus algorithm</strong>, with each partition managed by its own <strong>Raft group</strong>. This design provides:</p>
 <ul>
 <li class=""><strong>Fault tolerance</strong>: Automatic leader election and replication ensure high availability.</li>
 <li class=""><strong>Consistency guarantees</strong>: Every write is <strong>strongly consistent</strong> across multiple replicas.</li>
 </ul>
-<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="scalability-through-dynamic-partitioning"><strong>Scalability Through Dynamic Partitioning</strong><a href="https://kahunakv.github.io/blog/welcome#scalability-through-dynamic-partitioning" class="hash-link" aria-label="Direct link to scalability-through-dynamic-partitioning" title="Direct link to scalability-through-dynamic-partitioning" translate="no">​</a></h3>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="scalability-through-dynamic-partitioning"><strong>Scalability Through Dynamic Partitioning</strong><a href="https://kahunakv.github.io/blog/welcome/#scalability-through-dynamic-partitioning" class="hash-link" aria-label="Direct link to scalability-through-dynamic-partitioning" title="Direct link to scalability-through-dynamic-partitioning" translate="no">​</a></h3>
 <p>Kahuna is <strong>horizontally scalable</strong>, meaning it expands with infrastructure growth. It supports:</p>
 <ul>
 <li class=""><strong>Dynamic partitioning</strong> (similar to sharding), allowing for <strong>load balancing across nodes</strong>.</li>
 <li class=""><strong>Automatic rebalancing</strong>, ensuring even workload distribution.</li>
 </ul>
-<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="kahuna-a-unified-solution-for-modern-distributed-applications">Kahuna: A Unified Solution for Modern Distributed Applications<a href="https://kahunakv.github.io/blog/welcome#kahuna-a-unified-solution-for-modern-distributed-applications" class="hash-link" aria-label="Direct link to Kahuna: A Unified Solution for Modern Distributed Applications" title="Direct link to Kahuna: A Unified Solution for Modern Distributed Applications" translate="no">​</a></h2>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="kahuna-a-unified-solution-for-modern-distributed-applications">Kahuna: A Unified Solution for Modern Distributed Applications<a href="https://kahunakv.github.io/blog/welcome/#kahuna-a-unified-solution-for-modern-distributed-applications" class="hash-link" aria-label="Direct link to Kahuna: A Unified Solution for Modern Distributed Applications" title="Direct link to Kahuna: A Unified Solution for Modern Distributed Applications" translate="no">​</a></h2>
 <p>Kahuna provides a <strong>powerful yet flexible</strong> foundation for building <strong>reliable, scalable, and highly available</strong> distributed applications. By integrating <strong>storage, coordination, and sequencing</strong> into one system, it reduces complexity and offers developers a <strong>consistent, battle-tested approach to managing distributed workloads.</strong></p>
 <p>Kahuna is now <strong>open-source</strong>, and I’d love to hear your thoughts! Whether you need a <strong>transactional key/value store, a robust distributed lock system, or a global event sequencer</strong>, <strong>Kahuna is built to handle it all.</strong></p>]]></content:encoded>
             <category>kahuna</category>
