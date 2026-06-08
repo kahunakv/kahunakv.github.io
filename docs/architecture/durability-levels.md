@@ -46,15 +46,11 @@ This process ensures that all read and write operations maintain consistency eve
 
 ## Cache Entries
 
-Both **Ephemeral** and **Persistent** durability modes maintain an in-memory cache entry to accelerate read operations. These cache entries allow for thousands of reads per second, regardless of whether the key is persisted to disk. When memory capacity is reached, cache entries may be evicted based on an LRU (Least Recently Used) algorithm.
+Both **Ephemeral** and **Persistent** durability modes maintain in-memory key/value entries to accelerate reads. Persistent entries can be reloaded from durable storage after eviction, while ephemeral entries are removed permanently because they have no durable backing store.
 
-Key eviction occurs based on the following criteria:
+Kahuna runs a bounded key/value collector independently on each actor. The collector first removes definite garbage such as deleted, undefined, and expired entries. If the actor is still above its entry or byte budget, it uses a sampled approximate LRU pass to evict older entries without sorting the entire store. On configurable cycles it also trims retained revision and MVCC metadata for hot keys that remain in memory.
 
-- Expired keys.
-- Keys that have not been recently used, as determined by a configurable time window.
-- A sample of keys, with the persistent key's on-disk representation remaining intact.
-
-The eviction algorithm is executed independently for each partition, so that memory can be freed concurrently without impacting incoming read or write operations.
+See [Keys Eviction](/docs/architecture/keys-eviction/) for the full algorithm and configuration details.
 
 ## Summary of Durability Modes: Advantages and Disadvantages
 

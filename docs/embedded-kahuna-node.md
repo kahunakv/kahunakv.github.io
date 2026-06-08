@@ -71,8 +71,40 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `KeyValueWorkers` | `Environment.ProcessorCount` | Key/value worker count. |
 | `BackgroundWriterWorkers` | `1` | Background persistence worker count. |
 | `DefaultTransactionTimeout` | `5000` | Default transaction timeout in milliseconds. |
-
-Additional cache, script-cache, I/O thread, election-timeout, and compaction options mirror the server configuration defaults.
+| `ScriptCacheExpiration` | `1 minute` | How long parsed scripts stay cached. |
+| `RevisionsToKeepCached` | `100` | Number of key revisions to keep cached in memory. |
+| `CacheEntryTtl` | `5 minutes` | Maximum age of cached entries before they become eviction candidates. |
+| `CacheEntriesToRemove` | `1000` | Maximum number of cache entries removed per eviction pass. |
+| `CollectionInterval` | `60 seconds` | Interval for cache collection and eviction checks. |
+| `MaxEntriesPerActor` | `50000` | Maximum cached entries per actor before collection pressure applies. |
+| `MaxBytesPerActor` | `268435456` | Approximate maximum cached bytes per actor before collection pressure applies. |
+| `CollectBatchMax` | `1000` | Maximum number of entries considered in a collection batch. |
+| `RevisionRetention` | `16` | Number of revisions retained for in-memory revision history. |
+| `LruSampleSize` | `5` | Number of candidates sampled for LRU-style eviction decisions. |
+| `LruSampleScanMax` | `256` | Maximum number of entries scanned while building an LRU sample. |
+| `MetadataTrimInterval` | `4` | Collection cycle interval for metadata trimming. `0` disables metadata trimming. |
+| `DirtyObjectsWriterDelay` | `1000` | Delay between dirty object writer flush passes, in milliseconds. |
+| `ReadIOThreads` | `8` | Number of Raft read I/O threads. |
+| `WriteIOThreads` | `8` | Number of Raft write I/O threads. |
+| `HttpScheme` | `https://` | HTTP scheme used by Raft REST communication. |
+| `HttpAuthBearerToken` | empty | Bearer token sent with Raft REST communication. |
+| `HttpTimeout` | `5` | Raft REST request timeout in seconds. |
+| `HttpVersion` | `2.0` | HTTP protocol version used by Raft REST communication. |
+| `HeartbeatInterval` | `500 ms` | Leader heartbeat interval. |
+| `RecentHeartbeat` | `100 ms` | Recent-heartbeat window. |
+| `VotingTimeout` | `1500 ms` | Vote wait timeout. |
+| `CheckLeaderInterval` | `250 ms` | Leader check interval. |
+| `TimerInitialDelay` | `2500 ms` | Initial delay before Raft timers start. |
+| `UpdateNodesInterval` | `5000 ms` | Node registry update interval. |
+| `StartElectionTimeout` | `500` | Minimum election timeout in milliseconds. |
+| `EndElectionTimeout` | `1500` | Maximum election timeout in milliseconds. |
+| `StartElectionTimeoutIncrement` | `100` | Minimum election timeout increment in milliseconds. |
+| `EndElectionTimeoutIncrement` | `200` | Maximum election timeout increment in milliseconds. |
+| `SlowRaftStateMachineLog` | `50` | Slow state-machine operation log threshold in milliseconds. |
+| `SlowRaftWALMachineLog` | `25` | Slow WAL state-machine operation log threshold in milliseconds. |
+| `CompactEveryOperations` | `1000` | Number of committed operations between automatic Raft WAL compaction checks. |
+| `CompactNumberEntries` | `50` | Number of Raft WAL entries removed per compaction batch. |
+| `MaxEntriesPerCompaction` | `5000` | Maximum Raft WAL entries processed per compaction run. |
 
 ## Notes
 
