@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">Durability Levels | Kahuna</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://kahunakv.github.io/img/docusaurus-social-card.jpg"><meta data-rh="true" name="twitter:image" content="https://kahunakv.github.io/img/docusaurus-social-card.jpg"><meta data-rh="true" property="og:url" content="https://kahunakv.github.io/docs/architecture/durability-levels/"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Durability Levels | Kahuna"><meta data-rh="true" name="description" content="Persistent Durability"><meta data-rh="true" property="og:description" content="Persistent Durability"><link data-rh="true" rel="icon" href="/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://kahunakv.github.io/docs/architecture/durability-levels/"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/architecture/durability-levels/" hreflang="en"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/architecture/durability-levels/" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Durability Levels","item":"https://kahunakv.github.io/docs/architecture/durability-levels"}]}</script><link rel="alternate" type="application/rss+xml" href="/blog/rss.xml" title="Kahuna RSS Feed">
-<link rel="alternate" type="application/atom+xml" href="/blog/atom.xml" title="Kahuna Atom Feed"><link rel="stylesheet" href="/assets/css/styles.dc0c12e1.css">
-<script src="/assets/js/runtime~main.f9b59f7e.js" defer="defer"></script>
-<script src="/assets/js/main.1a22c615.js" defer="defer"></script>
+<link rel="alternate" type="application/atom+xml" href="/blog/atom.xml" title="Kahuna Atom Feed"><link rel="stylesheet" href="/assets/css/styles.28097f05.css">
+<script src="/assets/js/runtime~main.5edc57ea.js" defer="defer"></script>
+<script src="/assets/js/main.1fcaa5c8.js" defer="defer"></script>
 </head>
 <body>
 <svg style="display: none;"><defs>
@@ -48,14 +48,9 @@
 </ul>
 <p>This process ensures that all read and write operations maintain consistency even under concurrent access.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="cache-entries">Cache Entries<a href="#cache-entries" class="hash-link" aria-label="Direct link to Cache Entries" title="Direct link to Cache Entries" translate="no">​</a></h2>
-<p>Both <strong>Ephemeral</strong> and <strong>Persistent</strong> durability modes maintain an in-memory cache entry to accelerate read operations. These cache entries allow for thousands of reads per second, regardless of whether the key is persisted to disk. When memory capacity is reached, cache entries may be evicted based on an LRU (Least Recently Used) algorithm.</p>
-<p>Key eviction occurs based on the following criteria:</p>
-<ul>
-<li class="">Expired keys.</li>
-<li class="">Keys that have not been recently used, as determined by a configurable time window.</li>
-<li class="">A sample of keys, with the persistent key&#x27;s on-disk representation remaining intact.</li>
-</ul>
-<p>The eviction algorithm is executed independently for each partition, so that memory can be freed concurrently without impacting incoming read or write operations.</p>
+<p>Both <strong>Ephemeral</strong> and <strong>Persistent</strong> durability modes maintain in-memory key/value entries to accelerate reads. Persistent entries can be reloaded from durable storage after eviction, while ephemeral entries are removed permanently because they have no durable backing store.</p>
+<p>Kahuna runs a bounded key/value collector independently on each actor. The collector first removes definite garbage such as deleted, undefined, and expired entries. If the actor is still above its entry or byte budget, it uses a sampled approximate LRU pass to evict older entries without sorting the entire store. On configurable cycles it also trims retained revision and MVCC metadata for hot keys that remain in memory.</p>
+<p>See <a class="" href="/docs/architecture/keys-eviction/">Keys Eviction</a> for the full algorithm and configuration details.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="summary-of-durability-modes-advantages-and-disadvantages">Summary of Durability Modes: Advantages and Disadvantages<a href="#summary-of-durability-modes-advantages-and-disadvantages" class="hash-link" aria-label="Direct link to Summary of Durability Modes: Advantages and Disadvantages" title="Direct link to Summary of Durability Modes: Advantages and Disadvantages" translate="no">​</a></h2>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="persistent-durability-1">Persistent Durability<a href="#persistent-durability-1" class="hash-link" aria-label="Direct link to Persistent Durability" title="Direct link to Persistent Durability" translate="no">​</a></h3>
 <p><strong>Advantages:</strong></p>
