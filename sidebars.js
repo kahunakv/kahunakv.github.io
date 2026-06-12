@@ -42,6 +42,7 @@ const sidebars = {
       label: 'Distributed Key/Value Store',
       items: [
         'distributed-keyvalue-store',
+        'distributed-keyvalue-store/key-range-sharding',
         'distributed-keyvalue-store/cas',
         'distributed-keyvalue-store/revisions',
         'distributed-keyvalue-store/transactions',

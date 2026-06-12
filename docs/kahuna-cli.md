@@ -72,7 +72,7 @@ The CLI can also execute one operation and exit. Common options include:
 ```bash
 kahuna-cli --set my-config --value my-value
 kahuna-cli --get my-config
-kahuna-cli --get-by-prefix services/auth
+kahuna-cli --get-by-bucket services
 kahuna-cli --scan-by-prefix services
 kahuna-cli --lock jobs/email --expires 30000
 kahuna-cli --extend-lock jobs/email --owner <owner> --expires 30000

@@ -42,6 +42,17 @@ These features make Kahuna a great solution for small transactional workloads re
 
 In Kahuna, a [revision](/docs/distributed-keyvalue-store/revisions) is a monotonic, ever-increasing number that represents the global order of modifications in the key-value store. Every time a change (write, delete, or transaction) occurs in Kahuna, the revision number increases, ensuring strong consistency and strict ordering of operations. Each revision is a 64-bit cluster-wide counter.
 
+## Routing Model
+
+Kahuna supports two routing models for key/value data:
+
+- **Hash routing** is the default. It spreads key spaces across partitions and is the usual choice for service configuration, metadata, caches, and general-purpose key/value state.
+- **Key-range routing** is an opt-in model for ordered key spaces that need locality, ordered scans, and range-scoped concurrency.
+
+For grouped prefixes such as `services/auth` and `services/payments`, Kahuna can keep the whole bucket on one partition and serve it with `get by bucket`. For larger ordered spaces such as `users/000001` or `orders/2026/000001`, key-range routing allows the space to split into contiguous ranges over time instead of forcing the whole prefix to stay on one partition forever.
+
+Learn more in [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) and [Buckets](/docs/distributed-keyvalue-store/buckets/).
+
 ## API
 
 Kahuna provides an API for performing various operations on key/value pairs:
@@ -357,7 +368,7 @@ r0 my-value-1 13ms
 
 ### Get By Bucket
 
-Retrieves key/value pairs that share the same bucket. The operation is consistent when the prefix identifies a bucket, because all keys in that bucket are routed to the same partition.
+Retrieves key/value pairs that share the same bucket. The operation is consistent when the prefix identifies a single-partition bucket, because all keys in that bucket are routed to the same partition.
 
 <Tabs>
 <TabItem value="API">
@@ -388,13 +399,15 @@ r0 set 11ms
 $ kahuna-cli --set services/auth/instance-2 --value node2
 r0 set 10ms
 
-$ kahuna-cli --get-by-prefix services/auth
+$ kahuna-cli --get-by-bucket services/auth
 r0 services/auth/instance-1 node1
 r0 services/auth/instance-2 node2
 ```
 
 </TabItem>
 </Tabs>
+
+Use `get by bucket` for grouped prefixes that are intentionally single-partition. For large ordered key spaces that may split over time, see [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/).
 
 ---
 

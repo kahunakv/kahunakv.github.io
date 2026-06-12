@@ -85,7 +85,7 @@ This approach improves concurrency for **read-heavy workloads** but requires con
 
 ## Key Buckets
 
-In the previous example, we saw how a semi-random distribution of keys across different partitions—based on consistent hashing helps distribute processing across multiple nodes, workers and partitions **to potentially take full advantage of the compute capacity** in the Kahuna cluster. However, a multi-node key distribution can increase the number of network round-trips required to complete the transaction. While Kahuna performs optimizations like batching and pipelining to reduce the impact of this, using Key Buckets can help enforce that all keys reside in the same partition and worker:
+In the previous example, we saw how hash-routed keys can spread a transaction across multiple partitions. That helps distribute load, but it can also increase the number of leader hops and network round-trips required to finish the transaction. When a working set should stay local, Key Buckets let you keep related keys on one partition:
 
 ```visual-basic
 let us1_amount = get `data-centers/robots_us1`
@@ -105,7 +105,7 @@ set `data-centers/robots_eu1` eu1_amount + @amount_to_incr
 set `data-centers/robots_sa1` sa1_amount + @amount_to_incr
 ```
 
-By using a common key bucket like `data-centers/`, you’re telling Kahuna that **consistent hashing should be limited to the bucket rather than the full key**. This causes all keys under that bucket to be hashed together and routed to the same partition.
+By using a common bucket such as `data-centers/`, you’re telling Kahuna to route the whole bucket as one single-partition group. That causes all keys under that bucket to land on the same partition.
 
 The new partition distribution would look like this:
 
@@ -113,7 +113,9 @@ The new partition distribution would look like this:
 <img src={Architecture3} height="350" />
 </div>
 
-This approach helps **ensure that related keys are co-located, reducing cross-partition communication and improving transaction performance**.
+This approach helps **co-locate related keys, reduce cross-partition coordination, and improve transaction performance**.
+
+Buckets are the right tool when one partition should own the whole prefix. For larger ordered key spaces that may need to split over time, use [key-range sharding](/docs/distributed-keyvalue-store/key-range-sharding/) instead.
 
 ## Concurrency Control and Versioning
 

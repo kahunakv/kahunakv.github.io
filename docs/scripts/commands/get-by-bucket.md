@@ -25,4 +25,6 @@ return count(services)
 
 ## Notes
 
-`get by bucket` is a consistent operation because all keys in the same bucket are routed to the same partition. Use this command when your schema intentionally groups related keys under a shared bucket prefix.
+`get by bucket` is a consistent operation because all keys in the same bucket are routed to the same partition. Use this command when your schema intentionally groups related keys under a shared single-partition bucket prefix.
+
+If a key space is configured for key-range routing and later splits into multiple ordered ranges, whole-space traversal should use range-oriented reads instead of assuming the entire prefix still lives on one partition.

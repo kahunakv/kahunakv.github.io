@@ -76,7 +76,7 @@ Even if `feature-x` is disabled mid-transaction by another client, the snapshot 
 
 ## Using `get by bucket` inside a Transaction
 
-All keys in a given **bucket prefix** (e.g., `services/`) are guaranteed to be on the same partition. This enables **bucket reads** to be consistent and transactional:
+All keys in a given **bucket prefix** (e.g., `services/`) are guaranteed to be on the same partition in the default hash-routed model. This enables **bucket reads** to be consistent and transactional:
 
 ```ruby
 begin
@@ -88,7 +88,9 @@ begin
 end
 ```
 
-Learn more about buckets and keys distribution in the [previous section](/docs/distributed-keyvalue-store/buckets/)
+Learn more about buckets and routing in the [Buckets](/docs/distributed-keyvalue-store/buckets/) and [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) sections.
+
+Use `get by bucket` when the prefix is intentionally a **single-partition group**. If a key space is configured for key-range routing and later splits into multiple ranges, whole-space traversal should be treated as an ordered range-read problem rather than a single bucket read.
 
 ## Transaction Lifecycle
 
@@ -124,7 +126,8 @@ Learn more about durabilities in the [dedicated section](../architecture/durabil
 
 ## Best Practices
 
-- **Group keys by prefix** when designing schemas to maximize transactional locality.
+- **Group keys by prefix** when you want a single-partition transactional working set.
+- Use **key-range routing** for large ordered spaces that may need to split over time.
 - Use **ephemeral keys** for high-speed, non-critical paths.
 - Consider **pessimistic locking** for highly contended keys to avoid retries.
 - Monitor retries to detect **hotspots** in your workload.

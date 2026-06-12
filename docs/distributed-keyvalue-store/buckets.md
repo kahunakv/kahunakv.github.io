@@ -1,124 +1,91 @@
+# Buckets
 
-# Key Distribution and Buckets
+Buckets are Kahuna's simplest way to keep a related group of keys on the same partition.
 
-## Regular Key Distribution
+If several keys share the same key space prefix, Kahuna routes them together. That is why keys such as:
 
-Keys, when stored, are distributed across the various nodes over all available partitions. A Kahuna cluster can have dozens, hundreds, or even thousands of partitions spread across active nodes. This ensures that each node acts as a **leader for multiple partitions** and a **follower for others**.  
-
-The ability of a node to be both a leader and a follower simultaneously allows responsibilities to be distributed, enables read and write operations to be accepted from any node, and maximizes the use of the **full compute capacity** available in the cluster.
-
-The algorithm used to decide which partition a key is assigned to is a **range-based consistent hashing** strategy. The entire keyspace is divided into ranges according to the number of active partitions.  
-
-For example, if the keyspace spans from `0` to `1024` and there are **8 partitions**, the distribution would look like this:
-
-| **Partition** | **Range**     |
-|---------------|---------------|
-| Partition 0   | 0–127         |
-| Partition 1   | 128–255       |
-| Partition 2   | 256–383       |
-| Partition 3   | 384–511       |
-| Partition 4   | 512–639       |
-| Partition 5   | 640–767       |
-| Partition 6   | 768–895       |
-| Partition 7   | 896–1024      |
-
-Each key is hashed into this keyspace, and the resulting hash determines which partition it falls into. This approach provides **balanced distribution**, supports **scalability**, and simplifies **rebalancing** when partitions are added or removed.
-
-Now, based on the distribution above, let’s say we want to store the key named `my-config`:
-
-```swift
-set `my-config` "ab10a9bc1924cd"
-r0 set 10ms
-```
-
-By computing the consistent hash: `CH("my-config") = 471`,  
-we determine that it falls within the range `384–511`,  
-which means its **assigned partition is partition 3**.  
-
-This allows Kahuna to **route the key to the correct leader node** for partition 3 and ensure all operations on `my-config` are handled consistently and efficiently.
-
-## Bucket Distribution
-
-Kahuna provides a way to force a group of different keys to be stored in the same partition. By prefixing the keys with a common bucket, you indicate to the hashing algorithm that this bucket should be used to determine the partition associated with the key.
-
-This means that all keys sharing the same bucket prefix—such as `services/auth`, `services/matchmaking` and `services/inventory` be routed to the same partition, allowing for more efficient transaction execution and reduced cross-partition communication.
-
-In the following example, all keys share a common bucket prefix `services`, and therefore they are hashed to the **same partition**:
-
-```ruby
-set "services/auth" "localhost:8081"
-set "services/matchmaking" "localhost:8082"
-set "services/inventory" "localhost:8083"
-```
-
-Because they all begin with the `services/` bucket, the consistent hashing algorithm treats them as part of the **same logical group**, ensuring that they reside in the **same partition**:
-
-```txt
-services/auth  
--------- ----
-^ bucket ^ key
-
-services/matchmaking  
--------- -----------
-^ bucket    ^ key
-
+```text
+services/auth
+services/matchmaking
 services/inventory
--------- ---------
-^ bucket   ^ key
-
-CH("services") -> 5
 ```
 
-## Get by Bucket
+can be read with one consistent `get by bucket "services"` operation.
 
-The fact that all keys are in the same **bucket** and **partition** allows the use of the `get by bucket` operation, which **consistently returns all keys** belonging to the specified bucket.
+## What a Bucket Means
 
-**Example:**
+For keys shaped like `bucket/item`, the **bucket** is the part before the last `/`.
 
-```ruby
-let configs = get by bucket "services"
+Examples:
+
+```text
+services/auth         -> bucket "services"
+services/payments     -> bucket "services"
+tenant-a/config/api   -> bucket "tenant-a/config"
 ```
 
-This retrieves all keys that start with `services/`, such as:
+In the default hash-routed model, Kahuna hashes that bucket boundary so every key in the same bucket goes to the same partition.
 
-- `services/auth`
-- `services/matchmaking`
-- `services/inventory`
+## Why Buckets Are Useful
 
-Because they reside in the **same partition**, this operation is efficient, strongly consistent, and avoids the complexity of querying across multiple partitions and nodes.
+Buckets are a good fit when you want:
 
-Since `get by bucket` is a **consistent operation**, it can also be part of a **transaction**. When used within a transaction, it generates **MVCC (Multi-Version Concurrency Control) entries**, providing **snapshot isolation**. The keys read and modified during the transaction will only be committed if the transaction completes successfully—otherwise, the changes will be discarded.
+- a small related working set to stay on one partition
+- consistent prefix reads with `get by bucket`
+- multi-key transactions that should stay local to one partition
+- simple schemas such as service discovery, tenant settings, or grouped feature flags
 
-### Example:
+Example:
 
 ```ruby
-# Initial setup
 set "services/auth" "localhost:8081"
 set "services/matchmaking" "localhost:8082"
 set "services/inventory" "localhost:8083"
 ```
 
-Later, inside a transaction:
+Because those keys belong to the same bucket, Kahuna can serve them from one partition:
 
 ```ruby
-let all_services = get by bucket "services"
-if count(all_services) == 3 then
-  set "services/users" "localhost:8084"
-end
-
-let all_services = get by bucket "services"
-if count(all_services) == 4 then
-  return true
-end
-
-return false
+let services = get by bucket "services"
 ```
 
-In this example:
+## Buckets and Transactions
 
-- The first `get by bucket` reads a **consistent snapshot** of all keys under `services/`.
-- The logic conditionally adds a new service based on the number of services in the bucket.
-- The second `get by bucket` confirms the new value is visible **within the same transactional snapshot**.
-- If the transaction commits, all changes become visible atomically; if it fails, none are applied.
+`get by bucket` is a consistent operation because the keys in that bucket are served by one partition. That makes it useful inside transactions for multi-key logic:
 
-This showcases how `get by bucket` can be safely used for **multi-key logic** inside transactional flows.
+```ruby
+begin
+ let services = get by bucket "services"
+ if count(services) == 3 then
+  set "services/users" "localhost:8084"
+ end
+ commit
+end
+```
+
+This pattern is ideal when the bucket is intentionally a **single-partition group**.
+
+## When Buckets Are Not Enough
+
+Buckets are not the same as **key-range sharding**.
+
+Use buckets when one partition is the right home for the whole prefix. Use key-range routing when:
+
+- keys must stay ordered
+- the key space may grow beyond one partition
+- you need range-scoped locality and future splits
+
+Examples of key spaces that often want key-range routing:
+
+- `users/0001`, `users/0002`, `users/0003`
+- `orders/2026/000001`, `orders/2026/000002`
+- time-ordered event or ledger keys
+
+Learn more in [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/).
+
+## Practical Rule
+
+- Use **`get by bucket`** for small or moderate related prefixes that should remain single-partition.
+- Use **key-range routing** for ordered key spaces that may need to split across partitions later.
+
+Once a key-range space has split into multiple ranges, treat it as a multi-range ordered space rather than as one bucket living on one partition.

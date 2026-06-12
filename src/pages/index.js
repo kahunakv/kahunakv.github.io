@@ -166,13 +166,16 @@ function HomepageHeader() {
   return (
     <header className={clsx('hero', styles.heroBanner)}>
       <div className="container">
-        <p className={styles.heroEyebrow}>Distributed coordination for .NET</p>
+        <p className={styles.heroEyebrow}>Open source · .NET · self-hosted cluster</p>
         <Heading as="h1" className={styles.heroTitle}>
-          Locks, Key/Value store and Sequencer
+          The distributed coordination layer for .NET
         </Heading>
         <p className={styles.heroSubtitle}>
-          Use Kahuna when one node must own the work, every write must be visible in
-          order, and another node must continue safely after failure.
+          Kahuna is a self-hosted server cluster that gives your services distributed{' '}
+          <strong>locks</strong>, a consistent <strong>key/value store</strong>, and
+          ordered <strong>ID sequences</strong> — like etcd or ZooKeeper, but built for
+          .NET. One node owns the work, writes stay ordered, and another node takes over
+          safely on failure.
         </p>
         <div className={styles.buttons}>
           <Link className="button button--primary button--lg" to="/docs/getting-started">

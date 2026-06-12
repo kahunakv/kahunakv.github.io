@@ -242,6 +242,45 @@ However, this comes at the cost of reduced flexibility when adding, removing, or
 
 This trade-off is common in high-performance distributed systems that prioritize low latency and direct communication over automatic infrastructure abstraction.
 
+## Ordered Range Reads
+
+For ordered key spaces such as `users/000001` through `users/999999`, use a transaction session and `GetByRange(...)` to read a bounded ordered slice:
+
+```csharp
+using System.Text;
+using Kahuna.Client;
+using Kahuna.Shared.KeyValue;
+
+var client = new KahunaClient([
+    "https://node1:2071",
+    "https://node2:2071",
+    "https://node3:2071"
+]);
+
+await using KahunaTransactionSession session = await client.StartTransactionSession(
+    new KahunaTransactionOptions
+    {
+        Locking = KeyValueTransactionLocking.Optimistic,
+        Timeout = 5000
+    }
+);
+
+KeyValueGetByRangePageResult page = await session.GetByRange(
+    prefix: "users",
+    startKey: "users/000100",
+    startInclusive: true,
+    endKey: "users/000200",
+    endInclusive: false,
+    limit: 100,
+    durability: KeyValueDurability.Persistent
+);
+
+foreach (KeyValueGetByBucketItem item in page.Items)
+    Console.WriteLine($"{item.Key} -> {Encoding.UTF8.GetString(item.Value)}");
+```
+
+This is the client-side read pattern to prefer when a key space is modeled as an ordered range instead of a single bucket. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for the routing model and trade-offs.
+
 ### Specify durability type
 
 You can also specify the desired durability type when acquiring a lock:

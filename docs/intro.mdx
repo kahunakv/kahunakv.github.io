@@ -41,8 +41,8 @@ kahuna-cli> get myconfig
 r1 my-value-2 6ms
 ```
 
-The `set` command stores key/value pairs durably in the cluster. Internally, the system uses consistent hashing to redirect the request to the leader
-node of the corresponding Raft group, which coordinates the operation, achieves consensus, and ensures durable storage and replication. The `get`
+The `set` command stores key/value pairs durably in the cluster. Internally, the system routes the request to the leader
+node of the corresponding Raft group, which coordinates the operation, achieves consensus, and ensures durable storage and replication. Most key spaces use hash routing by default, while advanced ordered key spaces can opt into key-range routing. The `get`
 command retrieves the most recent value consistently from the appropriate leader node.
 
 ## Expiration
