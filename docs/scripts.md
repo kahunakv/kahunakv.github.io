@@ -1,7 +1,7 @@
 
 # Scripts : Overview
 
-Kahuna offers a scripting system in its key/value store called **Kahuna Script**. With these scripts, it's possible to execute logic that consistently reads data from the key/value store and also modifies or manipulates that data in an **all-or-nothing** fashion—that is, changes won’t be partially applied in the event of an error or failure. The main advantage of a Kahuna Script is **the ability to execute logic atomically within the key/value store**, significantly reducing network round-trips between a client and a Kahuna cluster.
+Kahuna offers a scripting system in its key/value store called **Kahuna Script**. With these scripts, it's possible to execute logic that consistently reads data from the key/value store and also modifies or manipulates that data in an **all-or-nothing** fashion. That is, changes won’t be partially applied in the event of an error or failure. The main advantage of a Kahuna Script is **the ability to execute logic atomically within the key/value store**, significantly reducing network round-trips between a client and a Kahuna cluster.
 
 ## Key Advantages
 
@@ -9,7 +9,8 @@ Kahuna offers a scripting system in its key/value store called **Kahuna Script**
 - **Multi-Key Operations**: Scripts can read and modify key/value pairs on multiple nodes in a transparent way for the user.
 - **Performance**: Multiple operations can be batched into a single request to the servers, reducing network latency.
 - **Custom Logic on the Key/Store**: Scripts allow embedding complex decision logic on the server side.
-- **Safe Error Handling**: If something goes wrong inside a script, the whole script fails — nothing is partially applied. This is safer than chained commands.
+- **Safe Error Handling**: If something goes wrong inside a script, the whole script fails, and nothing is partially applied. This is safer than chained commands.
+- **Historical Snapshot Reads**: Scripts can read keys, buckets, and prefix scans **as of a past HLC timestamp**, which is useful for audits, debugging, and incident reconstruction.
 
 ## When to Use Scripts
 
@@ -31,7 +32,7 @@ or more elaborate examples that solve real-world problems:
 
 ### Atomic Check-and-Set (CAS)
 
-Use case: Only update a value if it matches the expected current value — useful for optimistic concurrency control. Prevent race conditions when multiple clients are trying to update shared state (e.g., balance or session info). It can be done with the built-in `set/cmp` command, for example,
+Use case: Only update a value if it matches the expected current value, which is useful for optimistic concurrency control. Prevent race conditions when multiple clients are trying to update shared state (e.g., balance or session info). It can be done with the built-in `set/cmp` command, for example,
 only update the value if the current revision is **0**:
 
 ```visual-basic

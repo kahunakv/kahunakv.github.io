@@ -75,7 +75,7 @@ In this example, the loop looks for a valid candidate. As soon as it finds one, 
 
 All scripts are executed as a **transaction** by default, even if they are not explicitly wrapped in a `begin` / `commit` / `rollback` block.
 
-However, if you need **finer control** over when a transaction should be committed or rolled back—or if you want to **customize the default transaction behavior**—you can use a `begin` block.
+However, if you need **finer control** over when a transaction should be committed or rolled back, or if you want to **customize the default transaction behavior**, you can use a `begin` block.
 
 **Example:**
 

@@ -39,3 +39,19 @@ r1 500 8ms
 ```
 
 Check the [revisions](/docs/distributed-keyvalue-store/revisions/) section for more information about how they work.
+
+## Get As Of Timestamp
+
+Passing the `AS OF` modifier reads the value that was visible at a specific **HLC snapshot timestamp**:
+
+```swift
+get `config/limits/max-connections` as of 1718392012345
+```
+
+This differs from `AT`, which targets one exact revision number. `AS OF` answers "what value was visible at time `T`?"
+
+Notes:
+
+- `AS OF 0` is invalid.
+- `AT` and `AS OF` cannot be combined on the same statement.
+- Inside `begin (snapshot=...)`, plain `get` statements already read from that transaction snapshot unless a per-statement `AS OF` overrides it.

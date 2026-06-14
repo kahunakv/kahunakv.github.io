@@ -364,6 +364,8 @@ r0 my-value-1 13ms
 </TabItem>
 </Tabs>
 
+For **timestamp-based** historical reads, Kahuna Script also supports `GET key AS OF <hlc-timestamp>`, `EXISTS ... AS OF`, `GET BY BUCKET ... AS OF`, and `SCAN BY PREFIX ... AS OF`. Use `AT <revision>` when you know the exact revision number; use `AS OF` when you want the value that was visible at a specific snapshot time.
+
 ---
 
 ### Get By Bucket
@@ -408,6 +410,47 @@ r0 services/auth/instance-2 node2
 </Tabs>
 
 Use `get by bucket` for grouped prefixes that are intentionally single-partition. For large ordered key spaces that may split over time, see [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/).
+
+---
+
+### Get By Range
+
+Retrieves key/value pairs inside an ordered interval under one prefix. This is the right abstraction for ordered key spaces and bounded range reads.
+
+<Tabs>
+<TabItem value="API">
+
+```csharp
+Task<KeyValueGetByRangePageResult> GetByRange(
+    string prefix,
+    string? startKey,
+    bool startInclusive,
+    string? endKey,
+    bool endInclusive,
+    int limit = 0,
+    HLCTimestamp readTimestamp = default,
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    CancellationToken cancellationToken = default
+);
+```
+
+- **prefix:** Logical key space prefix being scanned.
+- **startKey / endKey:** Optional ordered bounds.
+- **startInclusive / endInclusive:** Whether each bound is inclusive.
+- **limit:** Maximum number of items returned in this page.
+- **readTimestamp:** Optional snapshot timestamp for a stable multi-page read.
+- **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+- **Items:** Ordered keys in the requested interval.
+- **HasMore:** `true` when more keys remain after this page.
+- **NextCursor:** Opaque resume token for the next page.
+- **ReadTimestamp:** Snapshot timestamp used for the page.
+
+</TabItem>
+</Tabs>
+
+In interactive transactions, `GetByRange(...)` is especially useful for ordered key spaces. Under pessimistic locking it can also protect the requested interval with a range lock, preventing phantom inserts and conflicting writes inside that range until the transaction completes.
 
 ---
 

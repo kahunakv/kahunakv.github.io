@@ -46,9 +46,32 @@ r1 value2 13ms
 
 This lets you inspect historical data, trace config or state changes historically, debug changes over time, investigate what value caused a bug or revert to stable known-good values.
 
+## `AT` Revision vs `AS OF` Timestamp
+
+Kahuna now supports two different historical read models:
+
+- **`AT <revision>`** reads one exact archived revision for a key.
+- **`AS OF <timestamp>`** reads the value that was visible at a specific **HLC snapshot time**.
+
+Use `AT` when you already know the precise revision you want. Use `AS OF` when you want to answer "what did the cluster see at time `T`?" across one or more reads.
+
+Examples:
+
+```ruby
+get `example` at 1
+get `example` as of 1718392012345
+exists `example` as of 1718392012345
+get by bucket `services` as of 1718392012345
+scan by prefix `services/auth` as of 1718392012345
+```
+
+`AS OF` is especially useful for debugging incidents, reconstructing historical state, and running consistent read-only scripts against an older snapshot.
+
+Snapshot timestamps must be non-zero. `AT` and `AS OF` cannot be combined on the same statement.
+
 ## Practical Uses of Retrieving Old Revisions
 
-While many systems only care about the latest value, Kahuna's ability to retrieve old revisions opens up some powerful, practical use cases—especially in distributed systems, debugging, auditing and observability:
+While many systems only care about the latest value, Kahuna's ability to retrieve old revisions opens up some powerful, practical use cases, especially in distributed systems, debugging, auditing and observability:
 
 - **Audit Trails and Change History:** Kahuna stores each change at a new revision, so you can inspect historical values. Useful for debugging, compliance, or postmortem analysis. With revisions we can see how a config flag looked at a specific point in time. Helps trace misconfigurations or unauthorized changes.
 - **Debugging State Changes Over Time**: Understand how and why a system entered a bad state. Distributed systems can be hard to debug after the fact and Retrieving old revisions helps you reconstruct the timeline of state changes. It's useful when investigating failures that occurred hours or days ago.

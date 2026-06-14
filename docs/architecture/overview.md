@@ -10,7 +10,7 @@ Kahuna's architecture operates as a highly scalable, fault-tolerant distributed 
 <img src={Architecture1} height="350" />
 </div>
 
-In the previous diagram, we can see a cluster of three nodes named **Kahuna 1, 2, and 3.** Each of these nodes shows the initial partitions available—labeled **partition A, B, C, and D**. The leader of each partition is highlighted in dark gray. A **leader is responsible for processing reads and writes consistently** for its assigned partition.
+In the previous diagram, we can see a cluster of three nodes named **Kahuna 1, 2, and 3.** Each of these nodes shows the initial partitions available, labeled **partition A, B, C, and D**. The leader of each partition is highlighted in dark gray. A **leader is responsible for processing reads and writes consistently** for its assigned partition.
 
 With this small example, we can already observe some of the key characteristics of Kahuna's architecture:
 
@@ -41,7 +41,7 @@ Kahuna is designed to address the following challenges:
 - **Propose a pragmatic distributed sequencing system** that gives developers a ready-made solution for generating unique, ordered values in a distributed environment.
 - **Ensure strong data consistency, even in multi-node, multi-partition clusters**. Kahuna abstracts away the complexity of distributed key/value transactions and shields developers from issues like stale reads or inconsistent state.
 - **Enable high availability, allowing any node in the cluster to accept reads and writes**. It also distributes load intelligently and minimizes downtime due to cluster topology changes.
-- Developed in the C# programming language and the modern .NET platform, **Kahuna empowers developers to hack, extend, and customize the database to fit their specific needs** —whether through configuration or plugin-based extensions. Additionally, it’s built to run in a robust, multi-threaded environment that leverages all available CPU cores and computing power.
+- Developed in the C# programming language and the modern .NET platform, **Kahuna empowers developers to hack, extend, and customize the database to fit their specific needs**, whether through configuration or plugin-based extensions. Additionally, it’s built to run in a robust, multi-threaded environment that leverages all available CPU cores and computing power.
 - **Reduce vendor lock-in** by being deployable in any environment or cloud provider.
 
 ## Raft-Based Consensus
@@ -66,7 +66,7 @@ Background maintenance processes continuously perform compaction and garbage col
 
 Kahuna is a distributed key/value database that offers both persistent and ephemeral durability, adapting to many different use cases. It also provides ready-to-use abstractions for locks and sequences. It has many useful applications across different areas, which may also overlap with functionality provided by other existing databases.
 
-Its versatility ranges from strong persistence—with data synchronously replicated across multiple nodes to ensure no data is lost in the event of failures—to the speed of in-memory storage, adapting to workloads that require low latency.
+Its versatility ranges from strong persistence, with data synchronously replicated across multiple nodes to ensure no data is lost in the event of failures, to the speed of in-memory storage, adapting to workloads that require low latency.
 
 In both cases, strong consistency is guaranteed. Additionally, transactions that manipulate key/value pairs of any durability are fully supported, opening up a world of possibilities for building reliable and scalable systems.
 

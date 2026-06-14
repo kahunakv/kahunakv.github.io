@@ -29,7 +29,7 @@ let remaining_tokens = 50
 
 Represents a floating-point number in the range of approximately ±5.0 × 10⁻³²⁴ to ±1.7 × 10³⁰⁸.
 
-This corresponds to a 64-bit IEEE 754 double-precision float, allowing for very large or very small real numbers with decimal precision—useful for calculations, measurements, percentages and scientific data in Kahuna Script.
+This corresponds to a 64-bit IEEE 754 double-precision float, allowing for very large or very small real numbers with decimal precision, which is useful for calculations, measurements, percentages and scientific data in Kahuna Script.
 
 ```visual-basic
 let threshold = 0.5

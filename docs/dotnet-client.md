@@ -281,6 +281,15 @@ foreach (KeyValueGetByBucketItem item in page.Items)
 
 This is the client-side read pattern to prefer when a key space is modeled as an ordered range instead of a single bucket. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for the routing model and trade-offs.
 
+The `readTimestamp` parameter also lets a client continue a paged range read against one stable snapshot instead of "whatever is latest now" on each page.
+
+For plain point reads, the public client still exposes:
+
+- `GetKeyValue(...)` for the latest value
+- `GetKeyValueRevision(...)` for one exact revision
+
+If you need point reads **as of an HLC timestamp** today, use Kahuna Script with `GET key AS OF <timestamp>`.
+
 ### Specify durability type
 
 You can also specify the desired durability type when acquiring a lock:
@@ -489,6 +498,11 @@ await session.Commit();
 
 In case of conflicts or encountering exclusive locks (under pessimistic locking), transactions will be aborted 
 so they can be retried on the client side.
+
+Two user-facing behaviors are worth knowing:
+
+- `GetByBucket(...)` inside a **pessimistic** session protects the whole bucket with a prefix lock, which blocks phantom inserts and conflicting writes under that prefix until the transaction finishes.
+- `GetByRange(...)` inside a **pessimistic** session protects only the requested interval with a range lock, which is the better fit for large ordered key spaces.
 
 The recommended approach is to use the built-in retry mechanism provided by Kahuna clients, which automatically 
 retries aborted transactions using a short backoff interval, helping reduce contention while ensuring consistency 

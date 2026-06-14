@@ -38,9 +38,9 @@ The transaction operates over 4 partitions distributed across 3 nodes, which mea
 
 Kahuna supports two types of locking:
 
-- **Pessimistic Locking**: Locks on the keys involved in the transaction are acquired **exclusively in advance**, ensuring that no other clients can read or write those keys during the execution of the transaction. This prevents external inconsistencies and is particularly useful when there’s **low contention** on the keys. It provides the **highest level of consistency and safety**. Other clients running concurrent transactions that encounter an already-acquired exclusive lock will be aborted and must retry until they can successfully perform their operations. This is the default locking method.
+- **Pessimistic Locking**: Locks on the keys involved in the transaction are acquired **exclusively in advance**, ensuring that no other clients can read or write those keys during the execution of the transaction. In addition, transactional bucket reads can take **prefix locks** and transactional ordered range reads can take **range locks**, which prevents phantom inserts and conflicting writes on the slice you just read. This is the default locking method.
 
-- **Optimistic Locking**: The keys involved are only locked **at the time of commit**. Other clients are allowed to read the data consistently. However, if a conflict is detected on any of the involved keys during the preparation phase, the transaction is **aborted**, and clients must retry. This strategy is ideal when there’s **high read concurrency** and **low write contention**.
+- **Optimistic Locking**: The keys involved are only locked **at the time of commit**. Other clients are allowed to read the data consistently. During commit, Kahuna revalidates the transaction's **read dependencies** and also checks for **concurrent write intents** on keys that were read but not written, aborting when it detects a serializability risk such as write skew. This strategy is ideal when there’s **high read concurrency** and **low write contention**.
 
 ### Pessimistic Locking
 
@@ -49,6 +49,8 @@ Continuing with the previous example, here are the steps performed when the tran
 - **Acquire exclusive locks on the keys in advance**. This prevents any reads or modifications on the keys during the transaction, ensuring consistency. If any of the keys cannot be exclusively locked, the transaction is aborted. These locks are tied to temporary **leases** to avoid being held indefinitely. In the example: **Exclusive locks** are acquired on: `robots_us1`, `robots_us2`, `robots_eu1`, and `robots_sa1`.
 
 - **Read the keys**. `get` commands are executed. Kahuna identifies the opportunity to **parallelize** the 4 reads by batching the two that go to `kahuna-2` and dispatching individual requests to `kahuna-1` and `kahuna-3`. In the example: The keys `robots_us1`, `robots_us2`, `robots_eu1`, and `robots_sa1` are **read** from their respective leader key/value stores.
+
+- **Range and bucket reads can lock the read scope**. If the transaction uses `get by bucket`, Kahuna can take a **prefix lock** on that bucket. If it uses an ordered `GetByRange(...)`, Kahuna can take a **range lock** on the requested interval. This prevents phantom inserts and conflicting writes within that scope while still allowing unrelated keys outside the range to proceed.
 
 - **Execute arithmetic operations and control structures** within the **transaction coordinator**, based on the read values. Any exception thrown, issue encountered, or failed validation will cause the transaction to be aborted, and no changes will be applied. In the example: the `if` and mathematical operations are executed indicating the steps to follow.
 
@@ -70,7 +72,7 @@ If the example transaction were executed using **optimistic locking**, the follo
 
 - **Execution phase**: All computations, validations, and control logic are performed at the **transaction coordinator**, based on the read values. The coordinator keeps track of the **versions** of each key at the time of reading.
 
-- **Validation phase**: Before applying any changes, the coordinator checks that the versions of all involved keys have **not changed** since the initial read. A **commit transaction ID** is then generated to help detect conflicts with other transactions running in parallel. This commit ID is compared against the versions of the keys read during the transaction to ensure that no concurrent modifications have occurred before finalizing the commit. If any version mismatch is detected, the transaction is **aborted** and the client must **retry**. This step ensures that no other transaction has modified those keys in the meantime.
+- **Validation phase**: Before applying any changes, the coordinator checks that the versions of all involved keys have **not changed** since the initial read. It also checks whether another transaction currently holds a **write intent** on any key that this transaction read but did not write. If any revision mismatch or concurrent write intent is detected, the transaction is **aborted** and the client must **retry**. This closes write-skew windows that simple revision checks alone would miss.
 
 - **Write intents**: If all versions are validated successfully, **write intents** (proposed new values) are created for the modified keys. This step may involve contacting multiple partitions in parallel.
 

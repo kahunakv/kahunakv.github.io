@@ -120,5 +120,4 @@ HLCs are a core enabler of Kahuna's **distributed consistency model**. By embedd
 - Reliable lock sequencing
 - Deterministic conflict resolution
 
-— all while remaining independent of external clock guarantees or centralized coordination.
-
+All of this works while remaining independent of external clock guarantees or centralized coordination.

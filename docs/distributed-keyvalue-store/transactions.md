@@ -6,7 +6,7 @@ import TabItem from '@theme/TabItem';
 
 ## Overview
 
-Kahuna offers **distributed transactions** to enable safe, consistent, and atomic access to keys across the cluster. Transactions ensure that multiple reads and writes either all succeed together or none take effect—making them essential for maintaining **data correctness** in concurrent and distributed environments.
+Kahuna offers **distributed transactions** to enable safe, consistent, and atomic access to keys across the cluster. Transactions ensure that multiple reads and writes either all succeed together or none take effect, making them essential for maintaining **data correctness** in concurrent and distributed environments.
 
 Kahuna supports **snapshot isolation** and **serializable consistency** through **MVCC (Multi-Version Concurrency Control)** and **optimistic/pessimistic locking**.
 
@@ -29,7 +29,7 @@ Kahuna’s transactional engine addresses these issues by:
 | Concept | Description |
 |--------|-------------|
 | **Snapshot Isolation** | Readers see a consistent snapshot of the data as of the transaction start. Writers commit only if no conflicting writes occurred. |
-| **Serializable Transactions** | Pessimistic locks can be used to enforce total ordering of transactions. |
+| **Serializable Transactions** | Pessimistic locking and range-aware guards let Kahuna block phantoms and conflicting writes on the working set you read. |
 | **MVCC** | Each key maintains multiple versions. Reads select the correct version based on transaction timestamp. |
 | **Transaction Timestamp** | A [Hybrid Logical Clock (HLC)](../architecture/hybrid-logical-clocks.md) timestamp assigned at transaction start, used for snapshot reads and version tracking. |
 | **Write Set** | The keys a transaction intends to modify. |
@@ -92,13 +92,42 @@ Learn more about buckets and routing in the [Buckets](/docs/distributed-keyvalue
 
 Use `get by bucket` when the prefix is intentionally a **single-partition group**. If a key space is configured for key-range routing and later splits into multiple ranges, whole-space traversal should be treated as an ordered range-read problem rather than a single bucket read.
 
+In a **pessimistic** transaction, `get by bucket` also acquires a **prefix lock** for that bucket. That means concurrent inserts, deletes, or updates under the same bucket are blocked or aborted while the transaction is open, repeated reads of the same bucket stay idempotent, and `commit` or `rollback` releases the lock.
+
+## Using Ordered Range Reads inside a Transaction
+
+For ordered key spaces, interactive transactions also support **bounded range reads**:
+
+```csharp
+await using KahunaTransactionSession session = await client.StartTransactionSession(
+    new() { Locking = KeyValueTransactionLocking.Pessimistic, Timeout = 5000 }
+);
+
+KeyValueGetByRangePageResult page = await session.GetByRange(
+    prefix: "users",
+    startKey: "users/000100",
+    startInclusive: true,
+    endKey: "users/000200",
+    endInclusive: false,
+    limit: 100,
+    durability: KeyValueDurability.Persistent
+);
+```
+
+`GetByRange(...)` is the right primitive when the working set is an ordered slice rather than a whole single-partition bucket.
+
+In a **pessimistic** transaction, `GetByRange(...)` acquires a **range lock** over the requested interval. That means inserts, deletes, and updates inside that range are blocked or aborted while the transaction is open, writes outside the requested boundary can still proceed, repeated reads of the same range stay idempotent, and `rollback` releases the range lock.
+
+Within the same transaction session, range reads also follow **read-your-own-writes** semantics: uncommitted inserts and updates made by the session are visible to later reads from that session, and uncommitted deletes stay hidden from that session's later reads.
+
 ## Transaction Lifecycle
 
 1. **Begin**: Kahuna assigns an HLC timestamp and starts tracking reads/writes. Locks are acquired in advance in pessimistic locking.
 2. **Read/Write**: All operations are buffered in-memory.
 3. **Validation**:
-   - If optimistic: Check for conflicts with newer committed versions.
-   - If pessimistic: Lock keys ahead of time to avoid conflicts.
+   - If optimistic: Re-check committed read dependencies and abort if a key changed since it was read.
+   - If optimistic: Also abort if another transaction holds a concurrent write intent on a key that was read but not written, preventing write-skew anomalies.
+   - If pessimistic: Lock keys, buckets, or ranges ahead of time to avoid conflicts and phantoms.
 4. **Commit**:
    - If successful, MVCC versions are written and optionally replicated (persistent mode).
    - If failed, changes are discarded and client is notified.
@@ -157,8 +186,8 @@ end
 
 Defines the **locking strategy** used by the transaction.
 
-- `pessimistic`: Locks keys upfront to ensure full consistency.
-- `optimistic`: Locks only on write, with version validation during commit.
+- `pessimistic`: Locks keys upfront and can also acquire prefix or range locks during transactional reads.
+- `optimistic`: Locks only on write, revalidates read dependencies during commit, and aborts on concurrent write intents over the read set.
 
 - **Default value:** `pessimistic`
 
@@ -170,6 +199,26 @@ begin (locking="optimistic")
   commit
 end
 ```
+
+---
+
+### Snapshot
+
+Specifies that every read inside the transaction should be served **as of one fixed HLC timestamp**.
+
+- `snapshot=<timestamp>` makes the whole transaction **read-only**.
+- Plain reads inside the transaction use that snapshot automatically.
+- A per-statement `AS OF <other timestamp>` overrides the transaction-level snapshot for that statement.
+
+```ruby
+begin (snapshot=1718392012345)
+  let old_config = get `config/feature-x`
+  let old_services = get by bucket `services`
+  commit
+end
+```
+
+Snapshot transactions are useful for audits, debugging, and historical queries where you need several reads to line up against the same past instant.
 
 ---
 
@@ -284,7 +333,7 @@ This approach gives developers more flexibility to build complex logic in the ap
 Both Interactive Transactions and Kahuna Scripts offer powerful ways to work with Kahuna’s distributed system, each with distinct trade-offs.
 Interactive Transactions provide greater flexibility and ease of integration with application code but at the cost of higher network latency and complexity in failure scenarios.
 
-Kahuna Scripts, on the other hand, deliver atomicity, reduced latency, and automatic lock management, making them ideal for critical operations that need to execute entirely on the server — although they require familiarity with a specialized scripting environment.
+Kahuna Scripts, on the other hand, deliver atomicity, reduced latency, and automatic lock management, making them ideal for critical operations that need to execute entirely on the server, although they require familiarity with a specialized scripting environment.
 
 Choosing between the two approaches depends on the specific needs of your application, the complexity of your logic, and your tolerance for latency versus maintenance effort:
 

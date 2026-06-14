@@ -41,3 +41,13 @@ r1 500 8ms
 > In the case of ephemeral storage, the server stores a limited number of recent revisions. If you need to store all revisions of a key, you should use persistent storage.
 
 Check the [revisions](/docs/distributed-keyvalue-store/revisions/) section for more information about how they work.
+
+## Get As Of Timestamp
+
+Passing the `AS OF` modifier reads the ephemeral value that was visible at a specific **HLC snapshot timestamp**:
+
+```swift
+eget `config/limits/max-connections` as of 1718392012345
+```
+
+This differs from `AT`, which targets one exact revision number.

@@ -1,7 +1,7 @@
 
 # Expressions
 
-Expressions are the fundamental building blocks of Kahuna Script—nearly everything you write is an expression. The simplest and most precise definition of an expression is: anything that represents a value.
+Expressions are the fundamental building blocks of Kahuna Script. Nearly everything you write is an expression. The simplest and most precise definition of an expression is: anything that represents a value.
 
 ```visual-basic
 let my_var = 100 + 20.5
@@ -109,4 +109,4 @@ let a_number = round(10.55, 1)        # returns 10.6
 let json_str = to_json([10, 42, 30])  # serializes to JSON
 ```
 
-These functions cover areas like string manipulation, key/value operations, math, time, JSON handling, and more—making Kahuna Script a powerful tool for writing logic close to the data.
+These functions cover areas like string manipulation, key/value operations, math, time, JSON handling, and more, making Kahuna Script a powerful tool for writing logic close to the data.

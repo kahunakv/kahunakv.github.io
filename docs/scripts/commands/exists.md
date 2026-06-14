@@ -28,3 +28,13 @@ else
   return "User not found"
 end
 ```
+
+## Exists As Of Timestamp
+
+`exists` also supports historical snapshot reads:
+
+```swift
+exists `config/limits/max-connections` as of 1718392012345
+```
+
+This checks whether the key existed at that snapshot time, not whether it exists now.

@@ -22,7 +22,7 @@ r0 set 7ms
 
 For **ephemeral keys**, even if they are set to **never expire**, they can still be **evicted at any time** if the server is under **memory pressure**.
 
-This is because ephemeral durability relies solely on **in-memory storage**, and to ensure system stability, Kahuna may reclaim memory by evicting keys that are not recently used—regardless of their expiration setting.
+This is because ephemeral durability relies solely on **in-memory storage**, and to ensure system stability, Kahuna may reclaim memory by evicting keys that are not recently used, regardless of their expiration setting.
 
 ## Notes
 
@@ -31,4 +31,3 @@ For keys with a long expiration time (several hours or days), it's recommended t
 Persistent durability provides high availability and fault tolerance, making it ideal for use cases such as long-term sessions, configuration data, or delayed tasks.
 
 Internally, expiration timestamps are managed using the [Hybrid Logical Clock (HLC)](../../architecture/hybrid-logical-clocks.md), which helps avoid issues caused by clock drift between nodes. This ensures that expiration times are consistent and causally ordered across the cluster, even in distributed environments where system clocks may differ slightly.
-

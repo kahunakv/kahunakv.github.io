@@ -165,35 +165,44 @@ function SectionHeading({eyebrow, title, subtitle}) {
 function HomepageHeader() {
   return (
     <header className={clsx('hero', styles.heroBanner)}>
-      <div className="container">
-        <p className={styles.heroEyebrow}>Open source · .NET · self-hosted cluster</p>
-        <Heading as="h1" className={styles.heroTitle}>
-          The distributed coordination layer for .NET
-        </Heading>
-        <p className={styles.heroSubtitle}>
+      <div className={clsx('container', styles.heroInner)}>
+        <div className={styles.heroContent}>
+          <p className={styles.heroEyebrow}>Open source · .NET · self-hosted cluster</p>
+          <Heading as="h1" className={styles.heroTitle}>
+            The distributed coordination layer for .NET
+          </Heading>
+          <p className={styles.heroSubtitle}>
           Kahuna is a self-hosted server cluster that gives your services distributed{' '}
           <strong>locks</strong>, a consistent <strong>key/value store</strong>, and
-          ordered <strong>ID sequences</strong> — like etcd or ZooKeeper, but built for
+          ordered <strong>ID sequences</strong>, like etcd or ZooKeeper, but built for
           .NET. One node owns the work, writes stay ordered, and another node takes over
           safely on failure.
-        </p>
-        <div className={styles.buttons}>
-          <Link className="button button--primary button--lg" to="/docs/getting-started">
-            Get started
-          </Link>
-          <Link className="button button--secondary button--lg" to="/docs/intro">
-            Tutorial
-          </Link>
+          </p>
+          <div className={styles.buttons}>
+            <Link className="button button--primary button--lg" to="/docs/getting-started">
+              Get started
+            </Link>
+            <Link className="button button--secondary button--lg" to="/docs/intro">
+              Tutorial
+            </Link>
+          </div>
+          <div className={styles.proofGrid}>
+            {proofPoints.map((point) => (
+              <div key={point.label} className={styles.proofPill}>
+                <span className={styles.proofIcon}>
+                  <Icon name={point.icon} />
+                </span>
+                <span>{point.label}</span>
+              </div>
+            ))}
+          </div>
         </div>
-        <div className={styles.proofGrid}>
-          {proofPoints.map((point) => (
-            <div key={point.label} className={styles.proofPill}>
-              <span className={styles.proofIcon}>
-                <Icon name={point.icon} />
-              </span>
-              <span>{point.label}</span>
-            </div>
-          ))}
+        <div className={styles.heroMedia} aria-hidden="true">
+          <img
+            src="/img/front-page-logo.png"
+            alt=""
+            className={styles.heroLogo}
+          />
         </div>
       </div>
     </header>

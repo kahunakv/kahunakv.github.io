@@ -8,7 +8,7 @@ How Leases + Fencing Tokens can provide Strong Mutual Exclusion:
 ## Lock Acquisition:
 
 A client tries to acquire a lock by creating a key in Kahuna (e.g., my-lock-resource) with a lease.
-Along with the key, Kahuna maintains a fencing token — typically an incrementing counter.
+Along with the key, Kahuna maintains a fencing token, typically an incrementing counter.
 
 ## Using the Fencing Token:
 

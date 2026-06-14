@@ -28,3 +28,13 @@ else
   return "User not found"
 end
 ```
+
+## Exists As Of Timestamp
+
+`eexists` also supports historical snapshot reads:
+
+```swift
+eexists `config/limits/max-connections` as of 1718392012345
+```
+
+This checks whether the ephemeral key existed at that snapshot time, not whether it exists now.

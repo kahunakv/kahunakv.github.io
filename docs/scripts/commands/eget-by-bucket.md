@@ -23,6 +23,16 @@ let sessions = eget by bucket `sessions`
 return count(sessions)
 ```
 
+## EGet By Bucket As Of Timestamp
+
+`eget by bucket` also supports snapshot reads:
+
+```swift
+eget by bucket `sessions` as of 1718392012345
+```
+
+This returns only the ephemeral members that were visible in that bucket at the requested snapshot time.
+
 ## Notes
 
 `eget by bucket` reads from ephemeral storage. Ephemeral keys can expire or be evicted under memory pressure, so this command is best suited to temporary data such as sessions, leases, and cache entries.

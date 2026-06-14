@@ -23,6 +23,16 @@ let services = get by bucket `services`
 return count(services)
 ```
 
+## Get By Bucket As Of Timestamp
+
+`get by bucket` also supports snapshot reads:
+
+```swift
+get by bucket `services` as of 1718392012345
+```
+
+This returns only the members that were visible in that bucket at the requested snapshot time.
+
 ## Notes
 
 `get by bucket` is a consistent operation because all keys in the same bucket are routed to the same partition. Use this command when your schema intentionally groups related keys under a shared single-partition bucket prefix.

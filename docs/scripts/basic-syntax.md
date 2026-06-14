@@ -37,7 +37,7 @@ let current_limits = current_limits - 1
 set "user:123:limits" current_limits
 ```
 
-This pattern—read, modify, write—is common in Kahuna Script and helps encapsulate logic close to the data while avoiding multiple round-trips.
+This pattern, read, modify, write, is common in Kahuna Script and helps encapsulate logic close to the data while avoiding multiple round-trips.
 
 ## Reserved Words and Escaping Identifiers
 
@@ -80,4 +80,3 @@ end
 
 throw "needle wasn't found"
 ```
-
