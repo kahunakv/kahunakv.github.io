@@ -220,6 +220,15 @@ end
 
 Snapshot transactions are useful for audits, debugging, and historical queries where you need several reads to line up against the same past instant.
 
+Even though snapshot transactions are read-only, the `begin ... end` block still requires an explicit `commit`.
+
+Important behavior:
+
+- snapshot reads are **historical views**, not read-your-own-writes views
+- if a key existed at the snapshot time and was updated later, the snapshot read returns the older visible value
+- keys created after the snapshot time stay hidden from that snapshot
+- writes are not allowed inside a snapshot transaction
+
 ---
 
 ### AsyncRelease

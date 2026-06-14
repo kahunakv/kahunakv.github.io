@@ -283,6 +283,8 @@ This is the client-side read pattern to prefer when a key space is modeled as an
 
 The `readTimestamp` parameter also lets a client continue a paged range read against one stable snapshot instead of "whatever is latest now" on each page.
 
+When `readTimestamp` is set, the range read behaves as a **historical snapshot**. It does not switch into read-your-own-writes mode just because the session has a transaction ID. If a key existed at `T` and was updated later, the read returns the version visible at `T`; keys inserted after `T` stay hidden.
+
 For plain point reads, the public client still exposes:
 
 - `GetKeyValue(...)` for the latest value

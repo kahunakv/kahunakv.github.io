@@ -33,6 +33,8 @@ eget by bucket `sessions` as of 1718392012345
 
 This returns only the ephemeral members that were visible in that bucket at the requested snapshot time.
 
+If a key already existed at that time and was updated later, the snapshot still returns the older visible value from the requested time. Keys created after that time are not returned.
+
 ## Notes
 
 `eget by bucket` reads from ephemeral storage. Ephemeral keys can expire or be evicted under memory pressure, so this command is best suited to temporary data such as sessions, leases, and cache entries.
