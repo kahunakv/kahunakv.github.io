@@ -3,7 +3,7 @@
 
 Allows to extend a key/value expiration for persistent keys:
 
-```swift
+```kahuna
 set `services/email/instance-3` '{"ip": "10.1.1.22", "port": 9090}'
 r0 set 9ms
 
@@ -15,7 +15,7 @@ In the previous example, the key is set to expire in 10,000 ms (10 seconds) from
 
 An expiration value of zero means that the key never expires:
 
-```swift
+```kahuna
 extend `services/email/instance-3` 0
 r0 set 7ms
 ```

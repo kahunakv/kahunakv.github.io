@@ -7,14 +7,14 @@ In Kahuna, a `revision` is a monotonic version number that tracks when a key was
 
 Keys are always created at revision `r0`:
 
-```ruby
+```kahuna
 set `example` 'value1'
 r0 set 17ms
 ```
 
 Modify the key and revision will change to `r1` and then to `r2`:
 
-```ruby
+```kahuna
 set `example` 'value2'
 r1 set 12ms
 
@@ -24,7 +24,7 @@ r2 set 9ms
 
 When querying a key, you can see its current revision. The revision does not change during read operations:
 
-```ruby
+```kahuna
 get `example`
 r2 value3 10ms
 
@@ -36,7 +36,7 @@ r2 value3 9ms
 
 Kahuna works like a time machine, allowing you to query the value of a key at any particular point-in-time:
 
-```ruby
+```kahuna
 get `example` at 0
 r0 value1 11ms
 
@@ -57,7 +57,7 @@ Use `AT` when you already know the precise revision you want. Use `AS OF` when y
 
 Examples:
 
-```ruby
+```kahuna
 get `example` at 1
 get `example` as of 1718392012345
 exists `example` as of 1718392012345

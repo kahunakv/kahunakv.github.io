@@ -3,7 +3,7 @@
 
 Checks if a key exists in the persistent storage. If the key does not exist `false` is returned.
 
-```swift
+```kahuna
 exists `config/limits/max-connections`
 r- not exists 9ms
 
@@ -20,7 +20,7 @@ This makes it an efficient way to perform presence checks, especially when worki
 
 **Example:**
 
-```visual-basic
+```kahuna
 let exists_key = exists "user:123:profile"
 if exists_key then
   return "User found"
@@ -33,7 +33,7 @@ end
 
 `exists` also supports historical snapshot reads:
 
-```swift
+```kahuna
 exists `config/limits/max-connections` as of 1718392012345
 ```
 

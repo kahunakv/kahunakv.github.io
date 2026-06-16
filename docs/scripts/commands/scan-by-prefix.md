@@ -2,7 +2,7 @@
 
 Scans persistent storage across the cluster and returns key/value pairs whose keys start with the specified prefix.
 
-```swift
+```kahuna
 set `services/auth/instance-1` "node1"
 r0 set 8ms
 
@@ -18,7 +18,7 @@ r0 services/auth/instance-2 node2
 
 Inside a script, assign the command to a variable with `let`. The variable receives an array of the returned values.
 
-```visual-basic
+```kahuna
 let instances = scan by prefix `services/auth`
 return count(instances)
 ```
@@ -27,7 +27,7 @@ return count(instances)
 
 `scan by prefix` also supports snapshot reads:
 
-```swift
+```kahuna
 scan by prefix `services/auth` as of 1718392012345
 ```
 

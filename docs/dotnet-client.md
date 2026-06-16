@@ -242,9 +242,69 @@ However, this comes at the cost of reduced flexibility when adding, removing, or
 
 This trade-off is common in high-performance distributed systems that prioritize low latency and direct communication over automatic infrastructure abstraction.
 
+## Snapshot Reads
+
+The .NET client now supports **as-of snapshot reads** directly on top-level client methods through a `snapshotMs` parameter.
+
+For point reads:
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.KeyValue;
+
+var client = new KahunaClient("https://node1:2071");
+
+KahunaKeyValue latest = await client.GetKeyValue(
+    "users/000100",
+    KeyValueDurability.Persistent
+);
+
+KahunaKeyValue sameSnapshot = await client.GetKeyValue(
+    "users/000100",
+    KeyValueDurability.Persistent,
+    snapshotMs: latest.LastModified
+);
+```
+
+`LastModified` is the Unix-epoch millisecond timestamp at which that revision was committed. It can be reused as a snapshot anchor for later reads.
+
+The same snapshot parameter is also available on:
+
+- `ExistsKeyValue(...)`
+- `GetByBucket(...)`
+- `ScanAllByPrefix(...)`
+- `GetByRange(...)`
+- `ScanByRange(...)`
+
 ## Ordered Range Reads
 
-For ordered key spaces such as `users/000001` through `users/999999`, use a transaction session and `GetByRange(...)` to read a bounded ordered slice:
+For ordered key spaces such as `users/000001` through `users/999999`, you can now use the top-level client directly to read a bounded ordered slice:
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.KeyValue;
+
+var client = new KahunaClient([
+    "https://node1:2071",
+    "https://node2:2071",
+    "https://node3:2071"
+]);
+
+List<KahunaKeyValue> page = await client.GetByRange(
+    prefix: "users",
+    startKey: "users/000100",
+    startInclusive: true,
+    endKey: "users/000200",
+    endInclusive: false,
+    limit: 100,
+    durability: KeyValueDurability.Persistent
+);
+
+foreach (KahunaKeyValue item in page)
+    Console.WriteLine($"{item.Key} -> {item.ValueAsString()}");
+```
+
+If you need transactional locking or interactive read/write behavior around the range read, use a transaction session:
 
 ```csharp
 using System.Text;
@@ -279,18 +339,103 @@ foreach (KeyValueGetByBucketItem item in page.Items)
     Console.WriteLine($"{item.Key} -> {Encoding.UTF8.GetString(item.Value)}");
 ```
 
-This is the client-side read pattern to prefer when a key space is modeled as an ordered range instead of a single bucket. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for the routing model and trade-offs.
+This is the right read pattern when a key space is modeled as an ordered range instead of a single bucket. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for the routing model and trade-offs.
 
-The `readTimestamp` parameter also lets a client continue a paged range read against one stable snapshot instead of "whatever is latest now" on each page.
+For top-level client reads, `snapshotMs` pins the read to one historical snapshot. For transaction-session range reads, `readTimestamp` does the same thing at the session API boundary.
 
 When `readTimestamp` is set, the range read behaves as a **historical snapshot**. It does not switch into read-your-own-writes mode just because the session has a transaction ID. If a key existed at `T` and was updated later, the read returns the version visible at `T`; keys inserted after `T` stay hidden.
 
-For plain point reads, the public client still exposes:
+For exact archived revisions, the client still exposes `GetKeyValueRevision(...)`. Use that when you know the precise revision number; use `snapshotMs` when you want the value visible at a specific historical time.
 
-- `GetKeyValue(...)` for the latest value
-- `GetKeyValueRevision(...)` for one exact revision
+## Streaming Range Reads
 
-If you need point reads **as of an HLC timestamp** today, use Kahuna Script with `GET key AS OF <timestamp>`.
+When you want to stream a larger ordered range instead of materializing one bounded page, use `ScanByRange(...)`:
+
+```csharp
+await foreach (KahunaKeyValue item in client.ScanByRange(
+    prefix: "users",
+    startKey: "users/000100",
+    startInclusive: true,
+    endKey: "users/001000",
+    endInclusive: false,
+    pageSize: 128,
+    durability: KeyValueDurability.Persistent,
+    snapshotMs: 1718392012345
+))
+{
+    Console.WriteLine($"{item.Key} -> {item.ValueAsString()}");
+}
+```
+
+This keeps fetching server-side pages behind the async sequence while preserving one historical snapshot when `snapshotMs` is non-zero.
+
+## Batch Key/Value Operations
+
+The client also exposes batch methods for common key/value work:
+
+- `SetManyKeyValues(...)`
+- `DeleteManyKeyValues(...)`
+- `GetManyKeyValues(...)`
+- `ExistsManyKeyValues(...)`
+
+Example:
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.KeyValue;
+
+List<KahunaKeyValue> setResults = await client.SetManyKeyValues([
+    new()
+    {
+        Key = "services/auth",
+        Value = System.Text.Encoding.UTF8.GetBytes("node1"),
+        ExpiresMs = 30000,
+        Flags = KeyValueFlags.Set,
+        Durability = KeyValueDurability.Persistent
+    },
+    new()
+    {
+        Key = "services/payments",
+        Value = System.Text.Encoding.UTF8.GetBytes("node2"),
+        ExpiresMs = 30000,
+        Flags = KeyValueFlags.Set,
+        Durability = KeyValueDurability.Persistent
+    }
+]);
+
+List<KahunaKeyValue> getResults = await client.GetManyKeyValues([
+    new() { Key = "services/auth", Durability = KeyValueDurability.Persistent },
+    new() { Key = "services/payments", Durability = KeyValueDurability.Persistent }
+]);
+```
+
+Request item notes:
+
+- `KahunaSetKeyValueRequestItem` supports `Key`, `Value`, `ExpiresMs`, `Flags`, `CompareValue`, `CompareRevision`, and `Durability`
+- `KahunaDeleteKeyValueRequestItem` supports `Key` and `Durability`
+- `KahunaGetManyKeyValuesRequestItem` supports `Key`, optional `Revision`, and `Durability`
+
+## Register a Key Range
+
+For ordered key spaces, the client also exposes `RegisterKeyRange(...)`:
+
+```csharp
+bool created = await client.RegisterKeyRange("users");
+```
+
+This registers a key space for range-based sharding so the cluster routes that space through range descriptors instead of the default hash-routed model.
+
+Use this only for key spaces that are intentionally modeled as ordered ranges. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for the routing trade-offs.
+
+## Transport Notes
+
+Some client features currently require the gRPC transport:
+
+- `GetManyKeyValues(...)` is not available over the REST transport
+- `ExistsManyKeyValues(...)` is not available over the REST transport
+- `RegisterKeyRange(...)` is not available over the REST transport
+
+If you call those APIs through the REST transport, the client throws `NotSupportedException`.
 
 ### Specify durability type
 

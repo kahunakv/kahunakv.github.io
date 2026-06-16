@@ -20,7 +20,7 @@ Represents an integer in the range of -9,223,372,036,854,775,808 to 9,223,372,03
 
 This corresponds to a 64-bit signed integer, commonly used for IDs, counters, timestamps, and arithmetic operations in Kahuna Script.
 
-```visual-basic
+```kahuna
 let year = 2050
 let remaining_tokens = 50
 ```
@@ -31,7 +31,7 @@ Represents a floating-point number in the range of approximately ±5.0 × 10⁻�
 
 This corresponds to a 64-bit IEEE 754 double-precision float, allowing for very large or very small real numbers with decimal precision, which is useful for calculations, measurements, percentages and scientific data in Kahuna Script.
 
-```visual-basic
+```kahuna
 let threshold = 0.5
 let weighted_load = 1.25
 ```
@@ -40,7 +40,7 @@ let weighted_load = 1.25
 
 Strings are immutable and use UTF-8 encoding. Used for text values, e.g., "hello" or 'user123':
 
-```visual-basic
+```kahuna
 let name = "Andres"
 let robot = "Voltron"
 ```
@@ -49,7 +49,7 @@ let robot = "Voltron"
 
 Represent a `true` or `false` value:
 
-```visual-basic
+```kahuna
 let is_active = false
 ```
 
@@ -57,7 +57,7 @@ let is_active = false
 
 Represents the absence of a value, e.g., null
 
-```visual-basic
+```kahuna
 let last_leader = null
 ```
 
@@ -67,7 +67,7 @@ An array can contain elements of a single type or a mix of any supported types i
 
 Arrays are useful for grouping values, iterating over elements, or returning structured data from a script.
 
-```visual-basic
+```kahuna
 let statuses = ["active", "inactive"]
 ```
 

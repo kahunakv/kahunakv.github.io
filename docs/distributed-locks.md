@@ -52,7 +52,7 @@ Kahuna exposes a simple API for acquiring, releasing and extending locks. The ma
 
 Acquire a lease on the resource `locks/tasks/123` for 10 seconds in the interactive shell:
 
-```visual-basic
+```kahuna
 kahuna-cli> lock locks/tasks/123 10000               
 f1 acquired 786f947d8a6643f0b939865f72aa512a
 ```
@@ -127,7 +127,7 @@ Response:
 
 Unlock the acquired lease on the resource `locks/tasks/123` in the interactive shell:
 
-```visual-basic
+```kahuna
 kahuna-cli> lock locks/tasks/123 10000
 f1 acquired 786f947d8a6643f0b939865f72aa512a
 
@@ -209,7 +209,7 @@ Response:
 
 Extends the acquired lease on the resource `locks/tasks/123` in the interactive shell:
 
-```visual-basic
+```kahuna
 kahuna-cli> lock locks/tasks/123 10000
 f1 acquired 449941a969f74f8eb3d81cc70e5ab2ae
 
@@ -290,7 +290,7 @@ Response:
 
 Obtains information about the lock `locks/tasks/123` in the interactive shell:
 
-```visual-basic
+```kahuna
 kahuna-cli> lock locks/tasks/123 10000
 f1 acquired 449941a969f74f8eb3d81cc70e5ab2ae
 

@@ -2,7 +2,7 @@
 
 Returns persistent key/value pairs that belong to the same bucket. A bucket is the first path segment before `/`, so keys such as `services/auth`, `services/payments`, and `services/search` all belong to the `services` bucket.
 
-```swift
+```kahuna
 set `services/auth` "localhost:8081"
 r0 set 9ms
 
@@ -18,7 +18,7 @@ r0 services/payments localhost:8082
 
 Inside a script, assign the command to a variable with `let`. The variable receives an array of the returned values.
 
-```visual-basic
+```kahuna
 let services = get by bucket `services`
 return count(services)
 ```
@@ -27,7 +27,7 @@ return count(services)
 
 `get by bucket` also supports snapshot reads:
 
-```swift
+```kahuna
 get by bucket `services` as of 1718392012345
 ```
 

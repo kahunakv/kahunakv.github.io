@@ -130,7 +130,15 @@ const sidebars = {
     {
       type: 'category',
       label: 'Recipes',
-      items: ['recipes/rate-limiting', 'recipes/service-discoverability'],
+      items: [
+        'recipes/rate-limiting',
+        'recipes/service-discoverability',
+        'recipes/leader-election',
+        'recipes/idempotent-jobs',
+        'recipes/feature-flags',
+        'recipes/ordered-ids',
+        'recipes/inventory-reservation'
+      ],
     },
   ],
 };

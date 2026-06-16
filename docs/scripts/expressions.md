@@ -3,7 +3,7 @@
 
 Expressions are the fundamental building blocks of Kahuna Script. Nearly everything you write is an expression. The simplest and most precise definition of an expression is: anything that represents a value.
 
-```visual-basic
+```kahuna
 let my_var = 100 + 20.5
 let is_active = true || false
 let text = concat("my text", some_other_text_var)
@@ -11,7 +11,7 @@ let text = concat("my text", some_other_text_var)
 
 Expressions can include variables, literal values, placeholders, operators, and grouping parentheses.
 
-```visual-basic
+```kahuna
 let total = (price * quantity) + tax
 ```
 
@@ -30,7 +30,7 @@ These allow you to perform basic mathematical operations:
 
 **Example:**
 
-```visual-basic
+```kahuna
 let result = (10 + 5) * 2  # result is 30
 ```
 
@@ -46,7 +46,7 @@ These apply boolean logic to expressions within a script:
 
 **Example:**
 
-```visual-basic
+```kahuna
 let is_valid = (age > 18) && (has_id == true)
 let should_retry = (error != null) || (timeout_occurred)
 let is_guest = !is_registered
@@ -67,7 +67,7 @@ These allow you to compare two values:
 
 **Example:**
 
-```visual-basic
+```kahuna
 let is_adult = age >= 18
 let has_access = role == "admin"
 let is_different = score1 != score2
@@ -79,13 +79,13 @@ Comparison operators return boolean values (`true` or `false`) and are commonly 
 
 These allow you to easily create an array of values from a minimum to a maximum:
 
-```visual-basic
+```kahuna
 let my_range = 1..10
 ```
 
 This creates an array:
 
-```ruby
+```kahuna
 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 ```
 
@@ -97,13 +97,13 @@ Kahuna Script provides many **built-in functions** to assist developers with var
 
 A function call uses the following syntax:
 
-```ruby
+```kahuna
 function_name(arg1, arg2, ...)
 ```
 
 **Examples:**
 
-```ruby
+```kahuna
 let name = upper("alice")             # returns "ALICE"
 let a_number = round(10.55, 1)        # returns 10.6
 let json_str = to_json([10, 42, 30])  # serializes to JSON

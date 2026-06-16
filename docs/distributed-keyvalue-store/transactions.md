@@ -40,7 +40,7 @@ Kahuna’s transactional engine addresses these issues by:
 
 All operations in a Kahuna Script are implicitly part of a transaction:
 
-```ruby
+```kahuna
 set "services/auth" "localhost:8081"
 set "services/matchmaking" "localhost:8082"
 set "services/inventory" "localhost:8083"
@@ -48,7 +48,7 @@ set "services/inventory" "localhost:8083"
 
 ### Basic Usage
 
-```ruby
+```kahuna
 begin
  let current_alice = get "balance:alice"
  let current_bob = get "balance:alice"
@@ -62,7 +62,7 @@ end
 
 ### Example: Conditional Write Based on a Snapshot
 
-```ruby
+```kahuna
 begin
  let config = get "settings/feature-x"
  if config == "enabled" then
@@ -78,7 +78,7 @@ Even if `feature-x` is disabled mid-transaction by another client, the snapshot 
 
 All keys in a given **bucket prefix** (e.g., `services/`) are guaranteed to be on the same partition in the default hash-routed model. This enables **bucket reads** to be consistent and transactional:
 
-```ruby
+```kahuna
 begin
  let services = get by bucket "services"
  if count(services) == 3 then
@@ -143,7 +143,7 @@ Learn more about transaction lifecycle in the [architecture](../architecture/dis
 
 Example:
 
-```ruby
+```kahuna
 begin
  eset "session:abc" "active" # session is stored in ephemeral durability (in-memory)
  set "session:xyz" "active" # session is stored in persistent durability (disk)
@@ -173,7 +173,7 @@ If the transaction does not complete within this time, it will be **automaticall
 - Kahuna Scripts are designed for **short executions**, so increasing this value significantly is **not recommended**.
 - **Default value:** `5000ms`
 
-```ruby
+```kahuna
 begin (timeout=3000)
   set `config1` 'some value 1'
   set `config2` 'some value 2'
@@ -191,7 +191,7 @@ Defines the **locking strategy** used by the transaction.
 
 - **Default value:** `pessimistic`
 
-```ruby
+```kahuna
 begin (locking="optimistic")
   set `config1` 'some value 1'
   set `config2` 'some value 2'
@@ -210,7 +210,7 @@ Specifies that every read inside the transaction should be served **as of one fi
 - Plain reads inside the transaction use that snapshot automatically.
 - A per-statement `AS OF <other timestamp>` overrides the transaction-level snapshot for that statement.
 
-```ruby
+```kahuna
 begin (snapshot=1718392012345)
   let old_config = get `config/feature-x`
   let old_services = get by bucket `services`
@@ -240,7 +240,7 @@ Indicates whether acquired locks should be **released asynchronously** (in the b
 
 - **Default value:** `false`
 
-```ruby
+```kahuna
 begin (asyncRelease="true")
   set `config1` 'some value 1'
   set `config2` 'some value 2'
@@ -262,7 +262,7 @@ Specifies whether an **implicit `commit`** should be executed automatically if a
 
 **Example:**
 
-```ruby
+```kahuna
 begin (autoCommit=false)
   ...
   commit

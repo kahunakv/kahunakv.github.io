@@ -2,7 +2,7 @@
 
 Scans ephemeral storage across the cluster and returns key/value pairs whose keys start with the specified prefix.
 
-```swift
+```kahuna
 eset `cache/product/1` "ready"
 r0 set 4ms
 
@@ -18,7 +18,7 @@ r0 cache/product/2 ready
 
 Inside a script, assign the command to a variable with `let`. The variable receives an array of the returned values.
 
-```visual-basic
+```kahuna
 let products = escan by prefix `cache/product`
 return count(products)
 ```
@@ -27,7 +27,7 @@ return count(products)
 
 `escan by prefix` also supports snapshot reads:
 
-```swift
+```kahuna
 escan by prefix `cache/product` as of 1718392012345
 ```
 

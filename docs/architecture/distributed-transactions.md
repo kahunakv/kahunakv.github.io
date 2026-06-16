@@ -8,7 +8,7 @@ Kahuna implements a robust distributed transaction system that combines multi-ve
 
 Let’s look at the following [Kahuna script](/docs/scripts/) example, where we increment the maximum robots capacity per region as long as it doesn’t exceed the global cap:
 
-```visual-basic
+```kahuna
 let us1_amount = get robots_us1
 let us2_amount = get robots_us2
 let eu1_amount = get robots_eu1
@@ -89,7 +89,7 @@ This approach improves concurrency for **read-heavy workloads** but requires con
 
 In the previous example, we saw how hash-routed keys can spread a transaction across multiple partitions. That helps distribute load, but it can also increase the number of leader hops and network round-trips required to finish the transaction. When a working set should stay local, Key Buckets let you keep related keys on one partition:
 
-```visual-basic
+```kahuna
 let us1_amount = get `data-centers/robots_us1`
 let us2_amount = get `data-centers/robots_us2`
 let eu1_amount = get `data-centers/robots_eu1`

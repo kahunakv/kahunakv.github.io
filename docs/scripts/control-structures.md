@@ -7,7 +7,7 @@ Every Kahuna script is composed of a series of statements. A statement might inv
 
 The `if` construct is a fundamental feature found in most programming languages. It enables conditional execution of specific blocks of code. The basic syntax looks like this:
 
-```ruby
+```kahuna
 if expression then
   ...
 end
@@ -17,7 +17,7 @@ The `expression` is evaluated as a boolean (`true` or `false`). If it evaluates 
 
 Example:
 
-```ruby
+```kahuna
 let candidates = get by bucket `election`
 if count(candidates) == 0 then
    set `election/leader` "node-A"
@@ -26,7 +26,7 @@ end
 
 Often, you may want to perform one action when a condition is true, and a different action when it's false. That’s where else comes in. The else clause extends an if statement, allowing you to specify what should happen if the condition in the if evaluates to false.
 
-```ruby
+```kahuna
 let candidates = get by bucket `election`
 if count(candidates) == 0 then
    set `election/leader` "node-A"
@@ -42,7 +42,7 @@ The `for` loop allows a block of code to be executed **a specific number of time
 
 Repeating a block a fixed number of times:
 
-```ruby
+```kahuna
 let total = 0
 for i in 1..10 do
   let total = total + i
@@ -53,14 +53,14 @@ This loop sums the numbers from 1 to 10.
 
 Set some candidate key/values:
 
-```ruby
+```kahuna
 set `candidates/node-a` true nx
 set `candidates/node-b` true nx
 ```
 
 Iterating over an array of values:
 
-```ruby
+```kahuna
 let candidates = get by bucket "candidates"
 for candidate in candidates do
   set `services/email/leader` candidate
@@ -79,7 +79,7 @@ However, if you need **finer control** over when a transaction should be committ
 
 **Example:**
 
-```ruby
+```kahuna
 begin
   let balance = get "wallet:user123"
   if balance < 100 then
@@ -99,7 +99,7 @@ Allows assigning values to variables. If the variable does not exist, it is **au
 
 **Example:**
 
-```ruby
+```kahuna
 let score = 100 # temp score variable
 let score = score + 50
 ```
@@ -113,7 +113,7 @@ If a value needs to be **persisted beyond the script's execution**, you must use
 
 **Example:**
 
-```ruby
+```kahuna
 let level = 5
 set `player:123:level` level  # Persist the value to disk
 ```
@@ -126,7 +126,7 @@ This control structure allows you to **raise an exception** that is propagated b
 
 **Example:**
 
-```ruby
+```kahuna
 begin
   let balance = get "wallet:user123"
   if balance < 100 then
@@ -146,11 +146,11 @@ The `return` statement allows you to **send a value back to the client** or simp
 
 **Examples:**
 
-```ruby
+```kahuna
 return "Done"
 ```
 
-```ruby
+```kahuna
 set `config/connection-info` 'mysql://localserver-internal' nx
 if not set then
   return "Connection was already set"
@@ -165,7 +165,7 @@ The `sleep` command instructs the script to **pause execution** for the specifie
 
 **Example:**
 
-```ruby
+```kahuna
 sleep 200  # pauses execution for 200 milliseconds
 ```
 

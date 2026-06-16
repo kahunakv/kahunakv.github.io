@@ -85,28 +85,28 @@ Sets or overwrites key/value pairs. The behavior of the API is modified based on
 
 Sets a key/value only if not exists:
 
-```visual-basic
+```kahuna
 kahuna-cli> set `my-config` "my-value" nx
 r3 set 11ms
 ```
 
 Sets a key/value only if exists:
 
-```visual-basic
+```kahuna
 kahuna-cli> set `my-config` "my-value" xx
 r4 set 10ms
 ```
 
 Sets a key/value:
 
-```visual-basic
+```kahuna
 kahuna-cli> set `my-config` "my-value"
 r5 set 13ms
 ```
 
 Sets a key/value with an expiration of 10 sec:
 
-```visual-basic
+```kahuna
 kahuna-cli> set `my-config` "my-value" ex 10000
 r6 set 12ms
 ```
@@ -203,7 +203,7 @@ Sets or overwrites key/value pairs but only if the current value matches a speci
 
 Sets a key/value only if the current value is "current-value":
 
-```visual-basic
+```kahuna
 kahuna-cli> set `my-config` "current-value"
 r2 set 10ms
 
@@ -245,7 +245,7 @@ Sets or overwrites key/value pairs but only if the current revision matches a sp
 
 Sets a key/value only if the current value is the current revision is **4**:
 
-```visual-basic
+```kahuna
 kahuna-cli> set `my-config` "my-value"
 r4 set 12ms
 
@@ -269,23 +269,27 @@ Retrieves the value of a key along with its revision. If the key does not exist,
 <TabItem value="API">
 
 ```csharp
-(bool Found, byte[] Value, long Revision) TryGet(string key, Durability durability);
+Task<KahunaKeyValue> GetKeyValue(
+    string key,
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    long snapshotMs = 0,
+    CancellationToken cancellationToken = default
+);
 ```
 
 - **key:** The key to be queried.
 - **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
 
 **Returns:**
-- **Found:** `true` if the key exists.
-- **Value:** The value associated with the key.
-- **Revision:** A global counter indicating how many times the key has been modified.
+- **`KahunaKeyValue`**: Result object with success state, value, revision, and `LastModified`.
 
 </TabItem>
 <TabItem value="CLI">
 
 Gets key/values:
 
-```visual-basic
+```kahuna
 kahuna-cli> get `my-config`
 r-1 not found 12ms
 
@@ -344,7 +348,7 @@ Retrieves the value of a key at the specific revision. If the key/revision combi
 
 Gets key/values:
 
-```visual-basic
+```kahuna
 kahuna-cli> set `my-config` "my-value"
 r0 set 11ms
 
@@ -364,7 +368,7 @@ r0 my-value-1 13ms
 </TabItem>
 </Tabs>
 
-For **timestamp-based** historical reads, Kahuna Script also supports `GET key AS OF <hlc-timestamp>`, `EXISTS ... AS OF`, `GET BY BUCKET ... AS OF`, and `SCAN BY PREFIX ... AS OF`. Use `AT <revision>` when you know the exact revision number; use `AS OF` when you want the value that was visible at a specific snapshot time.
+For **timestamp-based** historical reads, Kahuna Script supports `GET key AS OF <hlc-timestamp>`, `EXISTS ... AS OF`, `GET BY BUCKET ... AS OF`, and `SCAN BY PREFIX ... AS OF`. The .NET client also supports snapshot reads directly through `snapshotMs` on `GetKeyValue(...)`, `ExistsKeyValue(...)`, `GetByBucket(...)`, `ScanAllByPrefix(...)`, `GetByRange(...)`, and `ScanByRange(...)`. Use `AT <revision>` or `GetKeyValueRevision(...)` when you know the exact revision number; use `AS OF` or `snapshotMs` when you want the value that was visible at a specific snapshot time.
 
 ---
 
@@ -376,11 +380,17 @@ Retrieves key/value pairs that share the same bucket. The operation is consisten
 <TabItem value="API">
 
 ```csharp
-Task<List<KahunaKeyValue>> GetByBucket(string prefixKey, KeyValueDurability durability);
+Task<List<KahunaKeyValue>> GetByBucket(
+    string prefixKey,
+    KeyValueDurability durability,
+    long snapshotMs = 0,
+    CancellationToken cancellationToken = default
+);
 ```
 
 - **prefixKey:** The bucket prefix to query.
 - **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
+- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
 
 **Returns:**
 **KeyValuePair:**
@@ -394,7 +404,7 @@ Task<List<KahunaKeyValue>> GetByBucket(string prefixKey, KeyValueDurability dura
 
 Get key/values by bucket prefix:
 
-```visual-basic
+```kahuna
 $ kahuna-cli --set services/auth/instance-1 --value node1
 r0 set 11ms
 
@@ -421,15 +431,15 @@ Retrieves key/value pairs inside an ordered interval under one prefix. This is t
 <TabItem value="API">
 
 ```csharp
-Task<KeyValueGetByRangePageResult> GetByRange(
+Task<List<KahunaKeyValue>> GetByRange(
     string prefix,
     string? startKey,
     bool startInclusive,
     string? endKey,
     bool endInclusive,
-    int limit = 0,
-    HLCTimestamp readTimestamp = default,
+    int limit = 100,
     KeyValueDurability durability = KeyValueDurability.Persistent,
+    long snapshotMs = 0,
     CancellationToken cancellationToken = default
 );
 ```
@@ -438,17 +448,16 @@ Task<KeyValueGetByRangePageResult> GetByRange(
 - **startKey / endKey:** Optional ordered bounds.
 - **startInclusive / endInclusive:** Whether each bound is inclusive.
 - **limit:** Maximum number of items returned in this page.
-- **readTimestamp:** Optional snapshot timestamp for a stable multi-page read.
 - **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
+- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
 
 **Returns:**
-- **Items:** Ordered keys in the requested interval.
-- **HasMore:** `true` when more keys remain after this page.
-- **NextCursor:** Opaque resume token for the next page.
-- **ReadTimestamp:** Snapshot timestamp used for the page.
+- **`List<KahunaKeyValue>`**: Ordered keys in the requested interval.
 
 </TabItem>
 </Tabs>
+
+The top-level client also exposes `ScanByRange(...)` as an async sequence when you want paged streaming over the latest state or over one stable historical snapshot.
 
 In interactive transactions, `GetByRange(...)` is especially useful for ordered key spaces. Under pessimistic locking it can also protect the requested interval with a range lock, preventing phantom inserts and conflicting writes inside that range until the transaction completes.
 
@@ -463,11 +472,17 @@ the node is visited. It can contain stale data. This API is slow because it scan
 <TabItem value="API">
 
 ```csharp
-Task<List<KahunaKeyValue>> ScanAllByPrefix(string prefixKey, KeyValueDurability durability);
+Task<List<KahunaKeyValue>> ScanAllByPrefix(
+    string prefixKey,
+    KeyValueDurability durability,
+    long snapshotMs = 0,
+    CancellationToken cancellationToken = default
+);
 ```
 
 - **prefixKey:** The prefix to scan for.
 - **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
+- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
 
 **Returns:**
 **KeyValuePair:**
@@ -528,7 +543,7 @@ Extends a key timeout. The key will be deleted after the key expires. If the exp
 
 Exists key/values:
 
-```visual-basic
+```kahuna
 kahuna-cli> set `my-config` "my-value" ex 10000
 r0 set 11ms
 
@@ -564,7 +579,7 @@ Returns if a key exists.
 
 Exists key/values:
 
-```visual-basic
+```kahuna
 kahuna-cli> exists `my-config`
 r-1 not found 12ms
 

@@ -23,7 +23,7 @@ Kahuna offers a scripting system in its key/value store called **Kahuna Script**
 
 A script can be something as simple as a single command to set a value on the key/value store:
 
-```swift
+```kahuna
 kahuna-cli> set `services/email/instance-3` '{"ip": "10.1.1.22", "port": 9090}'
 r0 set 19ms
 ```
@@ -35,13 +35,13 @@ or more elaborate examples that solve real-world problems:
 Use case: Only update a value if it matches the expected current value, which is useful for optimistic concurrency control. Prevent race conditions when multiple clients are trying to update shared state (e.g., balance or session info). It can be done with the built-in `set/cmp` command, for example,
 only update the value if the current revision is **0**:
 
-```visual-basic
+```kahuna
 set `election/leader` "node-A" cmprev 0
 ```
 
 we can return a custom value according to the result of the operation:
 
-```visual-basic
+```kahuna
 set `election/leader` "node-A" cmprev 0
 if not set then
   return false
@@ -51,7 +51,7 @@ return true
 
 or throw an exception if the value can't be changed:
 
-```visual-basic
+```kahuna
 set `election/leader` "node-A" cmprev 0
 if not set then
   throw "election failed"
@@ -61,7 +61,7 @@ return true
 
 the CAS operation can be completely implemented using basic building blocks and control structures:
 
-```visual-basic
+```kahuna
 let current_leader = get `election/leader`
 if rev(current_leader) == 0 then
   set `election/leader` "node-A"
@@ -74,7 +74,7 @@ end
 
 Limit how many actions a user/IP can do over time (e.g., login attempts or API calls). Throttle traffic, avoid brute-force attacks.
 
-```visual-basic
+```kahuna
 let rate_limit = get @rate_limit_param
 let last_refill = get @last_refill_param
 
@@ -101,7 +101,7 @@ return 1
 Reserve stock if available; useful for flash sales or ticketing systems.
 Prevent overselling in e-commerce under high load.
 
-```visual-basic
+```kahuna
 let inventory_key = get @inventory_key
 let requested_amount = get @requested_amount
 
@@ -120,7 +120,7 @@ end
 
 Count events (like logins or API hits) and auto-expire the counter after some time.
 
-```visual-basic
+```kahuna
 let current_count = get @counter_key_param
 let expected_increment = to_int(@expected_increment_param)
 let expected_limit = to_int(@expected_limit_param)
@@ -139,7 +139,7 @@ return new_count
 
 Refresh TTL on user session only if it exists. Prevent user sessions from expiring while they're still active.
 
-```visual-basic
+```kahuna
 let exists_key = exists @session_key
 if exists_key then
  extend @session_key @ttl_in_seconds

@@ -37,7 +37,7 @@ Buckets are a good fit when you want:
 
 Example:
 
-```ruby
+```kahuna
 set "services/auth" "localhost:8081"
 set "services/matchmaking" "localhost:8082"
 set "services/inventory" "localhost:8083"
@@ -45,7 +45,7 @@ set "services/inventory" "localhost:8083"
 
 Because those keys belong to the same bucket, Kahuna can serve them from one partition:
 
-```ruby
+```kahuna
 let services = get by bucket "services"
 ```
 
@@ -53,7 +53,7 @@ let services = get by bucket "services"
 
 `get by bucket` is a consistent operation because the keys in that bucket are served by one partition. That makes it useful inside transactions for multi-key logic:
 
-```ruby
+```kahuna
 begin
  let services = get by bucket "services"
  if count(services) == 3 then

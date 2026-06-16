@@ -37,3 +37,102 @@ div.markdown a {
 div.markdown img {
   margin-bottom: 10px;
 }
+
+.language-kahuna .token.escaped-identifier,
+.language-kahunascript .token.escaped-identifier,
+.language-kahuna-script .token.escaped-identifier {
+  color: #146c43;
+  font-weight: 600;
+}
+
+.language-kahuna .token.variable:not(.placeholder),
+.language-kahunascript .token.variable:not(.placeholder),
+.language-kahuna-script .token.variable:not(.placeholder) {
+  color: #24292f;
+  font-style: normal;
+}
+
+.language-kahuna .token.keyword,
+.language-kahunascript .token.keyword,
+.language-kahuna-script .token.keyword {
+  font-weight: 600;
+}
+
+.language-kahuna .token.placeholder,
+.language-kahunascript .token.placeholder,
+.language-kahuna-script .token.placeholder {
+  color: #8a4b00;
+  font-weight: 600;
+}
+
+.language-kahuna .token.range,
+.language-kahunascript .token.range,
+.language-kahuna-script .token.range {
+  color: #b83280;
+  font-weight: 700;
+}
+
+.language-kahuna .token.float,
+.language-kahuna .token.number,
+.language-kahunascript .token.float,
+.language-kahunascript .token.number,
+.language-kahuna-script .token.float,
+.language-kahuna-script .token.number {
+  color: #0550ae;
+}
+
+.language-csharp .token.number {
+  color: #0550ae;
+}
+
+[data-theme='dark'] .language-kahuna .token.escaped-identifier,
+[data-theme='dark'] .language-kahunascript .token.escaped-identifier,
+[data-theme='dark'] .language-kahuna-script .token.escaped-identifier {
+  color: #87ff5d;
+}
+
+[data-theme='dark'] .language-kahuna .token.variable:not(.placeholder),
+[data-theme='dark'] .language-kahunascript .token.variable:not(.placeholder),
+[data-theme='dark'] .language-kahuna-script .token.variable:not(.placeholder) {
+  color: #e6edf3 !important;
+  font-style: normal !important;
+}
+
+[data-theme='dark'] .language-kahuna .token.keyword,
+[data-theme='dark'] .language-kahunascript .token.keyword,
+[data-theme='dark'] .language-kahuna-script .token.keyword {
+  color: #c084fc;
+  font-weight: 600;
+}
+
+[data-theme='dark'] .language-kahuna .token.command,
+[data-theme='dark'] .language-kahunascript .token.command,
+[data-theme='dark'] .language-kahuna-script .token.command {
+  color: #bd93f9;
+  font-weight: 600;
+}
+
+[data-theme='dark'] .language-kahuna .token.placeholder,
+[data-theme='dark'] .language-kahunascript .token.placeholder,
+[data-theme='dark'] .language-kahuna-script .token.placeholder {
+  color: #ffb86c;
+}
+
+[data-theme='dark'] .language-kahuna .token.range,
+[data-theme='dark'] .language-kahunascript .token.range,
+[data-theme='dark'] .language-kahuna-script .token.range {
+  color: #ff79c6;
+}
+
+[data-theme='dark'] .language-kahuna .token.float,
+[data-theme='dark'] .language-kahuna .token.number,
+[data-theme='dark'] .language-kahunascript .token.float,
+[data-theme='dark'] .language-kahunascript .token.number,
+[data-theme='dark'] .language-kahuna-script .token.float,
+[data-theme='dark'] .language-kahuna-script .token.number {
+  color: #8be9fd;
+}
+
+[data-theme='dark'] .language-csharp .token.number {
+  color: #8be9fd;
+}

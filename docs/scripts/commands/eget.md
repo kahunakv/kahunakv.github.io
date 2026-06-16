@@ -3,7 +3,7 @@
 
 Get the value of key from the volatile storage. If the key does not exist `null` is returned.
 
-```swift
+```kahuna
 eset `config/limits/max-connections` 1000
 r0 set 9ms
 
@@ -15,7 +15,7 @@ r0 1000 7ms
 
 Passing the `AT` modifier allows to retrieve the value of a specific revision:
 
-```swift
+```kahuna
 eset `config/limits/max-connections` 1000
 r0 set 9ms
 
@@ -46,7 +46,7 @@ Check the [revisions](/docs/distributed-keyvalue-store/revisions/) section for m
 
 Passing the `AS OF` modifier reads the ephemeral value that was visible at a specific **HLC snapshot timestamp**:
 
-```swift
+```kahuna
 eget `config/limits/max-connections` as of 1718392012345
 ```
 

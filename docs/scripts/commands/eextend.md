@@ -3,7 +3,7 @@
 
 Allows to extend a key/value expiration for ephemeral keys:
 
-```swift
+```kahuna
 eset `session_token_user1` 'a69eacd410aa'
 r0 set 4ms
 
@@ -15,7 +15,7 @@ In the previous example, the key is set to expire in 3'600.000 ms (1 hour) from 
 
 An expiration value of zero means that the key never expires:
 
-```swift
+```kahuna
 eextend `session_token_user1` 0
 r0 set 7ms
 ```

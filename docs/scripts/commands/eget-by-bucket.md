@@ -2,7 +2,7 @@
 
 Returns ephemeral key/value pairs that belong to the same bucket. A bucket is the first path segment before `/`, so keys such as `sessions/user-1`, `sessions/user-2`, and `sessions/user-3` all belong to the `sessions` bucket.
 
-```swift
+```kahuna
 eset `sessions/user-1` "active"
 r0 set 5ms
 
@@ -18,7 +18,7 @@ r0 sessions/user-2 active
 
 Inside a script, assign the command to a variable with `let`. The variable receives an array of the returned values.
 
-```visual-basic
+```kahuna
 let sessions = eget by bucket `sessions`
 return count(sessions)
 ```
@@ -27,7 +27,7 @@ return count(sessions)
 
 `eget by bucket` also supports snapshot reads:
 
-```swift
+```kahuna
 eget by bucket `sessions` as of 1718392012345
 ```
 

@@ -24,7 +24,7 @@ After installing the necessary components, run the following command:
 
 Within the Kahuna CLI, you can execute commands, transactions, and scripts. Use the following format to set and retrieve key/value pairs:
 
-```visual-basic
+```kahuna
 ~> kahuna-cli
 Kahuna Shell 0.0.1 (alpha)
 
@@ -50,14 +50,14 @@ command retrieves the most recent value consistently from the appropriate leader
 By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period.
 The time-to-live of the key can set an expiration when creating a key with the `EX` parameter:
 
-```visual-basic
+```kahuna
 kahuna-cli> set myconfig "my-value" ex 30000
 r2 set 18ms
 ```
 
 or modify it later using the `extend` command:
 
-```visual-basic
+```kahuna
 kahuna-cli> set myconfig "my-value"
 r3 set 12ms
 
@@ -77,7 +77,7 @@ an "ephemeral" durability mode, in which data is stored only in the leader node'
 
 Commands using ephemeral durability are prefixed with an "e". For example:
 
-```visual-basic
+```kahuna
 kahuna-cli> eset tempconfig "my-value"
 r0 set 47ms
 
@@ -91,7 +91,7 @@ Keep in mind that ephemeral data will be lost if the node crashes or if memory p
 
 Each time a key is updated, you will notice an incrementing **[revision number](/docs/distributed-keyvalue-store/revisions)** (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong consistency and strict ordering.
 
-```visual-basic
+```kahuna
 kahuna-cli> set myconf "some config"
 r0 set 20ms
 
@@ -109,7 +109,7 @@ r2 another config 13ms
 
 The **[Compare-And-Swap (CAS)](/docs/distributed-keyvalue-store/cas)** operation ensures atomic updates and prevents race conditions in environments where multiple clients may attempt to modify the same key simultaneously.
 
-```visual-basic
+```kahuna
 kahuna-cli> set myconf "prev config"
 r0 set 14ms
 
@@ -130,7 +130,7 @@ the appropriate connector for a programming language/platform or directly from `
 
 For example, if we wanted to decrement the value of one key based on the limit configured in another key, we could do the following:
 
-```visual-basic
+```kahuna
 kahuna-cli>  set max_rate_limit 100
 r0 set 13ms
 
@@ -154,7 +154,7 @@ r1 99 4ms
 In this other example, we’re going to make a transfer between two keys. The keys may or may not be led by the same node, but the transaction
 coordinator ensures that changes are applied across all participating nodes. If an error occurs, the transaction will abort and no changes will be applied:
 
-```visual-basic
+```kahuna
 kahuna-cli>  set balance_user1 1000 nx
 r0 set 14ms
 

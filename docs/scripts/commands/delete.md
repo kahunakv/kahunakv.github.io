@@ -3,7 +3,7 @@
 
 Deletes a persistent key/value. The key is ignored if it doesn't exist.
 
-```swift
+```kahuna
 set `services/email/instance-3` '{"ip": "10.1.1.22", "port": 9090}'
 r0 set 9ms
 

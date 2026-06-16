@@ -4,7 +4,7 @@
 
 Deletes a ephemeral key/value. The key is ignored if it doesn't exist.
 
-```swift
+```kahuna
 eset `cache_server_dev` '10.1.1.22:9090'
 r0 set 9ms
 
