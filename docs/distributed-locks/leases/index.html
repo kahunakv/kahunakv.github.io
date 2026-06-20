@@ -5,8 +5,8 @@
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">Leases | Kahuna</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://kahunakv.github.io/img/docusaurus-social-card.jpg"><meta data-rh="true" name="twitter:image" content="https://kahunakv.github.io/img/docusaurus-social-card.jpg"><meta data-rh="true" property="og:url" content="https://kahunakv.github.io/docs/distributed-locks/leases/"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Leases | Kahuna"><meta data-rh="true" name="description" content="Distributed locks in Kahuna are based on the paper [*&quot;Leases: An Efficient"><meta data-rh="true" property="og:description" content="Distributed locks in Kahuna are based on the paper [*&quot;Leases: An Efficient"><link data-rh="true" rel="icon" href="/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://kahunakv.github.io/docs/distributed-locks/leases/"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/distributed-locks/leases/" hreflang="en"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/distributed-locks/leases/" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Leases","item":"https://kahunakv.github.io/docs/distributed-locks/leases"}]}</script><link rel="alternate" type="application/rss+xml" href="/blog/rss.xml" title="Kahuna RSS Feed">
 <link rel="alternate" type="application/atom+xml" href="/blog/atom.xml" title="Kahuna Atom Feed"><link rel="stylesheet" href="/assets/css/styles.c0a02c08.css">
-<script src="/assets/js/runtime~main.3ec1b79c.js" defer="defer"></script>
-<script src="/assets/js/main.b056fba0.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.c37e4609.js" defer="defer"></script>
+<script src="/assets/js/main.4af48f28.js" defer="defer"></script>
 </head>
 <body>
 <svg style="display: none;"><defs>
@@ -17,8 +17,7 @@
 <p>Distributed locks in Kahuna are based on the paper <a href="https://web.stanford.edu/class/cs240/readings/leases.pdf" target="_blank" rel="noopener noreferrer" class=""><em>&quot;Leases: An Efficient
 Fault-Tolerant Mechanism for Distributed File Cache Consistency&quot;</em></a> by Michael N. Nelson, Brent B. Welch, and John K. Ousterhout. It introduced the concept of <strong>leases</strong> as a way to manage distributed locks efficiently. Leases act as time-bound locks that expire after a specified duration, providing a balance between strong consistency and fault tolerance.</p>
 <ul>
-<li class=""><strong>Automatic Lock Expiration</strong>: Leases expire after a predefined time,
-eliminating the need for manual lock release. This is particularly useful if a client holding a lock crashes or becomes unreachable, as the system can reclaim the resource once the lease expires.</li>
+<li class=""><strong>Automatic Lock Expiration</strong>: Leases expire after a predefined time, eliminating the need for manual lock release. This is particularly useful if a client holding a lock crashes or becomes unreachable, as the system can reclaim the resource once the lease expires.</li>
 <li class=""><strong>No Need for Explicit Unlock</strong>: Despite Kahuna clients sent explicit unlocks, clients
 don&#x27;t need to explicitly release them, which reduces the complexity of
 handling failures and network partitions.</li>
