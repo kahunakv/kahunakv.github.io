@@ -14,13 +14,13 @@ Transactions use Hybrid Logical Clock timestamps as transaction IDs. HLC timesta
 
 A transaction context tracks:
 
-- transaction ID,
-- modified keys,
-- acquired locks,
-- variables and script parameters,
-- transaction status,
-- locking mode,
-- timeout.
+- Transaction ID
+- Modified keys
+- Acquired locks
+- Variables and script parameters
+- Transaction status
+- Locking mode
+- Timeout
 
 ## MVCC Entries
 

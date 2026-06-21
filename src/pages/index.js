@@ -62,6 +62,7 @@ const fitCards = [
       'Ordered ID allocation across nodes',
       'Multi-step workflows with compare-and-set',
       'Services that need quorum-backed coordination',
+      'MIT-licensed Kahuna with no proprietary runtime fees',
     ],
   },
   {

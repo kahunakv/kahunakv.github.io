@@ -367,7 +367,7 @@ await foreach (KahunaKeyValue item in client.ScanByRange(
 }
 ```
 
-This keeps fetching server-side pages behind the async sequence while preserving one historical snapshot when `snapshotMs` is non-zero.
+This keeps fetching server-side pages behind the async sequence while preserving one historical snapshot when `snapshotMs` is non-zero. Large range scans can read keys that currently live only on disk without forcing every scanned key back into the in-memory cache.
 
 ## Batch Key/Value Operations
 
@@ -677,3 +677,53 @@ await client.RetryableTransaction(txOptions, async (session, cancellationToken) 
 });
 
 ```
+
+## Backup and Point-in-Time Restore
+
+Start the target Kahuna server with `--pitr-backup-dir` before using backup operations. The catalog belongs to the node selected by the client, so use a stable endpoint when building or inspecting an incremental chain.
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.Communication.Rest;
+
+var client = new KahunaClient("https://kahuna-1:8082");
+
+KahunaBackupInfo full = await client.TakeCoordinatedBackupAsync();
+
+KahunaBackupInfo incremental = await client.TakeIncrementalBackupAsync(
+    full.BackupId
+);
+
+List<KahunaBackupInfo> backups = await client.ListBackupsAsync();
+List<KahunaBackupInfo> chain = await client.GetBackupChainAsync(
+    incremental.BackupId
+);
+```
+
+Available methods:
+
+| Method | Purpose |
+|--------|---------|
+| `TakeFullBackupAsync()` | Create a full backup on the selected node |
+| `TakeCoordinatedBackupAsync()` | Create a full backup capped at a cluster-wide safe HLC timestamp |
+| `TakeIncrementalBackupAsync(parentBackupId)` | Append committed WAL changes to a backup chain |
+| `ListBackupsAsync()` | List manifests in the selected node's local catalog |
+| `GetBackupChainAsync(leafBackupId)` | Resolve and validate a chain from its full root through the selected leaf |
+| `RestoreAsync(leafBackupId, targetDir, targetTimeMs)` | Restore into a new directory on the selected server node |
+
+Restore through the chain's natural end with `targetTimeMs: 0`:
+
+```csharp
+KahunaRestoreResponse restored = await client.RestoreAsync(
+    leafBackupId: incremental.BackupId,
+    targetDir: "/var/lib/kahuna/restored",
+    targetTimeMs: 0
+);
+
+Console.WriteLine($"Applied {restored.EntriesApplied} WAL entries");
+Console.WriteLine($"Restored to {restored.TargetDir}");
+```
+
+For point-in-time recovery, pass the target HLC physical component as Unix epoch milliseconds. `targetDir` refers to the server filesystem. The operation does not replace live state; start a fresh node with the restored directory.
+
+See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for server setup, node bootstrap, and current replay limitations.

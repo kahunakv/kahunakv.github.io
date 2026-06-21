@@ -46,11 +46,11 @@ Persistent locks queue dirty state to `BackgroundWriterActor` after committed ch
 
 `KeyValueActor` keeps an ordered in-memory B-tree of `KeyValueEntry` values. It also tracks:
 
-- write intents for individual keys,
-- prefix write intents for bucket reads,
-- active proposals,
-- recent revisions,
-- MVCC entries.
+- Write intents for individual keys
+- Prefix write intents for bucket reads
+- Active proposals
+- Recent revisions
+- MVCC entries
 
 Consistent-hash routing keeps operations for the same key or bucket stable across a worker set. This reduces locking inside the actor and keeps related state local.
 

@@ -33,6 +33,8 @@ Within Kahuna, each Region corresponds to a distinct Raft group typically compri
 
 Leadership transitions occur through a voting mechanism triggered when the current leader becomes unresponsive or experiences failures. Each leadership election establishes a new "term" represented by a monotonically increasing counter value. The protocol strictly enforces that only one leader can exist per term within each Raft group, preventing split-brain scenarios.
 
+In multi-partition clusters, independent elections can leave one node leading more partitions or more high-traffic partitions than its peers. Kahuna's optional [leader balancer](/docs/leader-balancing/) monitors leader count and partition load, then suggests normal Raft leadership handoffs. It changes leadership placement without moving partition data.
+
 ## Transaction Support
 
 Raft plays a crucial role in Kahuna's transaction processing by ensuring changes to individual partitions are durably replicated before confirming transaction commitment. This integration helps the transaction layer maintain atomicity guarantees even when operations span multiple nodes or partitions.

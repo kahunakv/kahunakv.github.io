@@ -13,10 +13,10 @@ Every persistent mutation goes through a Raft partition. The partition leader ap
 
 The Raft WAL is responsible for:
 
-- preserving committed operation order,
-- allowing followers to catch up,
-- restoring uncheckpointed committed logs after restart,
-- supporting leader failover without losing committed operations.
+- Preserving committed operation order
+- Allowing followers to catch up
+- Restoring uncheckpointed committed logs after restart
+- Supporting leader failover without losing committed operations
 
 Kahuna uses Kommander for Raft. Depending on configuration, WAL storage can be backed by memory, RocksDB, or SQLite.
 
@@ -24,10 +24,10 @@ Kahuna uses Kommander for Raft. Depending on configuration, WAL storage can be b
 
 Kahuna's persistence backend is represented by `IPersistenceBackend`. It stores:
 
-- lock entries,
-- key/value entries,
-- key/value revisions,
-- bucket/prefix lookup data.
+- Lock entries
+- Key/value entries
+- Key/value revisions
+- Bucket/prefix lookup data
 
 Implementations include:
 
@@ -53,6 +53,12 @@ The flush path is:
 ## Checkpoints
 
 Checkpoints connect materialized persistence with Raft log compaction. Once dirty state for a partition has been written, the background writer can ask Raft to replicate a checkpoint for that partition. After checkpointing, the system does not need to replay all older logs to reconstruct the same state.
+
+## PITR Retention
+
+Point-in-time recovery intentionally keeps committed WAL entries beyond the latest materialized-state checkpoint. Kahuna derives a protected log position from `PitrWindow` and `BaseSnapshotInterval`, approximately corresponding to `now - PitrWindow - BaseSnapshotInterval`, and prevents normal compaction from crossing that position.
+
+Full backups flush pending materialized writes before creating a backend checkpoint. Incremental backups then preserve committed WAL slices after that base image. A restore opens the checkpoint and replays the slices until the selected HLC timestamp. See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for the operational model and current public API limitations.
 
 ## Persistent vs Ephemeral
 

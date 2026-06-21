@@ -28,6 +28,7 @@ const sidebars = {
       ],
     },
     'getting-started',
+    'why-kahuna',
     {
       type: 'category',
       label: 'Distributed Locks',
@@ -91,7 +92,14 @@ const sidebars = {
     {
       type: 'category',
       label: 'Server',
-      items: ['server-installation', 'server-configuration', 'embedded-kahuna-node'],
+      items: [
+        'server-installation',
+        'server-configuration',
+        'leader-balancing',
+        'benchmarking',
+        'backups-and-point-in-time-recovery',
+        'embedded-kahuna-node'
+      ],
     },
     {
       type: 'category',
@@ -117,6 +125,7 @@ const sidebars = {
         'internals',
         'internals/actor-model',
         'internals/wal-and-persistence',
+        'internals/backups-and-pitr',
         'internals/replication',
         'internals/mvcc',
         'internals/sequences'

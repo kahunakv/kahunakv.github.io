@@ -48,7 +48,7 @@ This process ensures that all read and write operations maintain consistency eve
 
 Both **Ephemeral** and **Persistent** durability modes maintain in-memory key/value entries to accelerate reads. Persistent entries can be reloaded from durable storage after eviction, while ephemeral entries are removed permanently because they have no durable backing store.
 
-Kahuna runs a bounded key/value collector independently on each actor. The collector first removes definite garbage such as deleted, undefined, and expired entries. If the actor is still above its entry or byte budget, it uses a sampled approximate LRU pass to evict older entries without sorting the entire store. On configurable cycles it also trims retained revision and MVCC metadata for hot keys that remain in memory.
+Kahuna runs a bounded key/value collector independently on each actor. The collector first removes definite garbage such as deleted, undefined, and expired entries using tombstone and expiration indexes. If the actor is still above its entry or byte budget, it evicts cold live entries from an intrusive LRU list. Persistent entries whose latest change may not be flushed to disk are pinned until they are safe to reload from storage. Revision and MVCC metadata are trimmed inline where they grow.
 
 See [Keys Eviction](/docs/architecture/keys-eviction/) for the full algorithm and configuration details.
 

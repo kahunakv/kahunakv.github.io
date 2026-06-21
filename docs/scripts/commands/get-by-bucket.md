@@ -39,4 +39,6 @@ If a key already existed at that time and was updated later, the snapshot still 
 
 `get by bucket` is a consistent operation because all keys in the same bucket are routed to the same partition. Use this command when your schema intentionally groups related keys under a shared single-partition bucket prefix.
 
+The command returns the matching bucket in one response and is capped at `4096` entries. Keep buckets intentionally bounded. For large ordered key spaces, use paginated range reads instead.
+
 If a key space is configured for key-range routing and later splits into multiple ordered ranges, whole-space traversal should use range-oriented reads instead of assuming the entire prefix still lives on one partition.

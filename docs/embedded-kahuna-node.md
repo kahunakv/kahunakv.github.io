@@ -73,17 +73,17 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `DefaultTransactionTimeout` | `5000` | Default transaction timeout in milliseconds. |
 | `ScriptCacheExpiration` | `1 minute` | How long parsed scripts stay cached. |
 | `RevisionsToKeepCached` | `100` | Number of key revisions to keep cached in memory. |
-| `CacheEntryTtl` | `5 minutes` | Maximum age of cached entries before they become eviction candidates. |
-| `CacheEntriesToRemove` | `1000` | Maximum number of cache entries removed per eviction pass. |
+| `CacheEntryTtl` | `5 minutes` | Age threshold used by lock cleanup and legacy cleanup paths. Key/value LRU eviction is budget-based. |
+| `CacheEntriesToRemove` | `1000` | Maximum entries removed by cleanup paths that use this cap. Key/value collection uses `CollectBatchMax`. |
 | `CollectionInterval` | `60 seconds` | Interval for cache collection and eviction checks. |
 | `MaxEntriesPerActor` | `50000` | Maximum cached entries per actor before collection pressure applies. |
 | `MaxBytesPerActor` | `268435456` | Approximate maximum cached bytes per actor before collection pressure applies. |
-| `CollectBatchMax` | `1000` | Maximum number of entries considered in a collection batch. |
+| `CollectBatchMax` | `1000` | Maximum number of entries evicted in one collection pass. |
 | `RevisionRetention` | `16` | Number of revisions retained for in-memory revision history. |
-| `LruSampleSize` | `5` | Number of candidates sampled for LRU-style eviction decisions. |
-| `LruSampleScanMax` | `256` | Maximum number of entries scanned while building an LRU sample. |
-| `MetadataTrimInterval` | `4` | Collection cycle interval for metadata trimming. `0` disables metadata trimming. |
-| `DirtyObjectsWriterDelay` | `1000` | Delay between dirty object writer flush passes, in milliseconds. |
+| `DirtyObjectsWriterDelay` | `1000` | Delay between dirty object writer flush passes, in milliseconds. Longer values can increase batching but keep dirty persistent entries pinned in memory longer. |
+| `PitrWindow` | `1 hour` | Recoverable WAL history. Values are normalized to more than zero and at most 6 hours. |
+| `BaseSnapshotInterval` | `30 minutes` | Intended interval between base checkpoints. It must be positive and no greater than `PitrWindow`. It also contributes to the protected WAL floor. |
+| `BackupDir` | empty | Root directory for backup manifests and artifacts. Backup methods on `node.Kahuna` are disabled when empty. |
 | `ReadIOThreads` | `8` | Number of Raft read I/O threads. |
 | `WriteIOThreads` | `8` | Number of Raft write I/O threads. |
 | `HttpScheme` | `https://` | HTTP scheme used by Raft REST communication. |
@@ -112,4 +112,5 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 - `StartAsync` joins the single-node cluster and waits for leaders for the configured partitions.
 - `WaitForLeaderForKeyAsync` waits for the partition that owns a specific key.
 - Use distinct `StoragePath` and `WalPath` values when using `sqlite` or `rocksdb`.
+- Set `BackupDir` to enable backup, catalog, and offline restore methods through `node.Kahuna`. See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/).
 - Always dispose the node with `await using` or `DisposeAsync` so Raft leaves the cluster and file-backed resources are released.

@@ -27,7 +27,7 @@ With this small example, we can already observe some of the key characteristics 
 Additionally, to make the system more scalable and optimize compute resource usage:
 
 - **New nodes** can be added to the cluster **on the fly**. These new nodes can eventually become leaders of partitions once they are caught up with the latest activity.
-- **Nodes can be removed** from the cluster for maintenance or decommissioning. Leadership distribution is automatically rebalanced while maintaining consistency.
+- **Nodes can be removed** from the cluster for maintenance or decommissioning. The opt-in [leader balancer](/docs/leader-balancing/) can gradually redistribute partition leadership while maintaining consistency.
 - A **general monitoring algorithm** tracks partition activity to determine if a partition is too large (based on a configured threshold) or experiencing too much activity (becoming a hotspot). When this happens, the partition is **split** into two, distributing its size and load across two available nodes in the cluster.
 
 ## Goals of Kahuna

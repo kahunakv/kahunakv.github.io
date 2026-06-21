@@ -16,13 +16,13 @@ This lets sequences reuse the existing routing, Raft replication, compare-and-se
 
 `SequencerManager` serializes sequence state as JSON. The state includes:
 
-- sequence name,
-- current value,
-- initial value,
-- increment,
-- optional max value,
-- created and updated timestamps,
-- idempotency records.
+- Sequence name
+- Current value
+- Initial value
+- Increment
+- Optional max value
+- Created and updated timestamps
+- Idempotency records
 
 Public clients see this state as `KahunaSequence` or `ReadOnlySequenceEntry`.
 

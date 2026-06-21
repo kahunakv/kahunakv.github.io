@@ -79,6 +79,11 @@ const config = {
         },
         items: [
           {
+            to: '/docs/why-kahuna',
+            label: 'Why Kahuna?',
+            position: 'left'
+          },
+          {
             type: 'docSidebar',
             sidebarId: 'tutorialSidebar',
             position: 'left',

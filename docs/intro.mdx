@@ -14,6 +14,22 @@ metadata, caching, sessions, and more**. In this tutorial, you will learn how it
 Before you proceed, make sure that Kahuna is running on your system. Refer to the **[Server Installation](/docs/server-installation/)** section for instructions.
 You will also need the **[Kahuna CLI](/docs/kahuna-cli/)** to execute commands on the server.
 
+For a local standalone server, clone the Kahuna repository and run:
+
+```bash
+git clone https://github.com/kahunakv/kahuna
+cd kahuna
+sh ./scripts/run-standalone.sh
+```
+
+The standalone script starts one node on `http://127.0.0.1:8081` and `https://127.0.0.1:8082` using persistent RocksDB storage under `/tmp/kahuna-standalone`.
+
+Connect to it with:
+
+```bash
+kahuna-cli -c "https://127.0.0.1:8082" --insecure
+```
+
 After installing the necessary components, run the following command:
 
 ```bash

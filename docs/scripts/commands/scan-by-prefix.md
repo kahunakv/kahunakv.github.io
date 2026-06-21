@@ -38,3 +38,5 @@ If a key already existed at that time and was updated later, the snapshot still 
 ## Notes
 
 `scan by prefix` visits nodes and workers to find matching keys. It is broader and slower than `get by bucket`, and it is not the preferred command for transactional logic. Use `get by bucket` when the keys share a bucket and you need a consistent, partition-local read.
+
+The command returns the matching set in one response and is capped at `4096` entries. Use paginated range reads from the .NET client for large or unbounded ordered scans.

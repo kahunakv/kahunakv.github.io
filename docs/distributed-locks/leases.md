@@ -11,8 +11,7 @@ import Kahuna7 from '../assets/kahuna7.png';
 Distributed locks in Kahuna are based on the paper [*"Leases: An Efficient
 Fault-Tolerant Mechanism for Distributed File Cache Consistency"*](https://web.stanford.edu/class/cs240/readings/leases.pdf) by Michael N. Nelson, Brent B. Welch, and John K. Ousterhout. It introduced the concept of **leases** as a way to manage distributed locks efficiently. Leases act as time-bound locks that expire after a specified duration, providing a balance between strong consistency and fault tolerance.
 
-- **Automatic Lock Expiration**: Leases expire after a predefined time,
-eliminating the need for manual lock release. This is particularly useful if a client holding a lock crashes or becomes unreachable, as the system can reclaim the resource once the lease expires.
+- **Automatic Lock Expiration**: Leases expire after a predefined time, eliminating the need for manual lock release. This is particularly useful if a client holding a lock crashes or becomes unreachable, as the system can reclaim the resource once the lease expires.
 - **No Need for Explicit Unlock**: Despite Kahuna clients sent explicit unlocks, clients
 don't need to explicitly release them, which reduces the complexity of
 handling failures and network partitions.

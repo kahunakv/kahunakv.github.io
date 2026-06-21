@@ -46,9 +46,21 @@ Kahuna server options are passed as command-line flags to `Kahuna.Server`. The t
 | `--default-transaction-timeout` | Default transaction timeout in milliseconds. | `5000` |
 | `--script-cache-expiration` | Script parser cache expiration in seconds. | `600` |
 | `--revisions-to-cache` | Number of key revisions intended to stay cached in memory. This flag is defined by the server CLI, but the current server startup path does not pass it into `KahunaConfiguration`. | `4` |
-| `--cache-entry-ttl` | Maximum in-memory cache entry age before eviction, in seconds. | `1800` |
-| `--cache-entries-to-remove` | Maximum number of cache entries removed per eviction pass. Values less than or equal to `0` are normalized from the collection batch size. | `100` |
+| `--cache-entry-ttl` | Age threshold used by lock cleanup and legacy cleanup paths, in seconds. Key/value LRU eviction is budget-based. | `1800` |
+| `--cache-entries-to-remove` | Maximum entries removed by cleanup paths that use this cap. Values less than or equal to `0` are normalized from the key/value collection batch size. | `100` |
 | `--dirty-objects-writer-delay` | Delay between dirty object writer flush passes, in milliseconds. | `200` |
+
+## Backups and Point-in-Time Recovery
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--pitr-window` | Recoverable WAL history in seconds. Values are normalized to a range greater than `0` and no more than `21600` seconds (6 hours). Increasing this value increases retained WAL storage. | `3600` |
+| `--base-snapshot-interval` | Intended interval between base checkpoints per partition, in seconds. It must be positive and no greater than `--pitr-window`. This setting contributes to the protected WAL floor but does not schedule backups automatically. | `1800` |
+| `--pitr-backup-dir` | Root directory for backup catalog manifests and artifacts. Backup REST/gRPC, client, and CLI operations are disabled when this is empty. It is required by `--pitr-bootstrap-from`. | empty |
+| `--pitr-bootstrap-from` | Leaf backup ID restored into local persistence and WAL before the node joins an existing cluster. Requires `--join-existing`, `--initial-cluster`, and `--pitr-backup-dir`. | none |
+| `--pitr-target-time-ms` | PITR target using the physical HLC component in Unix epoch milliseconds. `0` restores through the selected chain's natural end. | `0` |
+
+See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for setup, client and CLI usage, the backup-chain model, and recovery constraints.
 
 ## Persistent Revision Retention
 
@@ -102,6 +114,26 @@ Kahuna server options are passed as command-line flags to `Kahuna.Server`. The t
 | `--raft-max-drain-quantum-replication` | Maximum replication operations drained per executor wake cycle. | `4` |
 | `--raft-max-drain-quantum-client` | Maximum client operations drained per executor wake cycle. | `2` |
 | `--raft-max-drain-quantum-maintenance` | Maximum maintenance operations drained per executor wake cycle. | `1` |
+
+## Raft Leader Balancing
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--raft-enable-leader-balancer` | Enable advisory leader balancing. Configure it consistently on every cluster node. | disabled |
+| `--raft-leader-balancer-report-interval` | Interval between node load reports, in milliseconds. | `5000` |
+| `--raft-leader-balancer-interval` | Interval between planning passes on the partition `0` leader, in milliseconds. | `30000` |
+| `--raft-leader-balancer-report-ttl` | Maximum accepted load-report age, in milliseconds. Must exceed the report interval. | `20000` |
+| `--raft-count-deadband` | Allowed leader-count deviation from the ideal before count balancing starts. | `1` |
+| `--raft-load-imbalance-threshold` | Fractional load skew that triggers load-based swaps after counts are balanced. | `0.25` |
+| `--raft-min-leader-stability-ms` | Minimum leadership age before a partition is eligible to move, in milliseconds. | `5000` |
+| `--raft-move-cooldown` | Delay before the same partition can move again, in milliseconds. | `60000` |
+| `--raft-max-moves-per-pass` | Maximum transfer suggestions created in one planning pass. | `4` |
+| `--raft-max-concurrent-transfers` | Maximum transfer suggestions tracked concurrently. | `2` |
+| `--raft-suggestion-timeout` | Time allowed for a suggested transfer to be confirmed by load reports, in milliseconds. | `15000` |
+| `--raft-leader-balancer-ops-weight` | Operations-per-second weight in the partition load score. | `1.0` |
+| `--raft-leader-balancer-queue-weight` | Queue-depth weight in the partition load score. | `0.5` |
+
+See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, and safety behavior.
 
 ## Raft Logging and Compaction
 

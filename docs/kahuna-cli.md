@@ -65,6 +65,12 @@ $ kahuna-cli -c "https://kahuna-dev.company.internal:8082,https://kahuna-dev.com
 
 This tells the CLI to connect to the specified Kahuna nodes, enabling interaction with a custom or remote environment.
 
+For the local standalone development server, connect to the HTTPS endpoint and allow the local development certificate:
+
+```bash
+kahuna-cli -c "https://127.0.0.1:8082" --insecure
+```
+
 ## Single-Command Mode
 
 The CLI can also execute one operation and exit. Common options include:
@@ -90,3 +96,49 @@ kahuna-cli --delete-sequence orders
 ```
 
 Use `--format json` to request JSON output for commands that support it.
+
+## Backup and Restore
+
+The target server must be started with `--pitr-backup-dir`. Backups and catalog operations run against the node selected by `-c`, whose catalog is local to that node.
+
+```bash
+# Create backups
+kahuna-cli -c "https://kahuna-1:8082" --backup-full
+kahuna-cli -c "https://kahuna-1:8082" --backup-coordinated
+kahuna-cli -c "https://kahuna-1:8082" \
+  --backup-incremental \
+  --parent-backup-id <backup-id>
+
+# Inspect and validate
+kahuna-cli -c "https://kahuna-1:8082" --list-backups
+kahuna-cli -c "https://kahuna-1:8082" --backup-chain <leaf-backup-id>
+```
+
+Use a coordinated backup when all partitions must share one cluster snapshot timestamp. Use the returned backup ID as the parent of the next incremental backup.
+
+Restore writes a new storage directory on the server handling the request:
+
+```bash
+# Restore through the end of the selected chain
+kahuna-cli -c "https://kahuna-1:8082" \
+  --restore <leaf-backup-id> \
+  --target-dir /var/lib/kahuna/restored
+
+# Restore through a specific Unix timestamp in milliseconds
+kahuna-cli -c "https://kahuna-1:8082" \
+  --restore <leaf-backup-id> \
+  --target-dir /var/lib/kahuna/restored-at-t \
+  --target-time-ms 1781478000000
+```
+
+`--target-dir` is a path on the server, not the computer running the CLI. Restore does not modify the running node. Start a fresh node with the restored path and the same storage adapter and revision.
+
+Interactive mode supports:
+
+```text
+backup full
+backup coordinated
+list backups
+```
+
+See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for retention, bootstrap, and current restore limitations.

@@ -59,9 +59,9 @@ The production implementation uses gRPC and shared batchers. This lets Kahuna co
 
 Raft handles leader election per partition. When a leader changes:
 
-- only the current leader can commit new writes for that partition,
-- followers catch up from the leader's log,
-- committed entries remain ordered,
-- uncommitted proposals may need to be retried.
+- Only the current leader can commit new writes for that partition
+- Followers catch up from the leader's log
+- Committed entries remain ordered
+- Uncommitted proposals may need to be retried
 
 Clients can see retry or abort responses when leadership changes race with an operation.

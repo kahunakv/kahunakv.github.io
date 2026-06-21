@@ -38,3 +38,5 @@ If a key already existed at that time and was updated later, the snapshot still 
 ## Notes
 
 `eget by bucket` reads from ephemeral storage. Ephemeral keys can expire or be evicted under memory pressure, so this command is best suited to temporary data such as sessions, leases, and cache entries.
+
+The command returns the matching bucket in one response and is capped at `4096` entries. Keep buckets intentionally bounded. For large ordered key spaces, use paginated range reads instead.
