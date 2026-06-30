@@ -5,7 +5,7 @@
 <meta name="generator" content="Docusaurus v3.10.1">
 <title data-rh="true">Storage: Overview | Kahuna</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://kahunakv.github.io/img/docusaurus-social-card.jpg"><meta data-rh="true" name="twitter:image" content="https://kahunakv.github.io/img/docusaurus-social-card.jpg"><meta data-rh="true" property="og:url" content="https://kahunakv.github.io/docs/storage/overview/"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Storage: Overview | Kahuna"><meta data-rh="true" name="description" content="Kahuna uses embedded storage engines as the durable local storage layer for each node. The distributed guarantees come from Kahuna and Kommander: commands are replicated through Raft, then committed state is written to the configured local backend."><meta data-rh="true" property="og:description" content="Kahuna uses embedded storage engines as the durable local storage layer for each node. The distributed guarantees come from Kahuna and Kommander: commands are replicated through Raft, then committed state is written to the configured local backend."><link data-rh="true" rel="icon" href="/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://kahunakv.github.io/docs/storage/overview/"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/storage/overview/" hreflang="en"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/storage/overview/" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Storage: Overview","item":"https://kahunakv.github.io/docs/storage/overview"}]}</script><link rel="alternate" type="application/rss+xml" href="/blog/rss.xml" title="Kahuna RSS Feed">
 <link rel="alternate" type="application/atom+xml" href="/blog/atom.xml" title="Kahuna Atom Feed"><link rel="stylesheet" href="/assets/css/styles.c0a02c08.css">
-<script src="/assets/js/runtime~main.2f7db10b.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.f03062b8.js" defer="defer"></script>
 <script src="/assets/js/main.4a8fe0ad.js" defer="defer"></script>
 </head>
 <body>
@@ -47,11 +47,12 @@
 <li class=""><code>kv</code> stores persistent key/value entries and their revision records.</li>
 <li class=""><code>locks</code> stores persistent distributed lock state.</li>
 </ul>
-<p>Each write is serialized as a protobuf message and appended through a RocksDB <code>WriteBatch</code> with synchronous write options enabled. For every persistent key/value write, the adapter stores two records:</p>
+<p>Each write is serialized as a protobuf message and appended through a RocksDB <code>WriteBatch</code> with synchronous write options enabled. For a normal persistent key/value write, the adapter stores two records:</p>
 <ul>
 <li class=""><code>key~CURRENT</code>, the latest visible state of the key</li>
 <li class=""><code>key~revision</code>, the immutable revision record for revision-aware reads</li>
 </ul>
+<p>When a write uses <code>SET ... NOREV</code> or <code>KeyValueFlags.SetNoRevision</code>, Kahuna updates <code>key~CURRENT</code> but skips the <code>key~revision</code> record for that write. The current revision number still advances, but historical reads cannot retrieve the skipped revision. This reduces memory and disk write amplification for cache-style workloads that only need the latest value.</p>
 <p>Locks follow the same pattern, with <code>resource~CURRENT</code> and <code>resource~fencingToken</code> records in the lock column family. Prefix scans use RocksDB&#x27;s sorted keyspace directly: the adapter seeks to the requested prefix, iterates until the prefix range ends, and returns only records ending in <code>~CURRENT</code>.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="where-rocksdb-shines">Where RocksDB Shines<a href="#where-rocksdb-shines" class="hash-link" aria-label="Direct link to Where RocksDB Shines" title="Direct link to Where RocksDB Shines" translate="no">​</a></h3>
 <p>RocksDB is the best default for production Kahuna nodes with sustained persistent traffic.</p>
@@ -59,6 +60,7 @@
 <li class=""><strong>Write-heavy workloads</strong>. LSM storage, memtables, WAL, and background compaction fit high insert/update rates better than page-oriented storage.</li>
 <li class=""><strong>Large keyspaces</strong>. Sorted SST files and iterators make prefix scans and bucket-style access natural.</li>
 <li class=""><strong>Persistent revisions</strong>. Kahuna writes latest-state and revision records for every persistent update; RocksDB handles that append-heavy pattern well.</li>
+<li class=""><strong>Cache-style writes</strong>. <code>NOREV</code> writes keep the current value durable while avoiding the extra historical revision record when old versions are not needed.</li>
 <li class=""><strong>Batched actor output</strong>. Kahuna&#x27;s background writer can hand RocksDB batches of dirty locks and key/value entries, which maps cleanly to <code>WriteBatch</code>.</li>
 <li class=""><strong>Crash recovery</strong>. The adapter opens RocksDB with absolute WAL recovery and uses synchronous write options for materialized-state writes.</li>
 </ul>
