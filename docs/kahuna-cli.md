@@ -71,6 +71,14 @@ For the local standalone development server, connect to the HTTPS endpoint and a
 kahuna-cli -c "https://127.0.0.1:8082" --insecure
 ```
 
+For the native cluster started by `./scripts/run-cluster.sh`, connect to all three nodes:
+
+```bash
+kahuna-cli \
+  -c "https://127.0.0.1:8082,https://127.0.0.1:8084,https://127.0.0.1:8086" \
+  --insecure
+```
+
 ## Single-Command Mode
 
 The CLI can also execute one operation and exit. Common options include:

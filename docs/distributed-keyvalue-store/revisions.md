@@ -32,6 +32,22 @@ get `example`
 r2 value3 9ms
 ```
 
+## Skipping Historical Revisions
+
+Some workloads only need the latest value. For example, a pure key/value cache may overwrite the same key frequently and never read older versions. In that case, use `SET ... NOREV` to skip the historical revision record for that write:
+
+```kahuna
+set `cache/user/1001` '{"name":"Ada"}' ex 60000 norev
+r0 set 8ms
+
+set `cache/user/1001` '{"name":"Ada Lovelace"}' ex 60000 norev
+r1 set 7ms
+```
+
+`NOREV` does not freeze the revision counter. The current revision still advances, latest reads still return the new value, and compare-revision operations can still protect conditional updates. What changes is the history: the revision produced by a `NOREV` write is not archived for `GET ... AT <revision>` or historical snapshot reads.
+
+Use normal `SET` when you need audit history, debugging timelines, rollbacks, or point-in-time reads. Use `SET ... NOREV` when reducing memory and disk write amplification matters more than retaining old values.
+
 ## Querying Previous Revisions
 
 Kahuna works like a time machine, allowing you to query the value of a key at any particular point-in-time:
@@ -69,6 +85,8 @@ scan by prefix `services/auth` as of 1718392012345
 
 Snapshot timestamps must be non-zero. `AT` and `AS OF` cannot be combined on the same statement.
 
+For long-lived historical views, use [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/) to keep the required persistent revisions from being pruned while the view remains active.
+
 ## Practical Uses of Retrieving Old Revisions
 
 While many systems only care about the latest value, Kahuna's ability to retrieve old revisions opens up some powerful, practical use cases, especially in distributed systems, debugging, auditing and observability:
@@ -84,5 +102,6 @@ While many systems only care about the latest value, Kahuna's ability to retriev
 
 - Revision tracks when a key was last modified.
 - It updates on every write but stays the same for reads.
+- `SET ... NOREV` still advances the current revision but skips historical revision storage.
 - Used in leader election, distributed locks and race condition prevention.
 - Essential for Compare-And-Swap (CAS) operations.

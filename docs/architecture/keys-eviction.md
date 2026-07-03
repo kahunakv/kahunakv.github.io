@@ -81,13 +81,16 @@ This safety rule affects memory behavior: under heavy write load, recently modif
 Eviction is not the only way Kahuna reduces memory. Revision and transaction metadata are bounded inline, where they grow:
 
 - Each new archived revision trims in-memory revision history back to `RevisionRetention`.
+- If an MVCC snapshot hold is active, trimming also keeps the boundary revision at or before the effective snapshot floor.
 - When a transaction commits, rolls back, or releases a lock, its MVCC snapshot is removed and expired sibling snapshots are cleaned up.
 
-This is important for hot keys. A hot key may never be selected by LRU, but its revision or transaction metadata can still grow. Inline trimming lets Kahuna reduce memory without scanning the entire store or evicting the current value.
+This is important for hot keys. A hot key may never be selected by LRU, but its revision or transaction metadata can still grow. Inline trimming lets Kahuna reduce memory without scanning the entire store or evicting the current value. Snapshot holds add one protected boundary revision per affected key, so long-lived historical readers can keep reading at their pinned timestamp without keeping unbounded history in memory.
 
 | Setting | Meaning | Default |
 |---------|---------|---------|
 | `RevisionRetention` | Number of latest revisions retained in memory per key. | `16` |
+
+Persistent revision cleanup is also clamped by the effective snapshot floor. While a hold is live, the persistent backend must keep the boundary revision and all newer revisions, even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise prune them.
 
 ## Persistent vs Ephemeral Keys
 

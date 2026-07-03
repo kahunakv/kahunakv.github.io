@@ -84,3 +84,4 @@ return "released"
 - Keep the transaction short. Do not call external systems inside the reservation flow.
 - Use one inventory key per SKU or resource pool.
 - Store reservation keys separately so you can release or audit them later.
+- If reservation history is not needed, write reservation marker keys with `NOREV` to reduce revision storage.

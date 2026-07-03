@@ -276,6 +276,72 @@ The same snapshot parameter is also available on:
 - `GetByRange(...)`
 - `ScanByRange(...)`
 
+When a historical view needs to stay readable for a long time, acquire a [snapshot hold](/docs/distributed-keyvalue-store/snapshot-holds/) so persistent revision cleanup does not prune the versions needed by that timestamp.
+
+```csharp
+using Kommander.Time;
+
+long snapshotMs = latest.LastModified;
+HLCTimestamp timestamp = new(0, snapshotMs, uint.MaxValue);
+
+(KeyValueResponseType type, string holdId, HLCTimestamp leaseExpiry) =
+    await client.AcquireSnapshotHold(
+        holderId: "analytics-branch",
+        timestamp,
+        leaseMs: 300_000
+    );
+
+if (type != KeyValueResponseType.Set)
+    throw new InvalidOperationException($"Could not acquire snapshot hold: {type}");
+
+try
+{
+    KahunaKeyValue historical = await client.GetKeyValue(
+        "users/000100",
+        KeyValueDurability.Persistent,
+        snapshotMs: snapshotMs
+    );
+}
+finally
+{
+    await client.ReleaseSnapshotHold(holdId);
+}
+```
+
+## No-Revision Writes
+
+For cache-style keys that only need the latest value, the client can set a key without archiving a historical revision entry:
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.KeyValue;
+
+var client = new KahunaClient("https://node1:2071");
+
+KahunaKeyValue result = await client.SetKeyValueNoRevision(
+    "cache/user/1001",
+    System.Text.Encoding.UTF8.GetBytes("""{"name":"Ada"}"""),
+    expiryTime: 60000,
+    durability: KeyValueDurability.Persistent
+);
+```
+
+The current revision still advances and latest reads still work. What changes is the historical record: the revision created by this write is not available through `GetKeyValueRevision(...)` or snapshot reads that need that archived version.
+
+You can also use the flag directly when you need to compose options:
+
+```csharp
+KahunaKeyValue refreshed = await client.SetKeyValue(
+    "cache/session/abc",
+    "active",
+    expiryTime: 300000,
+    flags: KeyValueFlags.SetIfNotExists | KeyValueFlags.SetNoRevision,
+    durability: KeyValueDurability.Persistent
+);
+```
+
+Use no-revision writes to reduce memory and disk write amplification when Kahuna is acting as a pure distributed key/value cache. Use normal writes for audit history, `GetKeyValueRevision(...)`, and point-in-time reads.
+
 ## Ordered Range Reads
 
 For ordered key spaces such as `users/000001` through `users/999999`, you can now use the top-level client directly to read a bounded ordered slice:
@@ -390,7 +456,7 @@ List<KahunaKeyValue> setResults = await client.SetManyKeyValues([
         Key = "services/auth",
         Value = System.Text.Encoding.UTF8.GetBytes("node1"),
         ExpiresMs = 30000,
-        Flags = KeyValueFlags.Set,
+        Flags = KeyValueFlags.SetNoRevision,
         Durability = KeyValueDurability.Persistent
     },
     new()
@@ -398,7 +464,7 @@ List<KahunaKeyValue> setResults = await client.SetManyKeyValues([
         Key = "services/payments",
         Value = System.Text.Encoding.UTF8.GetBytes("node2"),
         ExpiresMs = 30000,
-        Flags = KeyValueFlags.Set,
+        Flags = KeyValueFlags.SetNoRevision,
         Durability = KeyValueDurability.Persistent
     }
 ]);
@@ -414,6 +480,8 @@ Request item notes:
 - `KahunaSetKeyValueRequestItem` supports `Key`, `Value`, `ExpiresMs`, `Flags`, `CompareValue`, `CompareRevision`, and `Durability`
 - `KahunaDeleteKeyValueRequestItem` supports `Key` and `Durability`
 - `KahunaGetManyKeyValuesRequestItem` supports `Key`, optional `Revision`, and `Durability`
+
+Set `Flags = KeyValueFlags.SetNoRevision` for batch cache writes where old values are not needed. Combine it with conditional flags when the write should still be guarded by existence, value, or revision checks.
 
 ## Register a Key Range
 

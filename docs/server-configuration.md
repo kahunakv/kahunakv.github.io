@@ -19,7 +19,7 @@ Kahuna server options are passed as command-line flags to `Kahuna.Server`. The t
 | `--storage` | Materialized Kahuna state backend for persistent locks, key/value entries, revisions, and sequences. Supported values are `rocksdb`, `sqlite`, and `memory`. | `rocksdb` |
 | `--storage-path` | File system path for materialized state storage. Use a durable local disk for `rocksdb` or `sqlite`. | empty |
 | `--storage-revision` | Revision name used to select a materialized state database or file set under `--storage-path`. | empty |
-| `--wal-storage` | Raft WAL backend used by Kommander. The server startup path supports `rocksdb` and `sqlite`. | `rocksdb` |
+| `--wal-storage` | Raft WAL backend used by Kommander. Supported values are `rocksdb`, `sqlite`, and `memory`. | `rocksdb` |
 | `--wal-path` | File system path for Raft WAL storage. Use a durable local disk. | empty |
 | `--wal-revision` | Revision name used to select the WAL database or file set under `--wal-path`. | `v1` |
 | `--wal-sync-writes` | Keep synchronous durable WAL writes enabled. This is the default behavior. | enabled |
@@ -30,6 +30,8 @@ Kahuna server options are passed as command-line flags to `Kahuna.Server`. The t
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
 | `--initial-cluster` | Static discovery list for the initial Raft cluster. Pass one or more node addresses. | none |
+| `--join-existing` | Join a running cluster as a new learner using `--initial-cluster` as the seed list. | disabled |
+| `--graceful-leave-on-shutdown` | Commit removal of this member during planned shutdown instead of waiting for SWIM eviction. Do not enable for rolling restarts because the node is removed from membership. | disabled |
 | `--initial-cluster-partitions` | Number of Raft partitions created for the initial cluster. | `128` |
 | `--raft-nodename` | Human-readable node name used by Raft. If omitted, the server uses the machine name. | machine name |
 | `--raft-nodeid` | Numeric node identifier used by Raft. | `0` |
@@ -73,16 +75,26 @@ See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recover
 | `--persistent-revision-cleanup-on-write` | Keep targeted persistent revision cleanup after writes enabled. This is the default behavior. | enabled |
 | `--disable-persistent-revision-cleanup-on-write` | Disable targeted persistent revision cleanup after writes. | disabled |
 
+Persistent revision cleanup is clamped by live [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/). A held snapshot timestamp keeps the boundary revision needed by that timestamp, and every newer revision, even if the count or age retention settings would otherwise prune them.
+
 ## Raft Communication
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
 | `--read-io-threads` | Number of Raft read I/O threads. | `8` |
 | `--write-io-threads` | Number of Raft write I/O threads. | `16` |
+| `--raft-enable-shared-executor-pool` | Share a bounded worker pool across Raft partitions instead of using one OS thread per partition. Useful for very high partition counts. | enabled |
+| `--raft-executor-pool-size` | Number of shared Raft executor workers. `0` auto-sizes to the processor count. | `0` |
 | `--raft-http-scheme` | HTTP scheme used by Raft REST communication. | `https://` |
 | `--raft-http-auth-bearer-token` | Bearer token sent with Raft REST communication. | empty |
 | `--raft-http-timeout` | Raft REST request timeout in seconds. | `5` |
 | `--raft-http-version` | HTTP protocol version used by Raft REST communication. | `2.0` |
+| `--raft-grpc-scheme` | URL scheme prepended to peer endpoints when opening Raft gRPC channels. | `https://` |
+| `--raft-grpc-channels-per-node` | Pooled gRPC channels opened per peer. Values are clamped between `1` and `64`; each channel holds a connection and handler for the process lifetime. | `4` |
+| `--raft-grpc-enable-multiple-http2-connections` | Allow each pooled gRPC channel to open multiple HTTP/2 connections for additional concurrent streams. | disabled |
+| `--raft-grpc-enable-snapshot-compression` | Compress Raft snapshot transfers sent over gRPC. | disabled |
+| `--raft-grpc-enable-append-logs-coalescing` | Coalesce multiple AppendLogs calls into one gRPC frame per write cycle for write-heavy multi-partition workloads. | disabled |
+| `--raft-grpc-append-logs-max-coalesce-batch` | Maximum AppendLogs items drained into one coalesced gRPC frame when coalescing is enabled. | `256` |
 | `--raft-transport-security` | Structured transport security JSON accepted by the CLI. The current server startup path does not parse or apply this field yet. | empty |
 | `--raft-allow-insecure-certificate-validation` | Skip TLS certificate validation for inter-node Raft gRPC traffic. Use only in development or test environments. | disabled |
 
@@ -110,6 +122,10 @@ See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recover
 | `--raft-max-wal-queue-depth-per-partition` | Per-partition WAL write queue depth limit. | `4096` |
 | `--raft-max-global-wal-queue-depth` | Global WAL write queue depth limit across all partitions. `0` means unlimited. | `0` |
 | `--raft-max-wal-batch-size` | Maximum WAL writes grouped into one storage flush. | `256` |
+| `--raft-max-wal-group-batch-partitions` | Maximum partitions coalesced into one cross-partition WAL group-commit batch. | `64` |
+| `--raft-wal-group-commit-linger-ms` | Optional group-commit linger window in milliseconds. `0` disables linger. | `0` |
+| `--raft-wal-single-fsync-commit` | Enable the single-fsync fast path that acknowledges after propose-quorum durability and writes the commit marker lazily. | enabled |
+| `--raft-sqlite-wal-shard-count` | SQLite WAL shard databases used to distribute partitions. `0` resolves to the processor count when storage is first initialized. | `0` |
 | `--raft-max-drain-quantum-control` | Maximum control-plane operations drained per executor wake cycle. | `8` |
 | `--raft-max-drain-quantum-replication` | Maximum replication operations drained per executor wake cycle. | `4` |
 | `--raft-max-drain-quantum-client` | Maximum client operations drained per executor wake cycle. | `2` |
@@ -135,6 +151,29 @@ See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recover
 
 See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, and safety behavior.
 
+## Raft Membership and Catch-Up
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--raft-backfill-threshold` | Committed-entry lag that triggers active follower backfill. | `10` |
+| `--raft-max-backfill-entries-per-round` | Maximum committed entries sent to one stale follower per heartbeat interval. | `128` |
+| `--raft-learner-promotion-lag` | Maximum entries a learner may trail the leader while remaining eligible for voter promotion. | `10` |
+| `--raft-learner-promotion-stable-window` | Time a learner must remain within the promotion lag on all partitions, in milliseconds. | `3000` |
+
+## Raft Gossip, Failure Detection, and Quiescence
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--raft-gossip-interval` | Interval between membership anti-entropy gossip rounds, in milliseconds. | `5000` |
+| `--raft-gossip-fanout` | Random peers contacted per gossip round. `0` disables gossip. | `2` |
+| `--raft-ping-interval` | Interval between SWIM node probes, in milliseconds. `0` disables failure detection, which is invalid while quiescence is enabled. | `1000` |
+| `--raft-ping-timeout` | Direct SWIM probe timeout, in milliseconds. | `500` |
+| `--raft-indirect-ping-fanout` | Intermediary nodes used for indirect probing after a direct ping timeout. | `2` |
+| `--raft-suspicion-timeout` | Time a node may remain `Suspect` before becoming `Dead`, in milliseconds. | `5000` |
+| `--raft-dead-member-eviction-grace` | Time a dead node remains in the roster before partition `0` commits its removal, in milliseconds. | `30000` |
+| `--raft-enable-quiescence` | Stop per-partition heartbeats after an idle period and rely on SWIM for node liveness. Requires `0 < --raft-ping-interval < --raft-start-election-timeout`. | enabled |
+| `--raft-quiesce-after` | Required partition idle time before heartbeat quiescence, in milliseconds. | `1500` |
+
 ## Raft Logging and Compaction
 
 | Command Line Option | Description | Default Value |
@@ -149,5 +188,5 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 
 - `--wal-storage` and `--storage` configure different layers. WAL storage persists Raft logs; materialized storage persists Kahuna object state after committed operations are applied.
 - Use stable `--storage-revision` and `--wal-revision` values for existing data directories. Changing revisions points the server at different local storage files.
-- The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, and key-range split/merge thresholds remain code-level or embedded-node configuration today.
+- The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, and count- or load-based key-range split/merge thresholds remain code-level or embedded-node configuration today.
 - The embedded node exposes the broader runtime surface, including collector and persistent-revision settings. See [Embedded Kahuna Node](/docs/embedded-kahuna-node/) for the full embedded configuration options.

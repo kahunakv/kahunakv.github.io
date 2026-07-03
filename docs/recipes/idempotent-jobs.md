@@ -52,7 +52,7 @@ await client.SetKeyValue(
     statusKey,
     "completed",
     expiryTime: 0,
-    flags: KeyValueFlags.Set,
+    flags: KeyValueFlags.SetNoRevision,
     durability: KeyValueDurability.Persistent
 );
 ```
@@ -68,7 +68,7 @@ if status == "completed" then
   return "already-completed"
 end
 
-set @status_key "completed"
+set @status_key "completed" norev
 return "completed"
 ```
 
@@ -83,7 +83,7 @@ KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransaction
       return "already-completed"
     end
 
-    set @status_key "completed"
+    set @status_key "completed" norev
     return "completed"
     """,
     parameters: [new() { Key = "@status_key", Value = statusKey }]
@@ -94,5 +94,6 @@ KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransaction
 
 - Make the lock lease longer than the expected processing step or extend it while processing.
 - Store completion state persistently if jobs must not be repeated after restart.
+- Use no-revision writes for final job status when you only care whether the job completed.
 - Use fencing tokens for any side effect outside Kahuna.
 - Keep job status values small and explicit, for example `pending`, `processing`, `completed`, `failed`.

@@ -74,6 +74,7 @@ For coordination and small shared state, Kahuna combines those roles:
 
 - Hot values remain in memory
 - Persistent values are replicated and stored in RocksDB or SQLite
+- No-revision writes reduce overhead for cache keys that only need the latest value
 - Evicted persistent values are loaded from storage when needed
 - One write path updates the accepted cluster state
 - Ephemeral values use the same API when durability is unnecessary

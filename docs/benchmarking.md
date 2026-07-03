@@ -34,15 +34,6 @@ Update an existing installation with:
 dotnet tool update --global Kahuna.Benchmark
 ```
 
-To build and install from a Kahuna checkout:
-
-```bash
-dotnet pack Kahuna.Benchmark -c Release
-dotnet tool install --global \
-  --add-source Kahuna.Benchmark/nupkg \
-  Kahuna.Benchmark
-```
-
 ## Quick Start
 
 Run a 50% read and 50% write workload for 60 measured seconds with 128 concurrent workers:
@@ -72,6 +63,41 @@ A run has three phases:
 3. **Measurement:** record operations for `--duration` seconds and produce the report
 
 Seeding is capped at 100,000 keys and uses at most 64 concurrent writers.
+
+## Three-Node Cluster Example
+
+Start a native local cluster from the Kahuna checkout with `./scripts/run-cluster.sh`.
+
+Pass every cluster endpoint in one comma-separated connection source:
+
+```bash
+kahuna-bench \
+  -c "https://127.0.0.1:8082,https://127.0.0.1:8084,https://127.0.0.1:8086" \
+  --insecure \
+  --duration 10
+```
+
+Example output from a three-node cluster using the default mixed workload and persistent durability:
+
+```text
+Kahuna Benchmark — mixed, 10s + 5s warmup, concurrency=64, target=unbounded
+  endpoints : https://127.0.0.1:8082, https://127.0.0.1:8084, https://127.0.0.1:8086
+  tls       : disabled (--insecure)
+  key-space : 10000   value-size : 128B   durability : persistent
+Seeding key-space…
+  Seeding 10,000 keys (parallelism=64)…
+Warming up for 5s…
+Running measurement for 10s…
+
+Operation    Count   req/s      p50      p90      p95      p99     p99.9       max     mean   errors   misses
+get         26,606   2,660    1.6ms    2.9ms    3.2ms    4.3ms    27.6ms   138.6ms    1.8ms        0        0
+set         26,237   2,623   19.0ms   37.1ms   43.6ms   59.0ms   161.4ms   179.2ms   22.5ms        0        0
+TOTAL       52,843   5,284    4.5ms   28.4ms   37.1ms   52.9ms   128.9ms   179.2ms   12.1ms        0        0
+```
+
+The cluster completed 52,843 operations at 5,284 requests per second without errors or misses. Reads reached a 4.3 ms p99, while persistent writes reached a 59 ms p99 because they include the replicated consensus path before success is returned.
+
+This 10-second measurement is useful as a connectivity and smoke test. Use a longer measurement, such as `--warmup 10 --duration 60`, when establishing a performance baseline or comparing deployments.
 
 ## Workloads
 

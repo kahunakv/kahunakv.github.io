@@ -44,8 +44,10 @@ const sidebars = {
       items: [
         'distributed-keyvalue-store',
         'distributed-keyvalue-store/key-range-sharding',
+        'distributed-keyvalue-store/load-based-range-splitting',
         'distributed-keyvalue-store/cas',
         'distributed-keyvalue-store/revisions',
+        'distributed-keyvalue-store/snapshot-holds',
         'distributed-keyvalue-store/transactions',
         'distributed-keyvalue-store/buckets'
       ],
@@ -96,9 +98,9 @@ const sidebars = {
         'server-installation',
         'server-configuration',
         'leader-balancing',
-        'benchmarking',
         'backups-and-point-in-time-recovery',
-        'embedded-kahuna-node'
+        'embedded-kahuna-node',
+        'benchmarking'
       ],
     },
     {

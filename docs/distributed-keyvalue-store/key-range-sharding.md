@@ -62,6 +62,10 @@ This is the model used by systems such as Spanner and CockroachDB.
 
 When a key-range space grows, Kahuna can split one range into two smaller ranges. When two neighboring ranges become too small, Kahuna can merge them.
 
+Automatic splitting has two independent triggers. The count trigger splits a range after it reaches a configured number of keys. The opt-in load trigger splits a range whose persistent write rate and WAL backlog remain high, even when the range contains relatively few keys. Load-based splitting selects a split key from observed write distribution and requires [leader balancing](/docs/leader-balancing/) to relocate work across nodes.
+
+See [Load-Based Range Splitting](/docs/distributed-keyvalue-store/load-based-range-splitting/) for configuration, metrics, and limitations.
+
 Range moves are protected by a **generation fence**:
 
 - the client or coordinator routes a write using the current range descriptor generation
@@ -101,7 +105,7 @@ Once a key-range space has actually split, you should think in terms of **ordere
 
 Key-range routing is an explicit opt-in. The key space must be registered so Kahuna flips that space from hash mode to key-range mode and seeds its initial whole-space descriptor.
 
-That registration is currently a **server-side startup concern**, not a `kahuna-cli` flag:
+That registration is currently a **startup concern**, not a `kahuna-cli` flag:
 
 - the routing-mode registry is node-local, so each node must register the key space
 - the initial descriptor is replicated once through the meta partition leader

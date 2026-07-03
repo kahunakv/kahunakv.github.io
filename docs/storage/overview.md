@@ -7,7 +7,7 @@ There are two independent storage choices in a Kahuna server:
 - `--wal-storage` controls the Raft write-ahead log used by Kommander.
 - `--storage` controls the materialized Kahuna state used for persistent locks, key/value entries, revisions, and sequences.
 
-Both options can use `rocksdb` or `sqlite`. The materialized state backend can also use `memory` for embedded or test deployments where restart durability is not required.
+Both options can use `rocksdb` or `sqlite`. The materialized state backend can also use `memory` for embedded or test deployments where restart durability is not required. RocksDB is Kahuna's default backend for both Raft WAL storage and materialized persistent state.
 
 ## What the Storage Backend Stores
 
@@ -22,17 +22,33 @@ Kahuna's actors keep hot state in memory while the background writer batches dir
 
 ## RocksDB in Kahuna
 
-RocksDB is a high-performance embedded key-value database based on an LSM-tree architecture. Originally derived from LevelDB, it adds numerous features and optimizations for production environments, including advanced compaction strategies, compression, transactions, snapshots, and configurable durability options. RocksDB is particularly well-suited for write-intensive workloads, offering high write throughput and efficient range scans over sorted keys while maintaining good storage efficiency.
+RocksDB is a high-performance embedded key-value database created by Meta and based on an LSM-tree architecture. Originally derived from LevelDB, it adds numerous features and optimizations for production environments, including advanced compaction strategies, compression, transactions, snapshots, and configurable durability options. RocksDB is particularly well-suited for write-intensive workloads, offering high write throughput and efficient range scans over sorted keys while maintaining good storage efficiency.
+
+In Kahuna, the distributed coordination, replication, command processing, and high-level object model are written in C#. When RocksDB is selected, the local storage engine itself is native C++ code running close to the hardware, which gives Kahuna a fast embedded persistence layer without requiring an external database server.
+
+### How an LSM Tree Works
+
+An LSM tree is optimized for turning many small writes into larger sequential disk writes:
+
+- **Ingest**. New writes first land in memory, usually in a sorted memtable, and are protected by RocksDB's own WAL.
+- **Flush**. When the memtable fills, RocksDB flushes it to disk as an immutable sorted string table file, usually called an SST file.
+- **Read**. A read checks memory first, then searches SST files across levels. Block cache keeps recently read data blocks in memory so hot keys avoid disk reads.
+- **Bloom filters**. RocksDB can use Bloom filters to skip SST files that definitely do not contain a requested key, reducing unnecessary disk lookups.
+- **Compaction**. Background compaction merges SST files, drops overwritten values and tombstones when safe, and moves data through levels to keep reads efficient.
+
+This is why RocksDB works well for Kahuna's persistent path: Kahuna batches committed actor output, RocksDB absorbs those writes efficiently, and compaction later reorganizes the data for long-running read and scan performance.
 
 Kahuna's RocksDB adapter opens one RocksDB database under the configured storage path and revision. It uses separate column families for key/value data and lock data:
 
 - `kv` stores persistent key/value entries and their revision records.
 - `locks` stores persistent distributed lock state.
 
-Each write is serialized as a protobuf message and appended through a RocksDB `WriteBatch` with synchronous write options enabled. For every persistent key/value write, the adapter stores two records:
+Each write is serialized as a protobuf message and appended through a RocksDB `WriteBatch` with synchronous write options enabled. For a normal persistent key/value write, the adapter stores two records:
 
 - `key~CURRENT`, the latest visible state of the key
 - `key~revision`, the immutable revision record for revision-aware reads
+
+When a write uses `SET ... NOREV` or `KeyValueFlags.SetNoRevision`, Kahuna updates `key~CURRENT` but skips the `key~revision` record for that write. The current revision number still advances, but historical reads cannot retrieve the skipped revision. This reduces memory and disk write amplification for cache-style workloads that only need the latest value.
 
 Locks follow the same pattern, with `resource~CURRENT` and `resource~fencingToken` records in the lock column family. Prefix scans use RocksDB's sorted keyspace directly: the adapter seeks to the requested prefix, iterates until the prefix range ends, and returns only records ending in `~CURRENT`.
 
@@ -43,6 +59,7 @@ RocksDB is the best default for production Kahuna nodes with sustained persisten
 - **Write-heavy workloads**. LSM storage, memtables, WAL, and background compaction fit high insert/update rates better than page-oriented storage.
 - **Large keyspaces**. Sorted SST files and iterators make prefix scans and bucket-style access natural.
 - **Persistent revisions**. Kahuna writes latest-state and revision records for every persistent update; RocksDB handles that append-heavy pattern well.
+- **Cache-style writes**. `NOREV` writes keep the current value durable while avoiding the extra historical revision record when old versions are not needed.
 - **Batched actor output**. Kahuna's background writer can hand RocksDB batches of dirty locks and key/value entries, which maps cleanly to `WriteBatch`.
 - **Crash recovery**. The adapter opens RocksDB with absolute WAL recovery and uses synchronous write options for materialized-state writes.
 
@@ -107,7 +124,7 @@ The `memory` backend is useful for embedded nodes, tests, and temporary data. It
 
 | Feature | RocksDB | SQLite |
 |---------|---------|--------|
-| Storage model | Embedded key/value store based on an LSM-tree | Embedded relational database based on B-Tree tables and indexes |
+| Storage model | Embedded C++ key/value store based on an LSM-tree | Embedded relational database based on B-Tree tables and indexes |
 | Kahuna layout | One database under the storage revision, with `kv` and `locks` column families | Eight hash-sharded database files named `kahunaN_<revision>.db` |
 | Latest state | Stored as `key~CURRENT` or `resource~CURRENT` records | Stored in `keys` and `locks` tables |
 | Historical revisions | Stored as revision-suffixed records in the same column family | Stored in the `keys_revisions` table with `(key, revision)` as the primary key |

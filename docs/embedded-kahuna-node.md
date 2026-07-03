@@ -67,6 +67,7 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `WalStorage` | `memory` | Raft WAL backend: `memory`, `sqlite`, or `rocksdb`. |
 | `WalPath` | empty | WAL directory for persistent backends. |
 | `WalRevision` | generated | WAL revision name. |
+| `WalSyncWrites` | `true` | Require synchronous durable writes for RocksDB or SQLite WAL storage. |
 | `LocksWorkers` | `Environment.ProcessorCount` | Lock worker count. |
 | `KeyValueWorkers` | `Environment.ProcessorCount` | Key/value worker count. |
 | `BackgroundWriterWorkers` | `1` | Background persistence worker count. |
@@ -81,11 +82,35 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `CollectBatchMax` | `1000` | Maximum number of entries evicted in one collection pass. |
 | `RevisionRetention` | `16` | Number of revisions retained for in-memory revision history. |
 | `DirtyObjectsWriterDelay` | `1000` | Delay between dirty object writer flush passes, in milliseconds. Longer values can increase batching but keep dirty persistent entries pinned in memory longer. |
+| `PersistentRevisionRetentionCount` | `0` | Maximum persisted revisions retained per key. `0` keeps every revision. |
+| `PersistentRevisionRetentionAge` | `0` | Maximum persisted revision age. `TimeSpan.Zero` disables age-based retention. |
+| `PersistentRevisionCleanupInterval` | `5 minutes` | Minimum interval between full persistent-revision cleanup sweeps. |
+| `PersistentRevisionCleanupBatchSize` | `1000` | Maximum revision records deleted per cleanup pass. |
+| `PersistentRevisionCleanupOnWrite` | `true` | Queue keys touched by writes for targeted revision cleanup. |
 | `PitrWindow` | `1 hour` | Recoverable WAL history. Values are normalized to more than zero and at most 6 hours. |
 | `BaseSnapshotInterval` | `30 minutes` | Intended interval between base checkpoints. It must be positive and no greater than `PitrWindow`. It also contributes to the protected WAL floor. |
 | `BackupDir` | empty | Root directory for backup manifests and artifacts. Backup methods on `node.Kahuna` are disabled when empty. |
+| `RangeSplitThreshold` | `1000` | Sampled key count that triggers count-based range splitting. `0` disables this trigger. |
+| `RangeSplitMinRangeSize` | `10` | Minimum sampled keys required in each child range. |
+| `RangeSplitLoadThreshold` | `0` | Replicated writes per second required for load-based splitting. `0` disables this trigger. |
+| `RangeSplitLoadMinQueueDepth` | `8` | WAL backlog required alongside the load threshold. |
+| `RangeSplitLoadMinCommitWaitMs` | `0` | Optional commit-wait gate in milliseconds. `0` disables it. |
+| `RangeSplitLoadWindow` | `15 seconds` | Time the complete load predicate must remain satisfied. |
+| `RangeSplitLoadPollInterval` | `5 seconds` | Frequency of load-based split checks. |
+| `RangeSplitLoadImbalanceMax` | `0.8` | Maximum acceptable write fraction assigned to either child. |
+| `RangeSplitIndivisibleCooldown` | `5 minutes` | Delay before reconsidering an indivisible range. |
+| `RangeSplitSettleWindow` | `10 seconds` | Post-split delay before evaluating either child again. |
+| `EnableLeaderBalancer` | `false` | Enable cross-node load reports and leader redistribution. Required with load splitting. |
+| `LeaderBalancerReportInterval` | `5 seconds` | Interval between node load reports. |
+| `LeaderBalancerInterval` | `30 seconds` | Interval between balancing passes. |
+| `LeaderBalancerReportTtl` | `20 seconds` | Maximum accepted load-report age. |
+| `MinLeaderStability` | `5 seconds` | Minimum leadership age before transfer. |
+| `LeaderBalancerOpsWeight` | `1.0` | Operations-per-second weight in the balancer load score. |
+| `LeaderBalancerQueueWeight` | `0.5` | Queue-depth weight in the balancer load score. |
 | `ReadIOThreads` | `8` | Number of Raft read I/O threads. |
 | `WriteIOThreads` | `8` | Number of Raft write I/O threads. |
+| `EnableSharedExecutorPool` | `true` | Share a bounded worker pool across Raft partitions instead of using one OS thread per partition. |
+| `PartitionExecutorPoolSize` | `0` | Shared Raft executor worker count. `0` auto-sizes to the processor count. |
 | `HttpScheme` | `https://` | HTTP scheme used by Raft REST communication. |
 | `HttpAuthBearerToken` | empty | Bearer token sent with Raft REST communication. |
 | `HttpTimeout` | `5` | Raft REST request timeout in seconds. |
@@ -106,6 +131,19 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `CompactNumberEntries` | `50` | Number of Raft WAL entries removed per compaction batch. |
 | `MaxEntriesPerCompaction` | `5000` | Maximum Raft WAL entries processed per compaction run. |
 
+Live [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/) clamp persistent revision cleanup. While a hold is active, the boundary revision needed by the held timestamp and every newer revision are kept even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise remove them.
+
+## Code-Level Configuration
+
+Two `KahunaConfiguration` options are not currently exposed by either `Kahuna.Server` command-line flags or `EmbeddedKahunaOptions`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ScriptCacheMaxEntries` | `1000` | Maximum parsed scripts retained in the server-side script cache. New entries are dropped when the limit is reached. |
+| `RangeMergeMinSize` | `10` | Adjacent key ranges smaller than this value can be considered for automatic merging. `0` disables automatic merge. |
+
+`HttpsTrustedThumbprint` also exists on `KahunaConfiguration`, but it is derived from `HttpsCertificate` by configuration validation rather than being an independent operator setting.
+
 ## Notes
 
 - The embedded node uses in-memory Raft and inter-node communication.
@@ -113,4 +151,5 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 - `WaitForLeaderForKeyAsync` waits for the partition that owns a specific key.
 - Use distinct `StoragePath` and `WalPath` values when using `sqlite` or `rocksdb`.
 - Set `BackupDir` to enable backup, catalog, and offline restore methods through `node.Kahuna`. See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/).
+- Load-based splitting requires a multi-node embedded deployment, key-range-routed spaces, and `EnableLeaderBalancer = true`. See [Load-Based Range Splitting](/docs/distributed-keyvalue-store/load-based-range-splitting/).
 - Always dispose the node with `await using` or `DisposeAsync` so Raft leaves the cluster and file-backed resources are released.

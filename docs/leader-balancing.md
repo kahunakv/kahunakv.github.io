@@ -34,6 +34,8 @@ Leave it disabled for standalone and embedded deployments. A single node has now
 
 Leader balancing is a performance optimization, not a correctness requirement. It is disabled by default and adds no reporting or planning overhead while disabled.
 
+It is also a prerequisite for [load-based range splitting](/docs/distributed-keyvalue-store/load-based-range-splitting/), which depends on cross-node load reports and leadership relocation to relieve a hot partition.
+
 ## Enable the Balancer
 
 Enable it on every cluster node and perform a rolling restart:
@@ -134,4 +136,3 @@ Other safety properties include:
 - A node failure or election does not get accelerated by the balancer
 
 The expected failure modes are a skipped transfer or an unnecessary transfer. Normal Raft validation prevents the balancer from creating conflicting leaders or losing committed data.
-

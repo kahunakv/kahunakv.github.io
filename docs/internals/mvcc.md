@@ -68,3 +68,18 @@ The transaction commits only when all participants commit. Otherwise, Kahuna rol
 ## Revisions and Snapshots
 
 Each key tracks a revision counter. Reads can request a specific revision, and recent revisions can be cached. Transactions use revision and HLC metadata to decide which value is visible and whether a concurrent write invalidates a commit attempt.
+
+## Snapshot Floor
+
+The MVCC snapshot floor protects historical reads that must remain valid for longer than the normal revision-retention window. A client acquires a leased snapshot hold at timestamp `T`; while that hold is live, cleanup must keep the revision that was visible at or before `T`, plus every newer revision.
+
+The effective floor is the minimum timestamp across all live holds. It is replicated through the system partition, so the floor survives restart and leader changes. Acquire, renew, and release operations can enter through any node, but they are routed to the system-partition leader before being committed.
+
+The floor constrains both revision cleanup paths:
+
+- In memory, Kahuna keeps the normal newest `RevisionRetention` revisions plus the boundary revision at or before the floor.
+- On disk, persistent revision cleanup must not delete the boundary revision or anything newer, even when count-based or age-based retention would otherwise remove it.
+
+Historical reads first try the in-memory archive. If the requested timestamp is older than the in-memory window, persistent read paths fall back to on-disk revision history. Point reads, range reads, bucket reads, and prefix scans all use the same rule: return the newest revision whose commit timestamp is at or before the requested snapshot timestamp.
+
+The hold API is described in [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/).

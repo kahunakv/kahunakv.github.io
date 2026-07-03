@@ -21,7 +21,7 @@ services/search/node-c
 Use an expiration so the instance disappears if the process dies or stops refreshing its heartbeat.
 
 ```kahuna
-set `services/payments/node-a` '{"host":"10.0.1.15","port":8080,"version":"1.2.3","zone":"us-east-1a"}' ex 30000
+set `services/payments/node-a` '{"host":"10.0.1.15","port":8080,"version":"1.2.3","zone":"us-east-1a"}' ex 30000 norev
 ```
 
 From the .NET client:
@@ -31,6 +31,7 @@ await client.SetKeyValue(
     "services/payments/node-a",
     """{"host":"10.0.1.15","port":8080,"version":"1.2.3","zone":"us-east-1a"}""",
     expiryTime: 30000,
+    flags: KeyValueFlags.SetNoRevision,
     durability: KeyValueDurability.Persistent
 );
 ```
@@ -54,6 +55,7 @@ await client.SetKeyValue(
     "services/payments/node-a",
     currentMetadataJson,
     expiryTime: 30000,
+    flags: KeyValueFlags.SetNoRevision,
     durability: KeyValueDurability.Persistent
 );
 ```
@@ -96,6 +98,8 @@ List<KahunaKeyValue> previous = await client.GetByBucket(
 );
 ```
 
+Do not use `NOREV` for registrations when historical membership is required. No-revision writes keep only the latest value and skip the archived revision records needed by historical reads.
+
 ## Choosing Durability
 
 Use **persistent** durability when discovery state must survive node restarts and remain available during failover.
@@ -110,6 +114,7 @@ eget by bucket `services/payments`
 ## Operational Notes
 
 - Set the expiration to several heartbeat intervals, not exactly one interval.
+- Use no-revision writes for high-churn persistent registrations when only the current membership matters.
 - Store enough metadata for clients to make routing decisions without another lookup.
 - Keep service membership under a shared bucket so reads are consistent and partition-local.
 - For large ordered registries, use key-range sharding instead of treating one bucket as permanently single-partition.
