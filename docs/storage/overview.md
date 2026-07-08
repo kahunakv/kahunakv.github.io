@@ -73,6 +73,43 @@ RocksDB is powerful, but it has a larger operational footprint.
 - For very small deployments, local development, and simple embedded usage, RocksDB may be more machinery than needed.
 - Revision-heavy workloads retain both current and historical records, so disk growth and compaction behavior should be planned.
 
+### Shared RocksDB Memory
+
+When Kahuna uses RocksDB for both `--storage` and `--wal-storage`, one node opens two separate RocksDB databases:
+
+- the materialized key/value and lock backend
+- the Kommander Raft WAL
+
+They stay separate on disk so the consensus log and the data path keep independent files, recovery, and column families. Shared RocksDB memory only shares in-process memory objects: one block cache and one write-buffer manager.
+
+Enable it with:
+
+```bash
+kahuna-server \
+  --storage rocksdb --wal-storage rocksdb \
+  --rocksdb-shared-memory \
+  --rocksdb-shared-memory-budget-mb 512 \
+  --rocksdb-shared-memtable-budget-mb 128
+```
+
+The total budget controls the shared block cache. The memtable budget is charged inside that same total, so cached SST blocks and in-memory write buffers draw from one budget across both RocksDB databases.
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `--rocksdb-shared-memory` | disabled | Enables one shared block cache and write-buffer manager. |
+| `--rocksdb-shared-memory-budget-mb` | `320` | Total shared RocksDB memory budget in MiB. |
+| `--rocksdb-shared-memtable-budget-mb` | `128` | Memtable sub-budget in MiB, charged into the shared cache. |
+
+Sharing is a no-op unless both storage layers use RocksDB. With SQLite or memory on either side, Kahuna keeps the normal independent resources.
+
+Use this feature when process memory is constrained and RocksDB is used for both durable state and WAL. Measure before and after enabling it: watch process RSS, RocksDB block-cache usage, write-buffer manager memtable usage, and Raft commit or WAL append latency under representative load.
+
+Operational caveats:
+
+- The feature is opt-in and reversible; it does not change on-disk format, WAL semantics, recovery, or wire behavior.
+- A write burst in one RocksDB database can cause more frequent flushing that affects the shared memory budget for the other database.
+- Kahuna uses a soft cache and a non-stalling write-buffer manager for this mode, so sizing should be conservative rather than relying on RocksDB stalls for back-pressure.
+
 ## SQLite in Kahuna
 
 SQLite is a lightweight, serverless, self-contained relational database engine widely used in embedded and client-side applications. It stores tables and indexes using B-Tree structures and provides full SQL support, including ACID-compliant transactions through rollback journals or write-ahead logging (WAL). SQLite is designed for simplicity, reliability, and minimal deployment overhead while delivering strong transactional guarantees.

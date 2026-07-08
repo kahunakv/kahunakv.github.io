@@ -68,6 +68,9 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `WalPath` | empty | WAL directory for persistent backends. |
 | `WalRevision` | generated | WAL revision name. |
 | `WalSyncWrites` | `true` | Require synchronous durable writes for RocksDB or SQLite WAL storage. |
+| `RocksDbSharedMemoryEnabled` | `false` | Share one RocksDB block cache and write-buffer manager between the key/value backend and Raft WAL when both use RocksDB. |
+| `RocksDbSharedMemoryBudgetMb` | `320` | Total shared RocksDB block-cache budget in MiB. The memtable sub-budget is charged inside this total. |
+| `RocksDbSharedMemtableBudgetMb` | `128` | Shared RocksDB memtable sub-budget in MiB. Must be less than or equal to `RocksDbSharedMemoryBudgetMb`. |
 | `LocksWorkers` | `Environment.ProcessorCount` | Lock worker count. |
 | `KeyValueWorkers` | `Environment.ProcessorCount` | Key/value worker count. |
 | `BackgroundWriterWorkers` | `1` | Background persistence worker count. |
@@ -132,6 +135,21 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `MaxEntriesPerCompaction` | `5000` | Maximum Raft WAL entries processed per compaction run. |
 
 Live [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/) clamp persistent revision cleanup. While a hold is active, the boundary revision needed by the held timestamp and every newer revision are kept even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise remove them.
+
+To bound RocksDB memory across both the embedded key/value backend and Raft WAL, enable shared RocksDB memory with both storage layers set to RocksDB:
+
+```csharp
+EmbeddedKahunaOptions options = new()
+{
+    Storage = "rocksdb",
+    WalStorage = "rocksdb",
+    RocksDbSharedMemoryEnabled = true,
+    RocksDbSharedMemoryBudgetMb = 512,
+    RocksDbSharedMemtableBudgetMb = 128
+};
+```
+
+If either `Storage` or `WalStorage` is not `rocksdb`, these shared-memory options are ignored.
 
 ## Code-Level Configuration
 

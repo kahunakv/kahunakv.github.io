@@ -24,6 +24,9 @@ Kahuna server options are passed as command-line flags to `Kahuna.Server`. The t
 | `--wal-revision` | Revision name used to select the WAL database or file set under `--wal-path`. | `v1` |
 | `--wal-sync-writes` | Keep synchronous durable WAL writes enabled. This is the default behavior. | enabled |
 | `--disable-wal-sync-writes` | Disable synchronous durable WAL writes for faster non-critical local or test runs. | disabled |
+| `--rocksdb-shared-memory` | Share one RocksDB block cache and write-buffer manager between the materialized state backend and Raft WAL. Applies only when both `--storage` and `--wal-storage` are `rocksdb`. | disabled |
+| `--rocksdb-shared-memory-budget-mb` | Total shared RocksDB block-cache budget in MiB. The memtable sub-budget is charged inside this total. | `320` |
+| `--rocksdb-shared-memtable-budget-mb` | Shared RocksDB memtable sub-budget in MiB. Must be less than or equal to `--rocksdb-shared-memory-budget-mb`. | `128` |
 
 ## Cluster Identity and Discovery
 

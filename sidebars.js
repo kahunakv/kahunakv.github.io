@@ -47,9 +47,9 @@ const sidebars = {
         'distributed-keyvalue-store/load-based-range-splitting',
         'distributed-keyvalue-store/cas',
         'distributed-keyvalue-store/revisions',
-        'distributed-keyvalue-store/snapshot-holds',
         'distributed-keyvalue-store/transactions',
-        'distributed-keyvalue-store/buckets'
+        'distributed-keyvalue-store/buckets',
+        'distributed-keyvalue-store/snapshot-holds'
       ],
     },
     {
