@@ -1,16 +1,34 @@
 
-# Scripts : Overview
+# Scripts: Overview
 
-Kahuna offers a scripting system in its key/value store called **Kahuna Script**. With these scripts, it's possible to execute logic that consistently reads data from the key/value store and also modifies or manipulates that data in an **all-or-nothing** fashion. That is, changes won’t be partially applied in the event of an error or failure. The main advantage of a Kahuna Script is **the ability to execute logic atomically within the key/value store**, significantly reducing network round-trips between a client and a Kahuna cluster.
+Kahuna offers a scripting system in its key/value store called **Kahuna Script**. Scripts execute short pieces of logic inside the cluster, close to the data. They can read values, make decisions, write updates, acquire transactional locks, and finish as one all-or-nothing operation.
+
+The main advantage of Kahuna Script is that a multi-step workflow can run as a single server-side transaction. The client sends one script invocation instead of coordinating many round trips and trying to recover partial work itself.
 
 ## Key Advantages
 
-- **Atomicity & Transaction Safety**: All Kahuna scripts are executed atomically as a transaction. All operations succeed or fail together.
-- **Multi-Key Operations**: Scripts can read and modify key/value pairs on multiple nodes in a transparent way for the user.
-- **Performance**: Multiple operations can be batched into a single request to the servers, reducing network latency.
-- **Custom Logic on the Key/Store**: Scripts allow embedding complex decision logic on the server side.
-- **Safe Error Handling**: If something goes wrong inside a script, the whole script fails, and nothing is partially applied. This is safer than chained commands.
+- **Atomicity & Transaction Safety**: All Kahuna scripts execute inside a transaction. The accepted changes commit together or roll back together.
+- **Server-Owned Coordination**: The transaction coordinator records confirmed reads, writes, locks, and cleanup state while the script runs.
+- **Multi-Key Operations**: Scripts can read and modify key/value pairs across partitions without exposing routing details to the caller.
+- **Performance**: Multiple operations run from one request, reducing client/server round trips.
+- **Custom Logic on the Key/Value Store**: Scripts embed decision logic directly on the server side.
+- **Safe Error Handling**: If a script throws or fails validation, the transaction rolls back instead of leaving a partial update.
 - **Historical Snapshot Reads**: Scripts can read keys, buckets, and prefix scans **as of a past HLC timestamp**, which is useful for audits, debugging, and incident reconstruction.
+
+## How Script Transactions Work
+
+Every script runs through Kahuna's transaction coordinator. The coordinator tracks the script's working set as commands succeed, then finalizes the transaction from that server-owned state.
+
+For a script author, the important behavior is:
+
+- Plain scripts are transactional even without an explicit `begin` block.
+- `begin (...)` lets you customize options such as `timeout`, `locking`, `snapshot`, `asyncRelease`, and `autoCommit`.
+- `commit` makes accepted changes visible.
+- `rollback` cancels the transaction and releases transactional state.
+- `throw` aborts the script and rolls back the transaction.
+- Snapshot scripts created with `begin (snapshot=...)` are read-only historical views.
+
+See [Transactions](/docs/distributed-keyvalue-store/transactions/) for the full transaction lifecycle and option reference.
 
 ## When to Use Scripts
 
@@ -32,8 +50,9 @@ or more elaborate examples that solve real-world problems:
 
 ### Atomic Check-and-Set (CAS)
 
-Use case: Only update a value if it matches the expected current value, which is useful for optimistic concurrency control. Prevent race conditions when multiple clients are trying to update shared state (e.g., balance or session info). It can be done with the built-in `set/cmp` command, for example,
-only update the value if the current revision is **0**:
+Use case: only update a value if it matches the expected current value, which is useful for optimistic concurrency control. This prevents race conditions when multiple clients try to update shared state such as a leader election key, balance, or session record.
+
+It can be done with the built-in `cmprev` modifier on `set`. For example, only update the value if the current revision is `0`:
 
 ```kahuna
 set `election/leader` "node-A" cmprev 0
@@ -42,8 +61,8 @@ set `election/leader` "node-A" cmprev 0
 we can return a custom value according to the result of the operation:
 
 ```kahuna
-set `election/leader` "node-A" cmprev 0
-if not set then
+let elected = set `election/leader` "node-A" cmprev 0
+if not elected then
   return false
 end
 return true
@@ -52,8 +71,8 @@ return true
 or throw an exception if the value can't be changed:
 
 ```kahuna
-set `election/leader` "node-A" cmprev 0
-if not set then
+let elected = set `election/leader` "node-A" cmprev 0
+if not elected then
   throw "election failed"
 end
 return true
@@ -102,14 +121,13 @@ Reserve stock if available; useful for flash sales or ticketing systems.
 Prevent overselling in e-commerce under high load.
 
 ```kahuna
-let inventory_key = get @inventory_key
-let requested_amount = get @requested_amount
+let inventory_value = get @inventory_key
 
-let inventory = to_int(inventory_key)
-let requested = to_int(requested_amount)
+let inventory = to_int(inventory_value)
+let requested = to_int(@requested_amount)
 
-if current >= requested then
-  set inventory_key inventory - requested
+if inventory >= requested then
+  set @inventory_key inventory - requested
   return 1
 else
   return 0
@@ -121,15 +139,15 @@ end
 Count events (like logins or API hits) and auto-expire the counter after some time.
 
 ```kahuna
-let current_count = get @counter_key_param
-let expected_increment = to_int(@expected_increment_param)
-let expected_limit = to_int(@expected_limit_param)
+let current_count = to_int(get @counter_key)
+let expected_increment = to_int(@expected_increment)
+let expected_limit = to_int(@expected_limit)
 
 let new_count = current_count + expected_increment
 set @counter_key new_count
 
 if new_count >= expected_limit then
-  extend @counter_key @expiration_in_seconds
+  extend @counter_key @expiration_seconds
 end
 
 return new_count

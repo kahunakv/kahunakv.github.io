@@ -64,7 +64,7 @@ This lets you inspect historical data, trace config or state changes historicall
 
 ## `AT` Revision vs `AS OF` Timestamp
 
-Kahuna now supports two different historical read models:
+Kahuna supports two different historical read models:
 
 - **`AT <revision>`** reads one exact archived revision for a key.
 - **`AS OF <timestamp>`** reads the value that was visible at a specific **HLC snapshot time**.

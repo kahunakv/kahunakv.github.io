@@ -107,8 +107,7 @@ Expiration times are specified in milliseconds.
 
 ## Durability
 
-By default, Kahuna ensures strong durability by replicating the key/value pairs across many instances. The client is notified of a successful operation
-only after receiving confirmation from the majority of nodes in the cluster.
+By default, Kahuna ensures strong durability by replicating persistent key/value writes through the key's Raft partition. The client is notified of a successful operation only after the mutation has reached Raft commit.
 
 In high-performance scenarios or when working with ephemeral data, on-disk durability may not be necessary or practical. For these cases, Kahuna offers
 an "ephemeral" durability mode, in which data is stored only in the leader node's volatile memory.
@@ -180,7 +179,7 @@ kahuna-cli> let limit = get max_rate_limit
        ...> end
        ...>
        ...> let new_current_rate = current_rate - 1
-       ...> set current_rate new_current_rate ex 60000
+       ...> set rate_limit_user1 new_current_rate ex 60000
        ...>
        ...> return new_current_rate
 r1 99 18ms
@@ -190,7 +189,7 @@ r1 99 4ms
 ```
 
 In this other example, we’re going to make a transfer between two keys. The keys may or may not be led by the same node, but the transaction
-coordinator ensures that changes are applied across all participating nodes. If an error occurs, the transaction will abort and no changes will be applied:
+coordinator records the confirmed reads and writes, then applies the changes across all participating nodes during commit. If an error occurs, the transaction aborts and no changes are applied:
 
 ```kahuna
 kahuna-cli>  set balance_user1 1000 nx

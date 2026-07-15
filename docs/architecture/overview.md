@@ -14,7 +14,7 @@ In the previous diagram, we can see a cluster of three nodes named **Kahuna 1, 2
 
 With this small example, we can already observe some of the key characteristics of Kahuna's architecture:
 
- - It’s possible to have multiple nodes (Kahuna 1, 2, and 3) in a cluster, each replicating the full database state. **Replication is synchronous via Raft, ensuring that any node can become the leader of a partition** if another node fails or becomes unavailable.
+ - It’s possible to have multiple nodes (Kahuna 1, 2, and 3) in a cluster. Each Raft partition is replicated to its group of members. **Replication is synchronous through Raft for persistent mutations, ensuring another replica can become the leader of a partition** if the current leader fails or becomes unavailable.
 
  - The **leader nodes for specific partitions are responsible for serving reads and writes in a serialized manner**, offering strong consistency. This guarantees that the value read by a client is the most recent and committed version.
 
@@ -58,9 +58,9 @@ High availability is ensured through Raft-based replication mechanisms. The syst
 
 ## Performance Optimizations
 
-While Kahuna maintains strong consistency guarantees through the Raft protocol, it also incorporates various performance optimizations. Asynchronous replication techniques are employed where appropriate to enhance data replication efficiency and minimize read operation latency without sacrificing consistency requirements.
+While Kahuna maintains strong consistency guarantees through the Raft protocol, it also incorporates performance optimizations around batching, actor-local state, direct leader routing, background materialization, eviction, and WAL checkpointing.
 
-Background maintenance processes continuously perform compaction and garbage collection operations to reclaim storage space and memory resources. These automated maintenance routines help preserve system performance by systematically removing obsolete data versions that are no longer needed for transaction isolation or recovery purposes.
+Background maintenance processes continuously perform compaction, checkpointing, eviction, and garbage collection operations to reclaim storage space and memory resources. These routines preserve performance while respecting WAL retention, snapshot holds, and durable transaction recovery metadata.
 
 ## When to use Kahuna?
 
@@ -70,4 +70,4 @@ Its versatility ranges from strong persistence, with data synchronously replicat
 
 In both cases, strong consistency is guaranteed. Additionally, transactions that manipulate key/value pairs of any durability are fully supported, opening up a world of possibilities for building reliable and scalable systems.
 
-Written in modern C# and running on the latest high-performance versions of .NET 8 and 9, Kahuna offers developers the ability to extend, adapt, and enhance it to meet their own needs easily and efficiently.
+Written in modern C# and running on the latest high-performance .NET runtime used by the project, Kahuna offers developers the ability to extend, adapt, and enhance it to meet their own needs easily and efficiently.

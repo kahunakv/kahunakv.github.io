@@ -28,6 +28,7 @@ Kahuna's persistence backend is represented by `IPersistenceBackend`. It stores:
 - Key/value entries
 - Key/value revisions
 - Bucket/prefix lookup data
+- Checkpointed transaction recovery metadata such as completion receipts and coordinator decisions
 
 Implementations include:
 
@@ -53,6 +54,8 @@ The flush path is:
 ## Checkpoints
 
 Checkpoints connect materialized persistence with Raft log compaction. Once dirty state for a partition has been written, the background writer can ask Raft to replicate a checkpoint for that partition. After checkpointing, the system does not need to replay all older logs to reconstruct the same state.
+
+Durable transaction recovery metadata participates in this ordering. Completion receipts and coordinator decision snapshots must be durable before the checkpoint allows WAL retention to move past log entries that may be needed to reconstruct them.
 
 ## PITR Retention
 

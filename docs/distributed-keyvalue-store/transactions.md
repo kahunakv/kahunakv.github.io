@@ -10,6 +10,8 @@ Kahuna offers **distributed transactions** to enable safe, consistent, and atomi
 
 Kahuna supports **snapshot isolation** and **serializable consistency** through **MVCC (Multi-Version Concurrency Control)** and **optimistic/pessimistic locking**.
 
+For interactive transactions, Kahuna uses a server-side **transaction coordinator**. The client keeps a session handle, but the server owns the authoritative working set: confirmed reads, writes, locks, range locks, prefix locks, and cleanup state. Commit and rollback use that server-owned state instead of trusting the client to send a final list of touched keys.
+
 ## Why Transactions Matter?
 
 In a distributed system, multiple clients might access and modify overlapping sets of keys. Without transactions, you risk:
@@ -23,18 +25,24 @@ Kahuna’s transactional engine addresses these issues by:
 - Isolating reads and writes from each other using **MVCC** versions
 - Detecting write conflicts during commit
 - Optionally acquiring **locks** to serialize conflicting transactions
+- Deduplicating retried interactive operations with stable operation IDs
+- Closing the transaction to new work before commit or rollback finalizes
 
 ## Core Concepts
 
 | Concept | Description |
 |--------|-------------|
+| **Transaction Coordinator** | The server component that owns the transaction lifecycle, working set, finalization, cleanup, and optional durable commit decision. |
+| **Transaction Handle** | Client-side identity that routes later operations, commit, and rollback back to the correct coordinator. |
 | **Snapshot Isolation** | Readers see a consistent snapshot of the data as of the transaction start. Writers commit only if no conflicting writes occurred. |
 | **Serializable Transactions** | Pessimistic locking and range-aware guards let Kahuna block phantoms and conflicting writes on the working set you read. |
 | **MVCC** | Each key maintains multiple versions. Reads select the correct version based on transaction timestamp. |
 | **Transaction Timestamp** | A [Hybrid Logical Clock (HLC)](../architecture/hybrid-logical-clocks.md) timestamp assigned at transaction start, used for snapshot reads and version tracking. |
-| **Write Set** | The keys a transaction intends to modify. |
-| **Read Set** | The keys a transaction read; used for conflict detection. |
-| **Locks** | Optional. Acquired for pessimistic or serialized transactions. Locks have expiration to prevent being held forever.
+| **Write Set** | The keys the server has confirmed as modified by the transaction. |
+| **Read Set** | The keys the server observed during latest-state reads, used for conflict detection when validation is enabled. |
+| **Operation ID** | Stable identity assigned to an interactive operation so a retry can return the same result without applying the mutation twice. |
+| **Locks** | Optional. Acquired for pessimistic or serialized transactions. Locks have expiration to prevent being held forever. |
+| **Durable Decision** | Optional recoverable commit decision for all-persistent write sets after the decision has been installed. |
 
 ## Transaction API
 
@@ -51,10 +59,10 @@ set "services/inventory" "localhost:8083"
 ```kahuna
 begin
  let current_alice = get "balance:alice"
- let current_bob = get "balance:alice"
+ let current_bob = get "balance:bob"
  if current_alice >= 50 then
-  set "balance:alice" current - 50
-  set "balance:bob" current + 50
+  set "balance:alice" current_alice - 50
+  set "balance:bob" current_bob + 50
  end
  commit
 end
@@ -122,15 +130,18 @@ Within the same transaction session, range reads also follow **read-your-own-wri
 
 ## Transaction Lifecycle
 
-1. **Begin**: Kahuna assigns an HLC timestamp and starts tracking reads/writes. Locks are acquired in advance in pessimistic locking.
-2. **Read/Write**: All operations are buffered in-memory.
-3. **Validation**:
-   - If optimistic: Re-check committed read dependencies and abort if a key changed since it was read.
-   - If optimistic: Also abort if another transaction holds a concurrent write intent on a key that was read but not written, preventing write-skew anomalies.
-   - If pessimistic: Lock keys, buckets, or ranges ahead of time to avoid conflicts and phantoms.
-4. **Commit**:
-   - If successful, MVCC versions are written and optionally replicated (persistent mode).
-   - If failed, changes are discarded and client is notified.
+1. **Begin**: Kahuna assigns an HLC transaction ID and creates a coordinator-owned session.
+2. **Read/Write**: Operations run on the responsible partition leaders. Confirmed effects are folded into the server-owned working set.
+3. **Retry deduplication**: Interactive operations carry stable operation IDs, so a retried request can return the original result instead of applying the same mutation twice.
+4. **Validation**:
+   - Optimistic transactions re-check committed read dependencies and abort if a key changed since it was read.
+   - Optimistic transactions also abort if another transaction holds a concurrent write intent on a key that was read but not written, preventing write-skew anomalies.
+   - Pessimistic transactions lock keys, buckets, or ranges ahead of time to avoid conflicts and phantoms.
+5. **Close before finalization**: The first commit, rollback, close, or cleanup attempt stops the transaction from accepting new operations, waits for already registered operations, and freezes the working set.
+6. **Commit or rollback**:
+   - Commit prepares and applies the confirmed write set through two-phase commit.
+   - Rollback releases staged writes, locks, and MVCC read entries from the frozen working set.
+   - Retryable finalization failures return `MustRetry` and should be retried with the same handle, without adding more operations.
 
 Learn more about transaction lifecycle in the [architecture](../architecture/distributed-transactions.md) section.
 
@@ -153,17 +164,25 @@ end
 
 Learn more about durabilities in the [dedicated section](../architecture/durability-levels.md)
 
+Key durability is separate from transaction **decision durability**. `KeyValueDurability.Persistent` controls whether a value is replicated and stored. `DecisionDurability.Durable` controls whether an installed commit decision can be recovered if the live coordinator disappears before every participant acknowledges the commit.
+
+Durable decision mode is useful for all-persistent write sets that need post-decision recovery. It rejects transactions that confirmed ephemeral modifications because ephemeral values and participant receipts cannot survive process loss.
+
 ## Best Practices
 
 - **Group keys by prefix** when you want a single-partition transactional working set.
 - Use **key-range routing** for large ordered spaces that may need to split over time.
 - Use **ephemeral keys** for high-speed, non-critical paths.
 - Consider **pessimistic locking** for highly contended keys to avoid retries.
+- Use **durable decisions** only when all modified keys are persistent and recovering an installed commit decision matters.
+- Retry `MustRetry` with the same transaction/session handle and do not add new operations after finalization starts.
 - Monitor retries to detect **hotspots** in your workload.
 
 ## Transaction Options
 
 You can specify **transaction options** to fine-tune how the transaction is executed. These options provide greater flexibility and control over **performance**, **consistency**, and **responsiveness**:
+
+Kahuna Script `begin (...)` options are listed below. .NET interactive sessions expose additional options in `KahunaTransactionOptions`.
 
 ### Timeout
 
@@ -269,11 +288,27 @@ begin (autoCommit=false)
 end
 ```
 
+### .NET Interactive Session Options
+
+The .NET client exposes these options on `KahunaTransactionOptions`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `Locking` | `Pessimistic` | Chooses pessimistic or optimistic concurrency behavior. |
+| `Timeout` | server default when `0` | Maximum transaction duration in milliseconds. |
+| `AsyncRelease` | `false` | Allows eligible post-commit cleanup to continue in the background. |
+| `AutoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit `Commit`. Disposal of a pending session rolls back. |
+| `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. |
+| `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction point reads. Do not combine it with `ReadValidation.TrackAndValidate`. |
+| `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs recovery after the commit decision has been installed. |
+
 ## Interactive Transactions
 
 Interactive transactions are an option for developers who prefer not to use Kahuna Scripts and instead want access to the libraries and functions of their favorite programming language.
 
-These transactions work similarly to traditional database transactions, where the client must manually start a transaction and then commit or rollback it as needed, depending on the outcome:
+These transactions work similarly to traditional database transactions, where the client manually starts a transaction and then commits or rolls it back as needed. The difference is that Kahuna's server-side coordinator owns the confirmed working set and finalization state.
+
+Interactive transaction sessions are available through the gRPC transport. The REST transport does not expose session start, commit, or rollback.
 
 <Tabs>
 <TabItem value="C#">
@@ -284,9 +319,10 @@ This allows developers to start, manage, and complete transactions directly from
 
 ```csharp
 await using KahunaTransactionSession session = await client.StartTransactionSession(
-    new() {
-      Locking = KeyValueTransactionLocking.Optimistic,
-      Timeout = 5000
+    new KahunaTransactionOptions
+    {
+        Locking = KeyValueTransactionLocking.Optimistic,
+        Timeout = 5000
     }
 );
 
@@ -302,16 +338,17 @@ if (balance1.ValueAsLong() >= 50)
 await session.Commit();
 ```
 
-In case of conflicts or encountering exclusive locks (under pessimistic locking), transactions will be aborted 
-so they can be retried on the client side.
+Call `Commit` explicitly when the work should become visible. Disposing a still-pending session rolls it back, which makes `await using` a safety net for exceptions and early returns.
 
-The recommended approach is to use the built-in retry mechanism provided by Kahuna clients, which automatically 
-retries aborted transactions using a short backoff interval, helping reduce contention while ensuring consistency 
-and forward progress:
+The session exposes `Status`, `TransactionId`, `Handle`, and `RecordAnchorKey` for diagnostics and advanced integrations. Most applications should keep using the session object and let the SDK carry the routing identity.
+
+In case of conflicts or encountering exclusive locks under pessimistic locking, transactions can be aborted so they can be retried on the client side.
+
+The recommended approach is to use the built-in retry mechanism provided by Kahuna clients, which automatically retries aborted or retryable transactions using a short jittered backoff interval:
 
 ```csharp
-
-KahunaTransactionOptions txOptions = new() { 
+KahunaTransactionOptions txOptions = new()
+{
     Locking = KeyValueTransactionLocking.Pessimistic,
     Timeout = 5000
 };
@@ -329,8 +366,45 @@ await client.RetryableTransaction(txOptions, async (session, cancellationToken) 
 
     await session.Commit();
 });
-
 ```
+
+`RetryableTransaction(...)` starts a fresh transaction for each attempt. It retries conflict-style outcomes such as `Aborted`, `MustRetry`, and `AlreadyLocked`, then gives up with a `KahunaException` if the retry budget is exhausted.
+
+Durable commit decisions can be requested when every modified key is persistent:
+
+```csharp
+KahunaTransactionOptions options = new()
+{
+    Locking = KeyValueTransactionLocking.Pessimistic,
+    Timeout = 10_000,
+    ReadValidation = ReadValidation.TrackAndValidate,
+    DecisionDurability = DecisionDurability.Durable
+};
+
+await using KahunaTransactionSession session =
+    await client.StartTransactionSession(options, cancellationToken);
+
+await session.SetKeyValue(
+    "accounts/alice",
+    "90",
+    durability: KeyValueDurability.Persistent,
+    cancellationToken: cancellationToken
+);
+
+await session.SetKeyValue(
+    "accounts/bob",
+    "110",
+    durability: KeyValueDurability.Persistent,
+    cancellationToken: cancellationToken
+);
+
+bool committed = await session.Commit(cancellationToken);
+
+if (!committed)
+    throw new KahunaException("Commit must be retried", KeyValueResponseType.MustRetry);
+```
+
+`Commit(...)` and `Rollback(...)` return `true` when the requested terminal outcome is reached. A `false` result means the outcome is not known yet and the same finalization action should be retried with the same session handle. After commit or rollback starts, do not add new operations to the session.
 
 </TabItem>
 </Tabs>
@@ -354,7 +428,8 @@ Choosing between the two approaches depends on the specific needs of your applic
 
 **Disadvantages**
 - **Increased Latency**: Requires multiple round-trips between the client and server, which can introduce additional delays.
-- **Graceful Degradation Challenges**: In the event of partial failures (e.g., network partitions), the client may be unable to manually commit or roll back transactions. Locks could be held until the transaction times out. This can be mitigated by setting short transaction timeouts (a few seconds).
+- **More Retry Handling**: Network interruptions can leave commit or rollback temporarily retryable. The client must retry `MustRetry` with the same session handle or use `RetryableTransaction(...)`.
+- **Graceful Degradation Challenges**: In the event of partial failures (e.g., network partitions), locks can be held until the transaction times out. This can be mitigated by setting short transaction timeouts.
 
 ### Kahuna Scripts
 

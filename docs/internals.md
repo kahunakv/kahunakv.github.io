@@ -8,7 +8,7 @@ Kahuna is built around a few core ideas:
 - **Actors** serialize access to in-memory state and isolate concurrency-sensitive code.
 - **Write-ahead logs** make committed Raft operations recoverable.
 - **Materialized persistence** stores locks and key/value entries so a node can avoid replaying every log forever.
-- **MVCC and write intents** provide transactional isolation for key/value scripts and interactive transactions.
+- **MVCC, write intents, and operation registration** provide transactional isolation for key/value scripts and interactive transactions.
 
 ## Main Components
 
@@ -17,7 +17,9 @@ Kahuna is built around a few core ideas:
 | `KahunaManager` | Facade that wires locks, key/values, sequences, persistence, and background writing. |
 | `LockManager` | Routes lock operations to lock actors and handles lock replication/restoration. |
 | `KeyValuesManager` | Routes key/value operations, scripts, and transactions to key/value actors. |
+| `TransactionCoordinator` | Owns transaction sessions, working sets, finalization, cleanup, and durable decision recovery metadata. |
 | `SequencerManager` | Implements named sequences on top of key/value operations under a reserved internal keyspace. |
+| `BackupService` | Coordinates backup manifests, checkpoints, incremental WAL segments, and restore operations. |
 | `BackgroundWriterActor` | Batches dirty persistent objects and writes materialized state to storage. |
 | Kommander `IRaft` | Provides partition leadership, replication, log restore, and checkpoint hooks. |
 
@@ -34,8 +36,13 @@ For a typical persistent key/value write:
 7. Once Raft commits the log entry, the replicator applies it to the in-memory state machine.
 8. The background writer eventually flushes the materialized entry to the persistence backend.
 
+Transactions add another layer: the `TransactionCoordinator` records confirmed reads, writes, locks, and cleanup state as the request runs. Commit and rollback close the session to new operations, drain already registered operations, freeze the server-owned working set, and then finalize from that snapshot.
+
+For the complete flow, including reads, scripts, interactive transaction operations, durable commit decisions, and background recovery, see [Request Flow](internals/request-flow.md).
+
 More detail:
 
+- [Request flow](internals/request-flow.md)
 - [Actor model](internals/actor-model.md)
 - [WAL and persistence](internals/wal-and-persistence.md)
 - [Replication and recovery](internals/replication.md)

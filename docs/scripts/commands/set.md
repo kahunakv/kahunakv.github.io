@@ -82,7 +82,7 @@ set `locks/tasks/123` "node1" ex 10000 nx
 r0 set 14ms
 ```
 
-Mark the task as completed if this node still hold the key:
+Mark the task as completed if this node still holds the key:
 
 ```kahuna
 set `locks/tasks/123` "completed" cmp "node1"

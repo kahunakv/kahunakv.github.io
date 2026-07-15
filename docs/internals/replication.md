@@ -34,8 +34,12 @@ Kahuna categorizes replicated logs with simple type names:
 |------|---------|
 | `lock` | Lock state mutation. |
 | `kv` | Key/value state mutation. |
+| `rangemap` | Key-range descriptor map, replicated on the meta partition. |
+| `snapshotfloor` | Snapshot-hold floor registry, replicated on the meta partition. |
+| `coorddecision` | Durable transaction decision delta, replicated on the data partition that owns the record anchor key. |
+| `receipt` | Completion receipt handoff for range split/merge movement. In steady state, receipts ride key/value commits. |
 
-`ReplicationSerializer` serializes lock and key/value messages with protobuf. Larger values use recyclable memory streams to reduce allocation pressure.
+`ReplicationSerializer` serializes these messages with protobuf. Larger values use recyclable memory streams to reduce allocation pressure.
 
 ## Restore Path
 
@@ -44,8 +48,8 @@ During recovery, Raft replays committed logs that are newer than the latest chec
 The restore path:
 
 1. Raft loads logs from its WAL.
-2. Kahuna routes each log to the lock or key/value restorer.
-3. The restorer rebuilds in-memory state.
+2. Kahuna routes each log by replication type.
+3. Lock, key/value, range-map, snapshot-floor, decision, and receipt handlers rebuild in-memory state.
 4. Materialized persistence provides checkpointed baseline data.
 5. New committed logs continue through the normal replication path.
 
@@ -65,3 +69,5 @@ Raft handles leader election per partition. When a leader changes:
 - Uncommitted proposals may need to be retried
 
 Clients can see retry or abort responses when leadership changes race with an operation.
+
+For durable transaction decisions, the node that becomes leader for the anchor partition is responsible for continuing recovery of any outstanding decision records it now owns.

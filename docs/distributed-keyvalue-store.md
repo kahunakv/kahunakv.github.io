@@ -12,12 +12,12 @@ A **distributed key/value store** is a type of **database system** designed to s
 
 ## Key Characteristics
 
-1. **Scalability** – The system distributes data across multiple machines, allowing it to scale horizontally as demand increases. If the nodes are multi-processor, Kahuna can process multiple requests in parallel.
-2. **Fault Tolerance** – By replicating data across multiple nodes, it ensures resilience against failures.
-3. **High Availability** – Data is accessible even if some nodes go offline, minimizing downtime.
-4. **Strong Consistency** – Ensures reliable data integrity using the **Raft consensus protocol**.
-5. **Low Latency** – Optimized for fast read/write operations, making it ideal for caching, real-time applications and distributed computing.
-6. **Distributed Transactions** – Supports multi-node transactions with **Multi-Version Concurrency Control (MVCC)**, **Pessimistic/Optimistic Locking**, and **Two-Phase Commit (2PC)** for consistency across distributed operations.
+1. **Scalability**: The system distributes data across partitions and can spread partition leadership across multiple machines.
+2. **Fault Tolerance**: Persistent data is replicated through Raft, so committed state can survive node failures.
+3. **High Availability**: Clients can contact any node, and Kahuna routes requests to the current partition leader.
+4. **Strong Consistency**: Partition leaders serialize writes through Raft-backed ordering.
+5. **Low Latency**: Hot state is served from actor-owned memory, with background persistence for materialized state.
+6. **Distributed Transactions**: Supports multi-node transactions with MVCC, pessimistic or optimistic locking, server-owned working sets, operation retry deduplication, two-phase commit, and optional durable commit decisions.
 
 ## Use Cases
 
@@ -30,17 +30,19 @@ A **distributed key/value store** is a type of **database system** designed to s
 
 ## Kahuna Distributed Store
 
-In the context of **Kahuna**, its **distributed key/value store** capability allows applications to store and retrieve data efficiently, ensuring **strong consistency, high availability, and low latency**. Additionally, **Kahuna supports distributed transactions**, enabling applications to execute **atomic, consistent, isolated, and durable (ACID) operations** across multiple nodes. This is achieved using:
+In the context of **Kahuna**, its **distributed key/value store** capability allows applications to store and retrieve data efficiently, ensuring **strong consistency, high availability, and low latency**. Additionally, **Kahuna supports distributed transactions**, enabling applications to execute atomic and isolated operations across multiple nodes. This is achieved using:
 
-- **Multi-Version Concurrency Control (MVCC)** – Allowing non-blocking reads and improved concurrency.
-- **Pessimistic and Optimistic Locking** – Supporting different locking mechanisms to prevent conflicts in concurrent transactions.
-- **Two-Phase Commit (2PC)** – Ensuring atomicity in distributed transactions across multiple nodes.
+- **Multi-Version Concurrency Control (MVCC)** for snapshot reads and conflict detection.
+- **Pessimistic and Optimistic Locking** for different contention profiles.
+- **Server-owned transaction coordination** so commit and rollback use the working set recorded by Kahuna, not a client-built summary.
+- **Two-Phase Commit (2PC)** for atomicity across modified participants.
+- **Durable Commit Decisions** when an all-persistent write set needs recovery after the commit decision has been installed.
 
 These features make Kahuna a great solution for small transactional workloads requiring **data integrity, consistency, and high availability**.
 
 ## Revisions
 
-In Kahuna, a [revision](/docs/distributed-keyvalue-store/revisions) is a monotonic, ever-increasing number that represents the global order of modifications in the key-value store. Every time a change (write, delete, or transaction) occurs in Kahuna, the revision number increases, ensuring strong consistency and strict ordering of operations. Each revision is a 64-bit cluster-wide counter.
+In Kahuna, a [revision](/docs/distributed-keyvalue-store/revisions) is a monotonic version number for a key. Updates advance the key's revision. Deletes mark the key as deleted and report the current revision. Revisions are useful for compare-revision updates, debugging, and historical reads.
 
 ## Routing Model
 
@@ -65,20 +67,26 @@ Sets or overwrites key/value pairs. The behavior of the API is modified based on
 <TabItem value="API">
 
 ```csharp
-(bool Set, long Revision) TrySet(string key, byte[] value, Flags flags, Consistency consistency);
+Task<KahunaKeyValue> SetKeyValue(
+    string key,
+    byte[]? value,
+    int expiryTime = 0,
+    KeyValueFlags flags = KeyValueFlags.Set,
+    KeyValueDurability durability = KeyValueDurability.Persistent
+);
 ```
 
 - **key:** A unique identifier for the key/value pair.
 - **value:** The data object associated with the key.
 - **expiresMs:** The expiration time of the key in milliseconds.
 - **flags:**
-  - If `Flags.SetIfExists` is specified, the value is set only if the key already exists.
-  - If `Flags.SetIfNotExists` is specified, the value is set only if the key does not exist.
+  - If `KeyValueFlags.SetIfExists` is specified, the value is set only if the key already exists.
+  - If `KeyValueFlags.SetIfNotExists` is specified, the value is set only if the key does not exist.
 - **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Set:** `true` if the key's value was modified.
-- **Revision:** A global counter indicating how many times the key has been modified.
+- **Success:** `true` if the key's value was modified.
+- **Revision:** The key's current revision after the operation.
 
 </TabItem>
 <TabItem value="CLI">
@@ -149,7 +157,7 @@ result = await client.SetKeyValue(
   "my-config",
   "some-value",
   0,
-  flags: SetIfNotExists,
+  flags: KeyValueFlags.SetIfNotExists,
   durability: KeyValueDurability.Persistent
 );
 
@@ -158,7 +166,7 @@ result = await client.SetKeyValue(
   "my-config",
   "some-value",
   0,
-  flags: SetIfExists,
+  flags: KeyValueFlags.SetIfExists,
   durability: KeyValueDurability.Persistent
 );
 
@@ -185,7 +193,13 @@ Sets or overwrites key/value pairs but only if the current value matches a speci
 <TabItem value="API">
 
 ```csharp
-(bool Set, long Revision) TryCompareValueAndSet(string key, byte[] value, byte[] compareValue, Durability durability);
+Task<KahunaKeyValue> TryCompareValueAndSetKeyValue(
+    string key,
+    byte[] value,
+    byte[] compareValue,
+    int expiryTime = 0,
+    KeyValueDurability durability = KeyValueDurability.Persistent
+);
 ```
 
 - **key:** A unique identifier for the key/value pair.
@@ -195,8 +209,8 @@ Sets or overwrites key/value pairs but only if the current value matches a speci
 - **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Set:** `true` if the key's value was modified.
-- **Revision:** A global counter indicating how many times the key has been modified.
+- **Success:** `true` if the comparison matched and the key was modified.
+- **Revision:** The key's current revision after the operation.
 
 </TabItem>
 <TabItem value="CLI">
@@ -227,7 +241,13 @@ Sets or overwrites key/value pairs but only if the current revision matches a sp
 <TabItem value="API">
 
 ```csharp
-(bool Set, long Revision) TryCompareRevisionAndSet(string key, byte[] value, long compareRevision, Durability durability);
+Task<KahunaKeyValue> TryCompareRevisionAndSetKeyValue(
+    string key,
+    byte[]? value,
+    long compareRevision,
+    int expiryTime = 0,
+    KeyValueDurability durability = KeyValueDurability.Persistent
+);
 ```
 
 - **key:** A unique identifier for the key/value pair.
@@ -237,8 +257,8 @@ Sets or overwrites key/value pairs but only if the current revision matches a sp
 - **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Set:** `true` if the key's value was modified.
-- **Revision:** A global counter indicating how many times the key has been modified.
+- **Success:** `true` if the revision matched and the key was modified.
+- **Revision:** The key's current revision after the operation.
 
 </TabItem>
 <TabItem value="CLI">
@@ -331,7 +351,11 @@ Retrieves the value of a key at the specific revision. If the key/revision combi
 <TabItem value="API">
 
 ```csharp
-(bool Found, byte[] Value, long Revision) TryGetRevision(string key, long revision, Durability durability);
+Task<KahunaKeyValue> GetKeyValueRevision(
+    string key,
+    long revision,
+    KeyValueDurability durability = KeyValueDurability.Persistent
+);
 ```
 
 - **key:** The key to be queried.
@@ -504,15 +528,18 @@ Deletes a key and its associated value. Deleting a key does not remove the key h
 <TabItem value="API">
 
 ```csharp
-(bool Deleted, long Revision) TryDelete(string key, Durability durability);
+Task<KahunaKeyValue> DeleteKeyValue(
+    string key,
+    KeyValueDurability durability = KeyValueDurability.Persistent
+);
 ```
 
 - **key:** The key to be deleted.
 - **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Deleted:** `true` if the key/value pair was deleted.
-- **Revision:** The global counter indicating how many times the key was modified at the time of deletion. Deleting a key does **not** increment the revision counter.
+- **Success:** `true` if the key/value pair was deleted.
+- **Revision:** The key's current revision at the time of deletion. Deleting a key does **not** increment the revision counter.
 
 </TabItem>
 </Tabs>
@@ -527,7 +554,11 @@ Extends a key timeout. The key will be deleted after the key expires. If the exp
 <TabItem value="API">
 
 ```csharp
-(bool Extended, long Revision) TryExtend(string key, int expiresMs, Durability durability);
+Task<KahunaKeyValue> ExtendKeyValue(
+    string key,
+    int expiresMs,
+    KeyValueDurability durability = KeyValueDurability.Persistent
+);
 ```
 
 - **key:** The key to be extended.
@@ -535,8 +566,8 @@ Extends a key timeout. The key will be deleted after the key expires. If the exp
 - **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Extended:** `true` if the key/value pair was extended.
-- **Revision:** The global counter indicating how many times the key was modified at the time of deletion. Extending the key does **not** increment the revision counter.
+- **Success:** `true` if the key/value pair was extended.
+- **Revision:** The key's current revision. Extending the key does **not** increment the revision counter.
 
 </TabItem>
 <TabItem value="CLI">
@@ -564,15 +595,18 @@ Returns if a key exists.
 <TabItem value="API">
 
 ```csharp
-(bool Exists, long Revision) Exists(string key, Durability durability);
+Task<KahunaKeyValue> ExistsKeyValue(
+    string key,
+    KeyValueDurability durability = KeyValueDurability.Persistent
+);
 ```
 
 - **key:** The key to be checked if exists.
 - **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Exists:** `true` if the key/value pair exists.
-- **Revision:** The global counter indicating how many times the key was modified at the time of the query.
+- **Success:** `true` if the key/value pair exists.
+- **Revision:** The key's current revision at the time of the query.
 
 </TabItem>
 <TabItem value="CLI">

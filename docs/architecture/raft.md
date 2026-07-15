@@ -45,4 +45,4 @@ Kahuna's architecture efficiently manages thousands of concurrent Raft groups (p
 
 ## Kommander Implementation
 
-Kahuna implements the Raft protocol through the [Kommander library](https://github.com/andresgutierrez/kommander). This library provides comprehensive functionality for message processing, log persistence, and state machine interactions. Kommander utilizes either RocksDB or SQLite as the underlying storage mechanism for both Raft protocol logs and the actual key-value data managed by the system.
+Kahuna implements the Raft protocol through the [Kommander library](https://github.com/kahunakv/kommander). Kommander handles Raft message processing, elections, log persistence, and state-machine callbacks. Raft log storage is configured separately from Kahuna's materialized key/value backend; each layer can use RocksDB or SQLite depending on server configuration.

@@ -125,6 +125,7 @@ const sidebars = {
       label: 'Internals',
       items: [
         'internals',
+        'internals/request-flow',
         'internals/actor-model',
         'internals/wal-and-persistence',
         'internals/backups-and-pitr',

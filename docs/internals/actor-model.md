@@ -19,6 +19,7 @@ Actors give Kahuna:
 - `LockManager`
 - `KeyValuesManager`
 - `SequencerManager`
+- `TransactionCoordinator`
 - `BackgroundWriterActor`
 - the selected `IPersistenceBackend`
 
@@ -48,6 +49,7 @@ Persistent locks queue dirty state to `BackgroundWriterActor` after committed ch
 
 - Write intents for individual keys
 - Prefix write intents for bucket reads
+- Range locks and range-oriented routing state
 - Active proposals
 - Recent revisions
 - MVCC entries
@@ -60,8 +62,17 @@ Proposal actors prepare and submit mutations that need Raft replication. A reque
 
 This split lets the request actor remain focused on local validation and state transitions while proposal actors coordinate with Raft.
 
+## Transaction Coordination
+
+The transaction coordinator owns transaction-wide state, but participant work still runs through the key/value actors that own the affected keys, buckets, or ranges.
+
+For interactive transactions, the coordinator records operation registration, confirmed effects, locks, read observations, finalization state, and optional durable decision metadata. Background actors handle the long-running maintenance paths:
+
+- `TransactionReaperActor` closes and rolls back abandoned sessions when it can do so safely.
+- `CoordinatorDecisionRecoveryActor` continues installed durable commit decisions on the node that currently leads the anchor partition.
+
 ## Background Writer
 
 `BackgroundWriterActor` is a dedicated actor for materialized persistence. Lock and key/value actors enqueue dirty items, and the background writer flushes them in batches. This avoids blocking request actors on every backend write.
 
-The background writer also tracks partitions that need checkpoints after dirty objects are flushed.
+The background writer also tracks partitions that need checkpoints after dirty objects are flushed. For durable transaction decisions, checkpointing must persist completion receipts and coordinator decision snapshots before advancing the WAL retention floor for the relevant partition.

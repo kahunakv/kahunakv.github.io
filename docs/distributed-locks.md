@@ -36,17 +36,20 @@ Kahuna exposes a simple API for acquiring, releasing and extending locks. The ma
 <TabItem value="API">
 
 ```csharp
-(bool Locked, long FencingToken) TryLock(string resource, string owner, int expiresMs, Durability durability);
+Task<KahunaLock> GetOrCreateLock(
+    string resource,
+    TimeSpan expiry,
+    LockDurability durability = LockDurability.Persistent
+);
 ```
 
 - **resource:** The identifier for the resource you want to lock.
-- **owner:** A unique identifier for the lock, usually associated with the client or process requesting the lock.
-- **expiresMs:** The expiration time for the lock in milliseconds.
+- **expiry:** The duration for the lock lease.
 - **durability:** Defines whether the lock durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Locked:** `true` if the lock was successfully acquired.
-- **FencingToken:** A global counter indicating the number of times the lock has been acquired. 
+- **IsAcquired:** `true` if the lock was successfully acquired.
+- **FencingToken:** A monotonically increasing token for that lock resource. Downstream systems can reject operations with an older token.
 </TabItem>
 <TabItem value="CLI">
 
@@ -112,7 +115,11 @@ Response:
 <TabItem value="API">
 
 ```csharp
-(bool Unlocked) Unlock(string resource, string owner, Durability durability);
+Task<bool> Unlock(
+    string resource,
+    byte[] owner,
+    LockDurability durability = LockDurability.Persistent
+);
 ```
 
 - **resource:** The identifier for the resource to unlock.
@@ -120,7 +127,7 @@ Response:
 - **durability:** Defines whether the lock durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Unlocked:** `false` if the resource was successfully unlocked.
+- **Unlocked:** `true` if the resource was successfully unlocked.
 
 </TabItem>
 <TabItem value="CLI">
@@ -192,17 +199,22 @@ Response:
 <TabItem value="API">
 
 ```csharp
-(bool Extended, long FencingToken) Extend(string resource, string owner, int expiresMs, Durability durability);
+Task<(bool Extended, long FencingToken)> TryExtendLock(
+    string resource,
+    byte[] owner,
+    TimeSpan duration,
+    LockDurability durability = LockDurability.Persistent
+);
 ```
 
 - **resource:** The identifier for the resource you want to extend.
 - **owner:** A unique identifier for the lock, usually associated with the client or process requesting the lock. It must be the current owner of the lock.
-- **expiresMs:** The expiration time for the lock in milliseconds.
+- **duration:** The new lock lease duration.
 - **durability:** Defines whether the lock durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
 - **Extended:** `true` if the lock was successfully extended.
-- **FencingToken:** A global counter indicating the number of times the lock has been acquired. 
+- **FencingToken:** The current fencing token for that lock resource. Extending a lock keeps the same owner and token.
 
 </TabItem>
 <TabItem value="CLI">
@@ -275,7 +287,10 @@ Response:
 <TabItem value="API">
 
 ```csharp
-(string Owner, long FencingToken) Get(string resource, Durability durability);
+Task<KahunaLockInfo?> GetLockInfo(
+    string resource,
+    LockDurability durability = LockDurability.Persistent
+);
 ```
 
 - **resource:** The identifier for the resource you want to get information.
@@ -283,7 +298,7 @@ Response:
 
 **Returns:**
 - **Owner:** The current owner of the lock.
-- **FencingToken:** A global counter indicating the number of times the lock has been acquired. 
+- **FencingToken:** The current fencing token for that lock resource.
 
 </TabItem>
 <TabItem value="CLI">

@@ -1,7 +1,7 @@
 
 # Client for .NET
 
-Kahuna also provides a client tailored for .NET developers. This client simplifies the integration of distributed locking into your .NET applications by abstracting much of the underlying complexity. Documentation and samples for the client can be found in the `docs/` folder or on our [GitHub repository](https://github.com/kahunakv/kahuna).
+Kahuna provides a .NET client for distributed key/value operations, locks, sequencers, transactions, backups, and point-in-time restore. The client hides most routing and coordination details while still exposing the controls needed for consistency, durability, and retry behavior. Documentation and samples for the client can be found in the `docs/` folder or on our [GitHub repository](https://github.com/kahunakv/kahuna).
 
 ## Client Installation
 
@@ -244,7 +244,7 @@ This trade-off is common in high-performance distributed systems that prioritize
 
 ## Snapshot Reads
 
-The .NET client now supports **as-of snapshot reads** directly on top-level client methods through a `snapshotMs` parameter.
+The .NET client supports **as-of snapshot reads** directly on top-level client methods through a `snapshotMs` parameter.
 
 For point reads:
 
@@ -689,18 +689,28 @@ By avoiding re-parsing and re-planning on every call, this approach makes script
 
 With interactive transactions, developers can execute transactional flows directly from C# without the need to use Kahuna Scripts.
 
-This gives programmers full control over the transaction logic using familiar language constructs, while still benefiting from Kahuna’s consistency guarantees, distributed coordination, and support for multi-key operations:
+This gives programmers full control over the transaction logic using familiar language constructs, while still benefiting from Kahuna’s consistency guarantees, distributed coordination, and support for multi-key operations.
+
+Interactive sessions are available through the gRPC transport. The REST transport supports ordinary key/value operations, but it does not expose session start, commit, or rollback.
+
+Kahuna’s server-side transaction coordinator owns the transaction working set. The client keeps a session handle and sends operations through it, but commit and rollback do not rely on the client rebuilding a final list of touched keys. As each operation succeeds, the coordinator records confirmed reads, writes, locks, and cleanup state.
+
+That means the client code can stay focused on business logic:
 
 ```csharp
-await using var session = await client.StartTransactionSession(
-    new() {
-      Locking = KeyValueTransactionLocking.Optimistic,
-      Timeout = 5000
+using Kahuna.Client;
+using Kahuna.Shared.KeyValue;
+
+await using KahunaTransactionSession session = await client.StartTransactionSession(
+    new KahunaTransactionOptions
+    {
+        Locking = KeyValueTransactionLocking.Optimistic,
+        Timeout = 5000
     }
 );
 
-var balance1 = await session.GetKeyValue(userA);
-var balance2 = await session.GetKeyValue(userB);
+KahunaKeyValue balance1 = await session.GetKeyValue(userA);
+KahunaKeyValue balance2 = await session.GetKeyValue(userB);
 
 if (balance1.ValueAsLong() >= 50)
 {
@@ -711,20 +721,23 @@ if (balance1.ValueAsLong() >= 50)
 await session.Commit();
 ```
 
-In case of conflicts or encountering exclusive locks (under pessimistic locking), transactions will be aborted 
-so they can be retried on the client side.
+Call `Commit` explicitly when the work should become visible. Disposing a still-pending session rolls it back, so `await using` is a safety net for exceptions and early returns. `AutoCommit` is carried on the transaction options for protocol compatibility, but interactive sessions still require an explicit `Commit`.
+
+The session exposes `Status`, `TransactionId`, `Handle`, and `RecordAnchorKey` for diagnostics and advanced integrations. Most applications should keep using the session object and let the SDK carry the routing identity.
+
+After `Commit` or `Rollback` starts, do not issue more reads or writes through the same session. Finalization closes the session to new operations, drains work already registered on the server, and then commits or rolls back from a frozen server-owned working set.
+
+In case of conflicts or encountering exclusive locks under pessimistic locking, transactions can be aborted so they can be retried on the client side.
 
 Two user-facing behaviors are worth knowing:
 
 - `GetByBucket(...)` inside a **pessimistic** session protects the whole bucket with a prefix lock, which blocks phantom inserts and conflicting writes under that prefix until the transaction finishes.
 - `GetByRange(...)` inside a **pessimistic** session protects only the requested interval with a range lock, which is the better fit for large ordered key spaces.
 
-The recommended approach is to use the built-in retry mechanism provided by Kahuna clients, which automatically 
-retries aborted transactions using a short backoff interval, helping reduce contention while ensuring consistency 
-and forward progress:
+The recommended approach is to use the built-in retry mechanism provided by Kahuna clients, which automatically retries aborted or retryable transactions using a short jittered backoff interval:
 
 ```csharp
-var txOptions = new KahunaTransactionOptions()
+KahunaTransactionOptions txOptions = new()
 { 
     Locking = KeyValueTransactionLocking.Pessimistic,
     Timeout = 5000
@@ -732,8 +745,8 @@ var txOptions = new KahunaTransactionOptions()
 
 await client.RetryableTransaction(txOptions, async (session, cancellationToken) =>
 {
-    var balance1 = await session.GetKeyValue(userA);
-    var balance2 = await session.GetKeyValue(userB);
+    KahunaKeyValue balance1 = await session.GetKeyValue(userA);
+    KahunaKeyValue balance2 = await session.GetKeyValue(userB);
 
     if (balance1.ValueAsLong() >= 50)
     {
@@ -743,8 +756,112 @@ await client.RetryableTransaction(txOptions, async (session, cancellationToken) 
 
     await session.Commit();
 });
-
 ```
+
+`RetryableTransaction(...)` starts a fresh transaction for each attempt. It retries conflict-style outcomes such as `Aborted`, `MustRetry`, and `AlreadyLocked`, then gives up with a `KahunaException` if the retry budget is exhausted.
+
+#### Transaction Options
+
+`KahunaTransactionOptions` controls concurrency, timeout, read behavior, cleanup, and decision durability:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `Locking` | `Pessimistic` | Chooses pessimistic or optimistic concurrency behavior. Pessimistic sessions acquire locks before or during operations. Optimistic sessions validate reads and write intents at commit. |
+| `Timeout` | server default when `0` | Maximum transaction duration in milliseconds. Use short timeouts for interactive work so abandoned sessions are cleaned up quickly. |
+| `AsyncRelease` | `false` | Allows eligible post-commit cleanup to continue in the background. Leave it off when prompt lock cleanup matters. |
+| `AutoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit `Commit`. Disposal of a pending session rolls back. |
+| `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. Optimistic locking also enables validation behavior. |
+| `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction point reads. It is a snapshot view, not read-your-own-writes. |
+| `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs recovery after the commit decision has been installed. |
+
+Example with durable commit decisions:
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.KeyValue;
+
+KahunaTransactionOptions options = new()
+{
+    Locking = KeyValueTransactionLocking.Pessimistic,
+    Timeout = 10_000,
+    ReadValidation = ReadValidation.TrackAndValidate,
+    DecisionDurability = DecisionDurability.Durable
+};
+
+await using KahunaTransactionSession session =
+    await client.StartTransactionSession(options, cancellationToken);
+
+await session.SetKeyValue(
+    "accounts/alice",
+    "90",
+    durability: KeyValueDurability.Persistent,
+    cancellationToken: cancellationToken
+);
+
+await session.SetKeyValue(
+    "accounts/bob",
+    "110",
+    durability: KeyValueDurability.Persistent,
+    cancellationToken: cancellationToken
+);
+
+bool committed = await session.Commit(cancellationToken);
+
+if (!committed)
+    throw new KahunaException("Commit must be retried", KeyValueResponseType.MustRetry);
+```
+
+Durable decision mode is different from persistent key durability:
+
+- `KeyValueDurability.Persistent` controls whether a value is replicated and stored persistently.
+- `DecisionDurability.Durable` controls whether the commit decision can be recovered after it has been installed.
+
+Durable decision mode rejects transactions that confirmed ephemeral modifications, because ephemeral values and their participant receipts cannot survive process loss.
+
+#### Snapshot Reads in a Transaction Session
+
+`ReadTimestamp` gives the session a transaction-wide historical read timestamp for point reads:
+
+```csharp
+using Kommander.Time;
+using Kahuna.Client;
+
+HLCTimestamp readTimestamp = new(0, 1718392012345, uint.MaxValue);
+
+await using KahunaTransactionSession session = await client.StartTransactionSession(
+    new KahunaTransactionOptions
+    {
+        ReadTimestamp = readTimestamp,
+        Timeout = 5000
+    }
+);
+
+KahunaKeyValue historical = await session.GetKeyValue(
+    "config/feature-x",
+    KeyValueDurability.Persistent
+);
+```
+
+When `ReadTimestamp` is set, reads behave as historical snapshot reads. Keys created after the timestamp are hidden, and keys updated after the timestamp return the older visible value. Do not combine a fixed `ReadTimestamp` with `ReadValidation.TrackAndValidate`, because a historical snapshot is not a latest-state read set.
+
+#### Operation Retries and Finalization Results
+
+The SDK assigns a stable operation ID to each transaction-scoped call. If the communication layer retries the same logical operation, Kahuna can recognize the retry and avoid applying the same mutation twice.
+
+`Commit(...)` and `Rollback(...)` return `true` when the server reaches the requested terminal outcome. A `false` result means the final outcome is not known yet and the same finalize action should be retried with the same session handle. Certain terminal outcomes are reported as `KahunaException`; inspect `KahunaException.KeyValueErrorCode` instead of matching exception text.
+
+Common result meanings:
+
+| Result | Meaning |
+|--------|---------|
+| `Committed` | The transaction committed and the session is complete. |
+| `RolledBack` | Rollback cleanup was acknowledged and the session is complete. |
+| `MustRetry` | Retry commit or rollback with the same session. Do not add more operations. |
+| `Aborted` | Start a new transaction if the business operation should be retried. |
+| `AlreadyLocked` | Another transaction holds a conflicting lock. Retry through `RetryableTransaction(...)` or back off manually. |
+| `Errored` | The handle is unknown, expired, or the outcome is unavailable. Treat it as an application-level uncertainty. |
+
+Learn more about the coordinator lifecycle in [Distributed Transactions](/docs/architecture/distributed-transactions/).
 
 ## Backup and Point-in-Time Restore
 
