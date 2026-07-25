@@ -55,6 +55,22 @@ Kahuna server options are passed as command-line flags to `Kahuna.Server`. The t
 | `--cache-entries-to-remove` | Maximum entries removed by cleanup paths that use this cap. Values less than or equal to `0` are normalized from the key/value collection batch size. | `100` |
 | `--dirty-objects-writer-delay` | Delay between dirty object writer flush passes, in milliseconds. | `200` |
 
+## Key/Value Write Coalescing
+
+These options tune persistent partition writes before they are proposed to Raft. Kahuna can combine `SET`, `DELETE`, `EXTEND`, and durable transaction-finalization records for the same partition into one Raft call. See [Partition Write Coalescing](/docs/architecture/partition-write-coalescing/) for behavior, retry semantics, and metrics.
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--kv-write-linger-ms` | Delay from the oldest queued persistent partition write before its partition batch is proposed. `0` dispatches an idle partition immediately. | `1` |
+| `--kv-write-max-batch-items` | Maximum log entries selected for one aggregator Raft call. | `512` |
+| `--kv-write-max-batch-bytes` | Target serialized bytes selected for one aggregator Raft call. An oversized single item dispatches alone. | `4194304` |
+| `--kv-write-max-queued-items` | Maximum admitted persistent submissions per partition, including writes already in flight. | `8192` |
+| `--kv-write-max-queued-bytes` | Maximum admitted serialized bytes per partition, including writes already in flight. | `33554432` |
+| `--kv-write-max-queue-delay-ms` | Maximum pre-dispatch wait before a queued write is released as `MustRetry`. | `1000` |
+| `--kv-write-aggregator-inbox-size` | Ordinary-submission inbox bound per aggregator lane. Control messages are exempt. Values less than or equal to `0` disable the bound. | `16384` |
+
+Durable transaction decision, materialization, settlement, recovery, and range-metadata handoff records use terminal scheduler admission with reserved headroom. The terminal reserve and node-global queue settings are `KahunaConfiguration` fields today and are not exposed as server command-line flags.
+
 ## Backups and Point-in-Time Recovery
 
 | Command Line Option | Description | Default Value |
@@ -191,5 +207,5 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 
 - `--wal-storage` and `--storage` configure different layers. WAL storage persists Raft logs; materialized storage persists Kahuna object state after committed operations are applied.
 - Use stable `--storage-revision` and `--wal-revision` values for existing data directories. Changing revisions points the server at different local storage files.
-- The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, and count- or load-based key-range split/merge thresholds remain code-level or embedded-node configuration today.
+- The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, durable-decision deadline/admission knobs, durable deferred-settlement and prepared-intent bounds, terminal write-aggregator reserve knobs, and count- or load-based key-range split/merge thresholds remain code-level or embedded-node configuration today.
 - The embedded node exposes the broader runtime surface, including collector and persistent-revision settings. See [Embedded Kahuna Node](/docs/embedded-kahuna-node/) for the full embedded configuration options.

@@ -20,6 +20,16 @@ The Raft WAL is responsible for:
 
 Kahuna uses Kommander for Raft. Depending on configuration, WAL storage can be backed by memory, RocksDB, or SQLite.
 
+## Direct Write Coalescing
+
+Persistent partition writes use a leader-local partition write aggregator before they enter Raft. The aggregator can combine non-transactional `SET`, `DELETE`, `EXTEND`, durable transaction-finalization records, and durable settlement records for the same partition into one `ReplicateEntries` call.
+
+This optimization applies across requests. A `SetManyKeyValues(...)` call and independent single-key writes can land in the same partition queue if they target the same partition at the same time.
+
+The aggregator does not coalesce ephemeral writes or open transaction staging. Ephemeral writes do not use Raft, and open transactions stage MVCC intents through the transaction coordinator. Durable transaction records enter the aggregator when finalization writes canonical records, prepared-intent deltas, materialized values, and settlement deltas.
+
+See [Partition Write Coalescing](/docs/architecture/partition-write-coalescing/) for tuning options and metrics.
+
 ## Materialized State
 
 Kahuna's persistence backend is represented by `IPersistenceBackend`. It stores:
@@ -55,7 +65,7 @@ The flush path is:
 
 Checkpoints connect materialized persistence with Raft log compaction. Once dirty state for a partition has been written, the background writer can ask Raft to replicate a checkpoint for that partition. After checkpointing, the system does not need to replay all older logs to reconstruct the same state.
 
-Durable transaction recovery metadata participates in this ordering. Completion receipts and coordinator decision snapshots must be durable before the checkpoint allows WAL retention to move past log entries that may be needed to reconstruct them.
+Durable transaction recovery metadata participates in this ordering. Transaction records, prepared-intent snapshots, and completion receipts must be durable before the checkpoint allows WAL retention to move past log entries that may be needed to reconstruct them.
 
 ## PITR Retention
 

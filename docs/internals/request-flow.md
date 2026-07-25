@@ -54,8 +54,8 @@ client
   -> KeyValueLocator
   -> partition leader
   -> key/value actor
-  -> proposal actor
-  -> Raft append and commit
+  -> partition write aggregator
+  -> Raft ReplicateEntries and commit
   -> KeyValueReplicator
   -> in-memory state
   -> BackgroundWriterActor
@@ -103,6 +103,7 @@ client
   -> ScriptTransactionExecutor
   -> TransactionCoordinator
   -> command execution through KeyValuesManager
+  -> stage MVCC entries
   -> prepare and commit or rollback
 ```
 
@@ -138,11 +139,12 @@ Finalization follows this shape:
 1. Close the transaction to new operations.
 2. Wait for operations registered before the close to finish or reach a safe retry state.
 3. Freeze the server-owned working set.
-4. Validate reads when the policy requires it.
-5. Prepare modified participants through two-phase commit.
-6. Commit every prepared participant or roll back before the decision becomes irreversible.
-7. Release locks, write intents, and MVCC read state.
-8. Retain the terminal outcome for a bounded idempotency window.
+4. Split the working set into read-only, ephemeral, persistent, or mixed commit paths.
+5. Validate reads when the policy requires it.
+6. Prepare modified participants through two-phase commit.
+7. Decide commit or abort.
+8. Release locks, write intents, and MVCC read state.
+9. Retain the terminal outcome for a bounded idempotency window.
 
 A retryable finalization failure returns `MustRetry`. The session stays closed to new operations, and the caller should retry the same commit or rollback with the same handle.
 
@@ -152,16 +154,16 @@ When `DecisionDurability.Durable` is used, the request flow adds a recoverable d
 
 ```text
 freeze working set
-  -> choose first persistent modified key as record anchor
-  -> prepare non-anchor participants
-  -> prepare anchor with embedded decision record
-  -> commit anchor first
-  -> commit remaining participants
-  -> persist participant acknowledgements
-  -> mark decision completed
+  -> build durable finalize input
+  -> initialize canonical transaction record and prepare anchor intents
+  -> replicate other prepared intents
+  -> validate reads after the prepare barrier
+  -> compare-and-set the canonical record to Commit or Abort
+  -> return Committed after the durable decision when deferred settlement is enabled
+  -> materialize committed values or discard aborted intents in settlement
 ```
 
-Committing the anchor installs the durable decision. After that point, Kahuna must not report a definite abort. If a participant cannot be finished immediately, the operation remains retryable and recovery continues from the anchored decision record.
+The canonical record is the durable authority. After it commits as `Commit`, Kahuna must not report a definite abort. With the default deferred settlement mode, the committed value may temporarily remain in a prepared intent. Reads, scans, and writes that encounter that intent resolve it through the canonical record instead of serving stale state.
 
 Persistent participants record completion receipts when their committed values are applied. Recovery uses those receipts to distinguish "already committed" from "unknown" after the original write intent is gone.
 
@@ -172,7 +174,7 @@ Several background paths continue after request handling:
 - `BackgroundWriterActor` flushes materialized persistent state and revision history.
 - Raft restore replays committed logs after restart.
 - `TransactionReaperActor` closes and rolls back abandoned sessions when possible.
-- `CoordinatorDecisionRecoveryActor` finishes installed durable commit decisions.
+- `PreparedIntentRecoveryActor` resolves prepared intents from canonical transaction records.
 - Backup and PITR jobs flush storage checkpoints and copy committed WAL segments.
 - Range split and merge operations transfer correctness metadata before cutover.
 
@@ -185,5 +187,7 @@ The request flow has a few important boundaries:
 - A local actor accepting work is not the same as a persistent commit; Raft commit is the durable ordering point.
 - The transaction coordinator owns the working set; clients do not supply it at commit time.
 - `MustRetry` means the caller should retry the same operation or finalization, not start adding new work to a closed transaction.
-- Durable decision mode protects an installed commit decision, not the whole active transaction from `Begin`.
+- Durable decision mode protects the durable finalization path, not the whole active transaction from `Begin`.
 - Ephemeral data can participate in transactions, but it cannot be part of a durable commit decision.
+
+For the full transaction path, see [Transaction Lifecycle](/docs/internals/transaction-lifecycle/).

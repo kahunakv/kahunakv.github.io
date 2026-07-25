@@ -36,7 +36,7 @@ In the context of **Kahuna**, its **distributed key/value store** capability all
 - **Pessimistic and Optimistic Locking** for different contention profiles.
 - **Server-owned transaction coordination** so commit and rollback use the working set recorded by Kahuna, not a client-built summary.
 - **Two-Phase Commit (2PC)** for atomicity across modified participants.
-- **Durable Commit Decisions** when an all-persistent write set needs recovery after the commit decision has been installed.
+- **Durable Commit Decisions** when an all-persistent write set needs recovery after durable finalization starts.
 
 These features make Kahuna a great solution for small transactional workloads requiring **data integrity, consistency, and high availability**.
 

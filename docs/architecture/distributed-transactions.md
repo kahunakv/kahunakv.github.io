@@ -64,12 +64,12 @@ Interactive transactions use a canonical transaction handle:
 TransactionHandle
   TransactionId      globally unique HLC identity
   CoordinatorKey     routes the live in-memory session
-  RecordAnchorKey    optional route to a durable decision
+  RecordAnchorKey    optional route to the canonical durable transaction record
 ```
 
 `CoordinatorKey` is created when the transaction begins and routes requests back to the live coordinator session.
 
-`RecordAnchorKey` is assigned only when the coordinator folds the first confirmed persistent modified key into the working set. It is used to find a durable commit decision after the live coordinator session is gone.
+`RecordAnchorKey` is assigned only when the coordinator folds the first confirmed persistent modified key into the working set. It is used to find the canonical durable transaction record after the live coordinator session is gone.
 
 The anchor is a routing key, not a user-visible key/value record. Kahuna stores durable decision metadata internally.
 
@@ -225,66 +225,83 @@ Read-only transactions are valid. They can commit without a prepare round.
 
 By default, transaction finalization is best-effort: the live coordinator session owns the outcome, and terminal results are retained in memory for a bounded idempotency window.
 
-For persistent write sets that need recovery after the commit decision is installed, Kahuna supports durable commit decisions through `DecisionDurability.Durable`.
+For persistent write sets that need recovery after finalization starts, Kahuna supports durable commit decisions through `DecisionDurability.Durable`. For all-persistent write sets, this is the durable persistent commit path.
 
 Durable decision mode is different from key durability:
 
 - `KeyValueDurability.Persistent` means the value is replicated and stored persistently.
-- `DecisionDurability.Durable` means the commit decision can be recovered after it has been installed.
+- `DecisionDurability.Durable` means finalization records and prepared persistent intents can be recovered after the durable finalization path starts.
 
-Durable mode works by anchoring the decision to the first confirmed persistent modified key:
+Durable mode uses **durable-intent 2PC**:
 
-1. Prepare all non-anchor participants.
-2. Prepare the anchor participant last with an initial commit decision record.
-3. Commit the anchor first.
-4. Commit the remaining participants.
-5. Persist participant acknowledgement progress on the anchored decision record.
-6. Mark the decision completed after every participant is acknowledged.
+1. Build an immutable finalize input with one commit timestamp, a decision deadline, a participant manifest, and the exact prepared intent for every modified key.
+2. Initialize the canonical transaction record as `Undecided` and prepare the anchor partition's intents in one ordered Raft proposal when the anchor is also a participant.
+3. Replicate prepared intents for every other modified persistent partition.
+4. Retry prepares that are blocked only by a predecessor's committed-but-unsettled intent.
+5. Validate the read set after the prepare barrier.
+6. Compare-and-set the canonical record to `Commit` or `Abort`.
+7. Resolve every prepared intent from that canonical decision.
 
-Committing the anchor is the point of no return. After that, the system must not report a definite abort. If a participant cannot be finished immediately, the transaction remains retryable and recovery continues driving the decision.
+The canonical record is the point of no return. Once it moves to `Commit`, the system must not report a definite abort. If a participant cannot be resolved immediately, the transaction remains retryable and recovery continues from the canonical record and prepared intents.
+
+By default, durable settlement is deferred. A durable commit can return `Committed` once the canonical decision record is durable. Materializing committed values and settling intents then runs in the background, and recovery finishes it if the background task is lost. Reads, scans, and writes that meet a committed-but-unsettled intent resolve it through the canonical record so they do not serve a stale value. Set `DurableDeferredSettlement` to `false` in embedded/code-level configuration when a deployment needs settlement awaited inline before success is returned.
+
+Only conflict aborts are reported as `Aborted`. Retryable prepare failures, deadline expiry, presumed aborts, and infrastructure failures surface as `MustRetry` so the caller does not mistake transient uncertainty for a business conflict.
+
+### Decision Deadlines
+
+Each durable finalize freezes a decision deadline based on observed finalize latency:
+
+```text
+commit timestamp + clamp(multiplier x observed finalize p99, floor, ceiling)
+```
+
+The deadline prevents an `Undecided` record from blocking recovery forever if the live coordinator disappears. If a commit attempt arrives after the deadline, the canonical record stays `Undecided` and recovery may presume-abort it. A rising `kahuna.durable_tx.late_commit_rejections` or `kahuna.durable_tx.deadline_expiry_aborts` rate means the deadline is probably too tight for current load.
 
 ### Completion Receipts
 
-Persistent participants record completion receipts when committed values are applied. A receipt lets recovery distinguish "already committed" from "unknown" after the original write intent is gone.
+Persistent participants record completion receipts when committed values are applied. A receipt lets recovery or a duplicate commit distinguish "already committed" from "unknown" after the original write intent is gone.
 
 The ordering is important:
 
 ```text
 participant value and receipt committed
-  -> participant acknowledgement persisted on the decision record
-  -> receipt may be forgotten
+  -> duplicate commit or recovery can prove the participant is done
+  -> receipt is retained with persisted/snapshotted correctness metadata
 ```
 
-Receipts are restored from the committed key/value log and included in snapshots before WAL retention advances.
+Receipts are restored from the committed key/value log and included in snapshots before WAL retention advances. Range split and merge operations replicate outstanding receipts to the destination partition before cutover. If this handoff cannot be made durable, cutover is aborted.
 
 ### Durable Mode Boundaries
 
 Durable decision mode has specific limits:
 
-- If the coordinator disappears before the anchor decision is installed, the active session is lost like a best-effort session.
-- Prepared participant state is not made durable by this mode.
-- If a participant changes leader after prepare but before commit, recovery may need the caller to retry.
-- Ephemeral modified keys are rejected because neither the value nor a participant receipt can survive process loss.
+- If the coordinator disappears before the canonical transaction record is initialized, the active session is lost like a best-effort session.
+- Prepared persistent intents are durable in this mode. A participant leader change after prepare does not lose the staged value; recovery on the new leader can resolve it from the canonical record.
+- Ephemeral modified keys are rejected in durable mode because neither the value nor a participant receipt can survive process loss. Mixed transactions prepare the ephemeral subset first, then let the persistent durable decision drive ephemeral commit or rollback.
 - Read-only transactions and ephemeral-only modifications do not create a durable decision anchor.
+- The active in-memory session is still not persisted from `Begin`.
+- Reads and writes can route cross-node canonical-record lookups when deferred settlement leaves a foreign prepared intent behind. Duplicate finalization for a non-resident record may still return `MustRetry` or `Errored`, but never a fabricated conflict.
 
-Durable mode protects an installed commit decision. It does not make the whole interactive session durable from `Begin`.
+Durable mode protects the durable finalization path. It does not make the whole interactive session durable from `Begin`.
 
 ## Durable Decision Recovery
 
-Every node runs recovery for durable decisions whose anchor partition it currently leads. Recovery wakes periodically and when leadership changes.
+Every node runs prepared-intent recovery for partitions it currently leads. Recovery wakes periodically and when leadership changes.
 
-For each outstanding decision, recovery can:
+For each unresolved prepared intent, recovery consults the canonical transaction record and can:
 
-- Re-commit participants that are not acknowledged
+- Materialize the value if the record says `Commit`
+- Discard the intent if the record says `Abort`
+- Leave the intent alone if the record is still `Undecided` and inside its decision deadline
+- Drive an idempotent presumed abort if the record is missing or still undecided after its deadline
 - Use completion receipts to recognize already committed participants
-- Advance acknowledgement progress
-- Release receipts that are no longer needed
-- Mark fully acknowledged decisions as completed
-- Remove completed records after retention allows it
 
-Decision records store logical participant keys rather than fixed partition IDs. If key ranges split, merge, or move, recovery uses current routing metadata to find the correct participant leaders.
+Recovery never guesses a final outcome while the canonical record is undecided and inside its deadline. Request-path finalization and recovery may race, but initialize, prepare, decide, materialize, and settle are idempotent.
 
-Range split and merge operations transfer durable decision records and completion receipts before cutover. If that correctness metadata cannot be made durable on the destination partition, cutover is aborted instead of risking loss of the only recovery record.
+Range split and merge operations transfer durable transaction records, prepared intents, and completion receipts before cutover. If that correctness metadata cannot be made durable on the destination partition, cutover is aborted instead of risking loss of recovery state.
+
+For the full execution path, including deferred-settlement visibility and Raft/WAL interaction, see [Transaction Lifecycle](/docs/internals/transaction-lifecycle/).
 
 ## Abandoned Sessions and Reaping
 
@@ -297,7 +314,15 @@ Reaper behavior follows the same safety rules:
 - A session with no unresolved operation is rolled back from its confirmed working set.
 - If mandatory cleanup sees a transient failure, the session remains available for a later cleanup attempt.
 - If an operation is still unresolved after the extended deadline, the session expires with an unknown error rather than falsely claiming rollback.
-- A durable session with an installed commit decision is not rolled back. Recovery finishes the decision.
+- A durable session whose canonical record is already committed is not rolled back. Recovery finishes the prepared intents from the record.
+
+## Range-Lock Renewal
+
+The transaction coordinator renews range locks held by live sessions on the same periodic tick used by reaping. Renewal is server-side; clients do not need to heartbeat range locks manually.
+
+Each sweep re-acquires the confirmed range locks with a TTL derived from `CollectionInterval`, so a range lock remains effective while the session is alive. Renewal also continues while a session is finalizing and in-flight operations are draining.
+
+Range locks are in-memory state on the range-lock partition leader. If that leader changes while the coordinator session still exists, the next renewal sweep re-establishes the range lock on the new leader. If the coordinator-partition leader is lost, the session and its recorded lock set are gone, renewal stops, and existing range locks expire. Commit then returns retryable uncertainty instead of falsely claiming success.
 
 ## Retention and Bounds
 
@@ -305,14 +330,24 @@ Several bounds keep transaction coordination predictable:
 
 | Setting or limit | Default | Purpose |
 |---|---:|---|
-| `TransactionOutcomeRetentionMax` | `10000` | Maximum retained terminal outcomes. A non-positive value disables best-effort outcome retention and removes the durable-decision admission cap. |
+| `TransactionOutcomeRetentionMax` | `10000` | Maximum retained terminal outcomes. A non-positive value disables best-effort outcome retention. |
+| `DurableDecisionOutstandingMax` | `100000` | Maximum outstanding undecided canonical transaction records admitted by this node. Completed records do not count against this budget. |
+| `DurablePreparedIntentMaxCount` | `500000` | Resident prepared-intent count bound. A non-positive value disables the count bound. |
+| `DurablePreparedIntentMaxBytes` | `1073741824` | Resident prepared-intent value-byte bound. A non-positive value disables the byte bound. |
+| `DurableDeferredSettlement` | `true` | Runs durable materialization and settlement after the decision record is durable and success can be returned. `false` awaits settlement inline. |
+| `DurableDecisionDeadlineFloorMs` | `5000` | Lower clamp for the durable decision-deadline margin. |
+| `DurableDecisionDeadlineCeilingMs` | `60000` | Upper clamp for the durable decision-deadline margin. |
+| `DurableDecisionDeadlineMultiplier` | `4` | Multiplier applied to observed finalize p99 before clamping the decision-deadline margin. |
 | `TransactionOutcomeRetentionTtl` | `5 minutes` | Age window for terminal outcomes and completed durable decisions. A non-positive value disables age-based removal. |
-| `CollectionInterval` | `60 seconds` | Tick interval for the transaction reaper and durable-decision recovery actor. |
-| Pending operations per session | `4096` | Safety bound for registered operations in one transaction. Additional registrations are rejected. |
+| `CollectionInterval` | `60 seconds` | Tick interval for the transaction reaper, range-lock renewal, and prepared-intent recovery. |
+| Pending operations per session | `4096` | Safety bound for in-flight registered operations in one transaction. Additional registrations receive a retryable capacity rejection. |
+| Total operations per session | `65536` | Safety bound for retained operation records in one transaction. Exceeding it is terminal for that session. |
 | Participant in-doubt results | `8192 per node` | Bounded cache for acknowledgement-loss recovery. |
 | Participant finalize retries | `20 retries, 250 ms apart` | Retry window used while committing or rolling back prepared participants. |
 
-Outstanding durable decision records count toward `TransactionOutcomeRetentionMax` when that cap is positive. Kahuna rejects a new durable transaction with modifications instead of evicting recovery state that may still be needed.
+Durable admission is bounded by `DurableDecisionOutstandingMax`, independently of `TransactionOutcomeRetentionMax`. Kahuna rejects a new durable transaction before prepare when the outstanding-record budget is full, and it never evicts recovery state to make room.
+
+`DurableDecisionDeadlineFloorMs`, `DurableDecisionDeadlineCeilingMs`, and `DurableDecisionDeadlineMultiplier` are runtime configuration fields. They are not currently exposed by the server CLI or embedded options surface. Embedded deployments expose `DurableDecisionOutstandingMax`, `DurablePreparedIntentMaxCount`, `DurablePreparedIntentMaxBytes`, `DurableDeferredSettlement`, and the terminal outcome retention settings.
 
 ## Key Buckets and Locality
 
@@ -392,7 +427,7 @@ The session exposes diagnostic values such as `Status`, `TransactionId`, `Handle
 - Use optimistic locking for mostly-read workflows where retries are acceptable.
 - Use bucket prefixes when a transactional working set should stay on one partition.
 - Use range reads and range locks for ordered key spaces that can split over time.
-- Use durable commit decisions only for all-persistent write sets that need recovery after the commit decision exists.
+- Use durable commit decisions only for all-persistent write sets that need recovery after durable finalization starts.
 - Keep transaction timeouts short enough that abandoned sessions are cleaned up quickly.
 - Retry `MustRetry` with the same transaction handle and do not add more operations after finalization begins.
 - Treat `Aborted` as a business-level retry from a new transaction.

@@ -117,6 +117,7 @@ const sidebars = {
         'architecture/raft',
         'architecture/hybrid-logical-clocks',
         'architecture/durability-levels',
+        'architecture/partition-write-coalescing',
         'architecture/keys-eviction'
       ],
     },
@@ -126,6 +127,7 @@ const sidebars = {
       items: [
         'internals',
         'internals/request-flow',
+        'internals/transaction-lifecycle',
         'internals/actor-model',
         'internals/wal-and-persistence',
         'internals/backups-and-pitr',

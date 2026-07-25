@@ -8,7 +8,7 @@ Kahuna is built around a few core ideas:
 - **Actors** serialize access to in-memory state and isolate concurrency-sensitive code.
 - **Write-ahead logs** make committed Raft operations recoverable.
 - **Materialized persistence** stores locks and key/value entries so a node can avoid replaying every log forever.
-- **MVCC, write intents, and operation registration** provide transactional isolation for key/value scripts and interactive transactions.
+- **MVCC, write intents, operation registration, durable decisions, and deferred settlement** provide transactional isolation for key/value scripts and interactive transactions.
 
 ## Main Components
 
@@ -36,13 +36,14 @@ For a typical persistent key/value write:
 7. Once Raft commits the log entry, the replicator applies it to the in-memory state machine.
 8. The background writer eventually flushes the materialized entry to the persistence backend.
 
-Transactions add another layer: the `TransactionCoordinator` records confirmed reads, writes, locks, and cleanup state as the request runs. Commit and rollback close the session to new operations, drain already registered operations, freeze the server-owned working set, and then finalize from that snapshot.
+Transactions add another layer: the `TransactionCoordinator` records confirmed reads, writes, locks, and cleanup state as the request runs. Commit and rollback close the session to new operations, drain already registered operations, freeze the server-owned working set, and then finalize from that snapshot. Persistent durable transactions commit by writing a canonical transaction record and prepared intents through Raft, then settlement can finish in the background while intent-aware reads preserve visibility.
 
-For the complete flow, including reads, scripts, interactive transaction operations, durable commit decisions, and background recovery, see [Request Flow](internals/request-flow.md).
+For the complete flow, including reads, scripts, interactive transaction operations, durable-intent two-phase commit, deferred settlement, and background recovery, see [Transaction Lifecycle](internals/transaction-lifecycle.md).
 
 More detail:
 
 - [Request flow](internals/request-flow.md)
+- [Transaction lifecycle](internals/transaction-lifecycle.md)
 - [Actor model](internals/actor-model.md)
 - [WAL and persistence](internals/wal-and-persistence.md)
 - [Replication and recovery](internals/replication.md)

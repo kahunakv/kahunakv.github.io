@@ -58,7 +58,7 @@ High availability is ensured through Raft-based replication mechanisms. The syst
 
 ## Performance Optimizations
 
-While Kahuna maintains strong consistency guarantees through the Raft protocol, it also incorporates performance optimizations around batching, actor-local state, direct leader routing, background materialization, eviction, and WAL checkpointing.
+While Kahuna maintains strong consistency guarantees through the Raft protocol, it also incorporates performance optimizations around partition write coalescing, actor-local state, direct leader routing, background materialization, eviction, and WAL checkpointing.
 
 Background maintenance processes continuously perform compaction, checkpointing, eviction, and garbage collection operations to reclaim storage space and memory resources. These routines preserve performance while respecting WAL retention, snapshot holds, and durable transaction recovery metadata.
 

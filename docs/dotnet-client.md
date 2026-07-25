@@ -483,6 +483,8 @@ Request item notes:
 
 Set `Flags = KeyValueFlags.SetNoRevision` for batch cache writes where old values are not needed. Combine it with conditional flags when the write should still be guarded by existence, value, or revision checks.
 
+Persistent batch writes also benefit from [partition write coalescing](/docs/architecture/partition-write-coalescing/). Kahuna can combine direct writes for the same Raft partition into fewer Raft proposals, even when they come from different client requests. This improves bursts where keys share a bucket or key-space. It does not make a batch atomic; use a transaction when all items must commit or roll back together.
+
 ## Register a Key Range
 
 For ordered key spaces, the client also exposes `RegisterKeyRange(...)`:
@@ -770,9 +772,9 @@ await client.RetryableTransaction(txOptions, async (session, cancellationToken) 
 | `Timeout` | server default when `0` | Maximum transaction duration in milliseconds. Use short timeouts for interactive work so abandoned sessions are cleaned up quickly. |
 | `AsyncRelease` | `false` | Allows eligible post-commit cleanup to continue in the background. Leave it off when prompt lock cleanup matters. |
 | `AutoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit `Commit`. Disposal of a pending session rolls back. |
-| `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. Optimistic locking also enables validation behavior. |
-| `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction point reads. It is a snapshot view, not read-your-own-writes. |
-| `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs recovery after the commit decision has been installed. |
+| `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. Optimistic locking validates its read set at commit even when this value is `None`. |
+| `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction reads. It is a snapshot view, not read-your-own-writes, and cannot be combined with `TrackAndValidate`. |
+| `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
 
 Example with durable commit decisions:
 
@@ -814,13 +816,15 @@ if (!committed)
 Durable decision mode is different from persistent key durability:
 
 - `KeyValueDurability.Persistent` controls whether a value is replicated and stored persistently.
-- `DecisionDurability.Durable` controls whether the commit decision can be recovered after it has been installed.
+- `DecisionDurability.Durable` controls whether finalization records and prepared persistent intents can be recovered after durable finalization starts.
 
-Durable decision mode rejects transactions that confirmed ephemeral modifications, because ephemeral values and their participant receipts cannot survive process loss.
+Durable decision mode rejects transactions that confirmed ephemeral modifications, because ephemeral values, prepared intents, and receipts cannot survive process loss. The active interactive session is still memory-resident; if it disappears before a canonical record is installed, retry the business operation from a new transaction.
+
+When a durable commit returns `true`, Kahuna has durably recorded the transaction decision. By default, value materialization and prepared-intent settlement may continue in the background. Kahuna's read and write paths resolve committed-but-unsettled intents through the canonical record, and recovery finishes settlement if a background run is lost. If commit returns `false` or throws `MustRetry`, retry the same commit operation and treat it as uncertainty rather than a conflict.
 
 #### Snapshot Reads in a Transaction Session
 
-`ReadTimestamp` gives the session a transaction-wide historical read timestamp for point reads:
+`ReadTimestamp` gives the session a transaction-wide historical read timestamp for point, bucket, prefix, and range reads:
 
 ```csharp
 using Kommander.Time;
@@ -861,7 +865,7 @@ Common result meanings:
 | `AlreadyLocked` | Another transaction holds a conflicting lock. Retry through `RetryableTransaction(...)` or back off manually. |
 | `Errored` | The handle is unknown, expired, or the outcome is unavailable. Treat it as an application-level uncertainty. |
 
-Learn more about the coordinator lifecycle in [Distributed Transactions](/docs/architecture/distributed-transactions/).
+Learn more about the coordinator lifecycle in [Distributed Transactions](/docs/architecture/distributed-transactions/) and [Transaction Lifecycle](/docs/internals/transaction-lifecycle/).
 
 ## Backup and Point-in-Time Restore
 

@@ -42,7 +42,7 @@ Kahuna’s transactional engine addresses these issues by:
 | **Read Set** | The keys the server observed during latest-state reads, used for conflict detection when validation is enabled. |
 | **Operation ID** | Stable identity assigned to an interactive operation so a retry can return the same result without applying the mutation twice. |
 | **Locks** | Optional. Acquired for pessimistic or serialized transactions. Locks have expiration to prevent being held forever. |
-| **Durable Decision** | Optional recoverable commit decision for all-persistent write sets after the decision has been installed. |
+| **Durable Decision** | Optional durable-intent 2PC path for all-persistent write sets. It stores a canonical transaction record plus prepared intents so recovery can finish or presume-abort after coordinator loss. |
 
 ## Transaction API
 
@@ -164,9 +164,11 @@ end
 
 Learn more about durabilities in the [dedicated section](../architecture/durability-levels.md)
 
-Key durability is separate from transaction **decision durability**. `KeyValueDurability.Persistent` controls whether a value is replicated and stored. `DecisionDurability.Durable` controls whether an installed commit decision can be recovered if the live coordinator disappears before every participant acknowledges the commit.
+Key durability is separate from transaction **decision durability**. `KeyValueDurability.Persistent` controls whether a value is replicated and stored. `DecisionDurability.Durable` controls whether durable finalization state, including the canonical record and prepared persistent intents, can be recovered if the live coordinator disappears.
 
-Durable decision mode is useful for all-persistent write sets that need post-decision recovery. It rejects transactions that confirmed ephemeral modifications because ephemeral values and participant receipts cannot survive process loss.
+Durable decision mode is useful for all-persistent write sets that need recovery after finalization starts. It rejects transactions that confirmed ephemeral modifications because ephemeral values, prepared intents, and receipts cannot survive process loss.
+
+By default, durable commits can return success once the canonical decision record is durable. Materialization and intent settlement run in the background, and intent-aware reads, scans, and writes resolve committed-but-unsettled intents through the canonical record instead of serving stale data.
 
 ## Best Practices
 
@@ -174,7 +176,7 @@ Durable decision mode is useful for all-persistent write sets that need post-dec
 - Use **key-range routing** for large ordered spaces that may need to split over time.
 - Use **ephemeral keys** for high-speed, non-critical paths.
 - Consider **pessimistic locking** for highly contended keys to avoid retries.
-- Use **durable decisions** only when all modified keys are persistent and recovering an installed commit decision matters.
+- Use **durable decisions** only when all modified keys are persistent and recovering durable finalization matters.
 - Retry `MustRetry` with the same transaction/session handle and do not add new operations after finalization starts.
 - Monitor retries to detect **hotspots** in your workload.
 
@@ -299,8 +301,8 @@ The .NET client exposes these options on `KahunaTransactionOptions`:
 | `AsyncRelease` | `false` | Allows eligible post-commit cleanup to continue in the background. |
 | `AutoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit `Commit`. Disposal of a pending session rolls back. |
 | `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. |
-| `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction point reads. Do not combine it with `ReadValidation.TrackAndValidate`. |
-| `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs recovery after the commit decision has been installed. |
+| `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction point, bucket, range, and paginated-range reads. Do not combine it with `ReadValidation.TrackAndValidate`. |
+| `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
 
 ## Interactive Transactions
 

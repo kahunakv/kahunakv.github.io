@@ -74,30 +74,30 @@ Pass every cluster endpoint in one comma-separated connection source:
 kahuna-bench \
   -c "https://127.0.0.1:8082,https://127.0.0.1:8084,https://127.0.0.1:8086" \
   --insecure \
-  --duration 10
+  --duration 30
 ```
 
 Example output from a three-node cluster using the default mixed workload and persistent durability:
 
 ```text
-Kahuna Benchmark — mixed, 10s + 5s warmup, concurrency=64, target=unbounded
-  endpoints : https://127.0.0.1:8082, https://127.0.0.1:8084, https://127.0.0.1:8086
+Kahuna Benchmark — mixed, 30s + 5s warmup, concurrency=64, target=unbounded
+  endpoints : https://127.0.0.1:8082
   tls       : disabled (--insecure)
   key-space : 10000   value-size : 128B   durability : persistent
 Seeding key-space…
   Seeding 10,000 keys (parallelism=64)…
 Warming up for 5s…
-Running measurement for 10s…
+Running measurement for 30s…
 
-Operation    Count   req/s      p50      p90      p95      p99     p99.9       max     mean   errors   misses
-get         26,606   2,660    1.6ms    2.9ms    3.2ms    4.3ms    27.6ms   138.6ms    1.8ms        0        0
-set         26,237   2,623   19.0ms   37.1ms   43.6ms   59.0ms   161.4ms   179.2ms   22.5ms        0        0
-TOTAL       52,843   5,284    4.5ms   28.4ms   37.1ms   52.9ms   128.9ms   179.2ms   12.1ms        0        0
+Operation     Count   req/s      p50      p90      p95      p99    p99.9       max     mean   errors   misses
+get         118,219   3,940    1.5ms    2.6ms    2.7ms    2.9ms    4.5ms   134.4ms    1.7ms        0        0
+set         118,152   3,938   14.0ms   20.4ms   23.0ms   26.7ms   74.2ms   146.9ms   14.6ms        0        0
+TOTAL       236,371   7,879    6.2ms   17.8ms   20.4ms   24.8ms   34.0ms   146.9ms    8.1ms        0        0
 ```
 
-The cluster completed 52,843 operations at 5,284 requests per second without errors or misses. Reads reached a 4.3 ms p99, while persistent writes reached a 59 ms p99 because they include the replicated consensus path before success is returned.
+This persistent run completed 236,371 successful operations at 7,879 requests per second without errors or misses. Reads reached a 2.9 ms p99, while persistent writes reached a 26.7 ms p99 because they include the replicated consensus path before success is returned.
 
-This 10-second measurement is useful as a connectivity and smoke test. Use a longer measurement, such as `--warmup 10 --duration 60`, when establishing a performance baseline or comparing deployments.
+Use a longer measurement, such as `--warmup 10 --duration 60`, when establishing a performance baseline or comparing deployments.
 
 ## Workloads
 

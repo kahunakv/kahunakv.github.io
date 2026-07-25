@@ -43,7 +43,6 @@ Persistent locks queue dirty state to `BackgroundWriterActor` after committed ch
 
 - `ephemeral-keyvalue-*`
 - `persistent-keyvalue-*`
-- `proposal-keyvalue-*`
 
 `KeyValueActor` keeps an ordered in-memory B-tree of `KeyValueEntry` values. It also tracks:
 
@@ -56,11 +55,13 @@ Persistent locks queue dirty state to `BackgroundWriterActor` after committed ch
 
 Consistent-hash routing keeps operations for the same key or bucket stable across a worker set. This reduces locking inside the actor and keeps related state local.
 
-## Proposal Actors
+## Replication Submission
 
-Proposal actors prepare and submit mutations that need Raft replication. A request that changes durable state is not considered committed simply because a local actor accepted it. The proposal must be replicated and committed through Raft first.
+Persistent lock mutations still use lock proposal actors. Persistent key/value mutations use the partition write aggregator instead.
 
-This split lets the request actor remain focused on local validation and state transitions while proposal actors coordinate with Raft.
+For a direct persistent key/value write, the owning `KeyValueActor` validates the mutation, installs the replication intent, serializes the log record, and submits a compact request to the aggregator. The aggregator performs the Raft `ReplicateEntries` call off the actor mailbox and sends completion back to the owning actor.
+
+A request that changes durable state is not considered committed simply because a local actor accepted it. The mutation must be replicated and committed through Raft first.
 
 ## Transaction Coordination
 
@@ -69,7 +70,7 @@ The transaction coordinator owns transaction-wide state, but participant work st
 For interactive transactions, the coordinator records operation registration, confirmed effects, locks, read observations, finalization state, and optional durable decision metadata. Background actors handle the long-running maintenance paths:
 
 - `TransactionReaperActor` closes and rolls back abandoned sessions when it can do so safely.
-- `CoordinatorDecisionRecoveryActor` continues installed durable commit decisions on the node that currently leads the anchor partition.
+- `PreparedIntentRecoveryActor` settles or presume-aborts durable prepared intents on partitions this node currently leads.
 
 ## Background Writer
 

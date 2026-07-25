@@ -75,16 +75,30 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `KeyValueWorkers` | `Environment.ProcessorCount` | Key/value worker count. |
 | `BackgroundWriterWorkers` | `1` | Background persistence worker count. |
 | `DefaultTransactionTimeout` | `5000` | Default transaction timeout in milliseconds. |
+| `MaxTransactionTimeout` | `300000` | Maximum admitted interactive transaction timeout in milliseconds. Caller-provided timeouts are clamped to this bound. |
 | `ScriptCacheExpiration` | `1 minute` | How long parsed scripts stay cached. |
 | `RevisionsToKeepCached` | `100` | Number of key revisions to keep cached in memory. |
 | `CacheEntryTtl` | `5 minutes` | Age threshold used by lock cleanup and legacy cleanup paths. Key/value LRU eviction is budget-based. |
 | `CacheEntriesToRemove` | `1000` | Maximum entries removed by cleanup paths that use this cap. Key/value collection uses `CollectBatchMax`. |
 | `CollectionInterval` | `60 seconds` | Interval for cache collection and eviction checks. |
+| `TransactionOutcomeRetentionMax` | `10000` | Strict maximum retained terminal transaction outcomes. A non-positive value disables best-effort outcome retention. |
+| `TransactionOutcomeRetentionTtl` | `5 minutes` | Age window for retained terminal transaction outcomes. A non-positive value disables age-based removal. |
+| `DurableDecisionOutstandingMax` | `100000` | Maximum outstanding undecided canonical durable transaction records admitted by this node. Completed records do not count against this budget. |
+| `DurableDeferredSettlement` | `true` | Return from durable commit once the canonical decision record is durable, then materialize values and settle intents in the background. Set `false` to await settlement inline. |
+| `DurablePreparedIntentMaxCount` | `500000` | Resident prepared-intent count bound for durable transactions. A non-positive value disables the count bound. |
+| `DurablePreparedIntentMaxBytes` | `1073741824` | Resident prepared-intent value-byte bound for durable transactions. A non-positive value disables the byte bound. |
 | `MaxEntriesPerActor` | `50000` | Maximum cached entries per actor before collection pressure applies. |
 | `MaxBytesPerActor` | `268435456` | Approximate maximum cached bytes per actor before collection pressure applies. |
 | `CollectBatchMax` | `1000` | Maximum number of entries evicted in one collection pass. |
 | `RevisionRetention` | `16` | Number of revisions retained for in-memory revision history. |
 | `DirtyObjectsWriterDelay` | `1000` | Delay between dirty object writer flush passes, in milliseconds. Longer values can increase batching but keep dirty persistent entries pinned in memory longer. |
+| `KeyValueWriteLingerMs` | `1` | Delay from the oldest queued persistent partition write before a partition batch is proposed. `0` dispatches an idle partition immediately. |
+| `KeyValueWriteMaxBatchItems` | `512` | Maximum log entries selected for one partition write coalescing Raft call. |
+| `KeyValueWriteMaxBatchBytes` | `4194304` | Target serialized bytes selected for one partition write coalescing Raft call. |
+| `KeyValueWriteMaxQueuedItemsPerPartition` | `8192` | Maximum admitted persistent submissions per partition, including writes already in flight. |
+| `KeyValueWriteMaxQueuedBytesPerPartition` | `33554432` | Maximum admitted serialized bytes per partition, including writes already in flight. |
+| `KeyValueWriteMaxQueueDelayMs` | `1000` | Maximum pre-dispatch wait before a queued write is released as `MustRetry`. |
+| `MaxKeyValueWriteAggregatorInboxSize` | `16384` | Ordinary-submission inbox bound per aggregator lane. Control messages are exempt. |
 | `PersistentRevisionRetentionCount` | `0` | Maximum persisted revisions retained per key. `0` keeps every revision. |
 | `PersistentRevisionRetentionAge` | `0` | Maximum persisted revision age. `TimeSpan.Zero` disables age-based retention. |
 | `PersistentRevisionCleanupInterval` | `5 minutes` | Minimum interval between full persistent-revision cleanup sweeps. |
@@ -153,12 +167,25 @@ If either `Storage` or `WalStorage` is not `rocksdb`, these shared-memory option
 
 ## Code-Level Configuration
 
-Two `KahunaConfiguration` options are not currently exposed by either `Kahuna.Server` command-line flags or `EmbeddedKahunaOptions`:
+Some `KahunaConfiguration` options are not currently exposed by either `Kahuna.Server` command-line flags or `EmbeddedKahunaOptions`:
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `ScriptCacheMaxEntries` | `1000` | Maximum parsed scripts retained in the server-side script cache. New entries are dropped when the limit is reached. |
 | `RangeMergeMinSize` | `10` | Adjacent key ranges smaller than this value can be considered for automatic merging. `0` disables automatic merge. |
+| `KeyValueWriteTerminalReserveItemsPerPartition` | `256` | Extra per-partition item headroom reserved for terminal durable transaction work such as decision, materialization, settlement, recovery, and metadata handoff. |
+| `KeyValueWriteTerminalReserveBytesPerPartition` | `4194304` | Extra per-partition byte headroom reserved for terminal durable transaction work. |
+| `KeyValueWriteMaxQueuedItemsGlobal` | `131072` | Node-wide ordinary submission item cap across all partitions. |
+| `KeyValueWriteMaxQueuedBytesGlobal` | `536870912` | Node-wide ordinary submission byte cap across all partitions. |
+| `KeyValueWriteTerminalReserveItemsGlobal` | `8192` | Node-wide item headroom reserved for terminal durable transaction work. |
+| `KeyValueWriteTerminalReserveBytesGlobal` | `67108864` | Node-wide byte headroom reserved for terminal durable transaction work. |
+| `KeyValueWriteMaxOperationBytes` | `67108864` | Hard ceiling for one admitted serialized partition write. Values above the ceiling are rejected retryably. |
+| `KeyValueWriteBatchExecutionTimeoutMs` | `30000` | Maximum Raft round-trip time for one aggregator batch before the batch is released retryably. |
+| `DurableRecordGcMaxPerPass` | `4096` | Maximum terminal transaction records reclaimed in one retention sweep. |
+| `DurableRecoveryMaxPartitionsPerPass` | `64` | Maximum partitions driven by prepared-intent recovery in one sweep. |
+| `DurableDecisionDeadlineFloorMs` | `5000` | Lower clamp for the durable decision-deadline margin. |
+| `DurableDecisionDeadlineCeilingMs` | `60000` | Upper clamp for the durable decision-deadline margin. |
+| `DurableDecisionDeadlineMultiplier` | `4` | Multiplier applied to observed finalize p99 before clamping the decision-deadline margin. |
 
 `HttpsTrustedThumbprint` also exists on `KahunaConfiguration`, but it is derived from `HttpsCertificate` by configuration validation rather than being an independent operator setting.
 

@@ -120,19 +120,20 @@ The hardest moment is not commit. It is commit after the decision was made, befo
 
 For persistent data, Kahuna can offer an opt-in durable decision mode.
 
-Before sending the first commit command to a participant, the coordinator replicates the decision. Each participant records a durable completion receipt together with the committed value. The coordinator records acknowledgement progress and can keep retrying unfinished participants after a restart or leadership change.
+Before resolving participant writes, the coordinator initializes a canonical transaction record, replicates prepared intents for each persistent key, validates the read set, and then decides the record as `Commit` or `Abort`. Recovery can later resolve unfinished intents from that record after a restart or leadership change.
 
 The order is the guarantee:
 
-1. The participant commits the value and receipt.
-2. The coordinator records the acknowledgement.
-3. The participant may forget the receipt.
+1. The canonical transaction record is initialized as `Undecided`.
+2. Prepared intents are replicated on participant partitions.
+3. The canonical record is decided as `Commit` or `Abort`.
+4. Participants materialize committed values with completion receipts, or discard aborted intents.
 
 That prevents an old retry from turning “already committed” into “unknown.”
 
 This mode costs more coordination, so it should not be the default for every workload. It also cannot cover ephemeral values. If data only lives in memory, a durable commit decision cannot make that memory survive a process loss.
 
-It also does not make every intermediate state durable. The interactive session before the commit decision still lives in memory. Prepared participant state is not made durable by this change. If a participant loses leadership after prepare but before commit, the honest answer may be “retry,” not “we know exactly what happened.”
+It also does not make every intermediate state durable. The interactive session before durable finalization still lives in memory. Once prepared persistent intents exist, participant leader changes do not lose staged values; recovery can resolve them from the canonical record. If the coordinator disappears before the record exists, the honest answer may still be “retry,” not “we know exactly what happened.”
 
 That honesty is part of the design.
 

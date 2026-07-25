@@ -94,16 +94,25 @@ A retryable finalization failure can release the attempt slot for another commit
 
 ## Two-Phase Commit
 
-For multi-key transactions, Kahuna uses a prepare/commit protocol:
+For multi-key transactions, Kahuna uses a prepare/commit protocol. The concrete path depends on the frozen working set:
+
+| Working set | Commit path |
+|---|---|
+| Read-only | No prepare round is needed. |
+| All ephemeral | Commit in memory. |
+| All persistent | Durable-intent two-phase commit. |
+| Mixed | Prepare ephemeral mutations first, then let the persistent durable decision drive ephemeral commit or rollback. |
+
+The general lifecycle is:
 
 1. Start the transaction and assign a transaction ID.
 2. Read and write through participant leaders.
-3. Fold confirmed effects into the coordinator working set.
-4. Close the transaction to new operations before finalization.
-5. Acquire locks or validate observations depending on locking mode.
+3. Stage writes as MVCC entries and write intents.
+4. Fold confirmed effects into the coordinator working set.
+5. Close the transaction to new operations before finalization.
 6. Prepare mutations on all participant partitions.
-7. Commit if every participant is ready.
-8. Roll back if any participant fails before the commit decision becomes irreversible.
+7. Validate reads when the policy requires it.
+8. Decide commit or abort.
 9. Release locks and clean up transaction state.
 
 The transaction commits only when all participants commit. Otherwise, Kahuna rolls back prepared mutations so partial updates do not become visible.
@@ -112,21 +121,27 @@ Read-only transactions can commit without a prepare round.
 
 ## Durable Commit Decisions
 
-Best-effort transactions keep terminal outcomes in memory for a bounded idempotency window. Durable decision mode adds recovery after a commit decision has been installed for an all-persistent write set.
+Best-effort transactions keep terminal outcomes in memory for a bounded idempotency window. Durable decision mode adds durable-intent 2PC for all-persistent write sets.
 
-The first confirmed persistent modified key becomes the record anchor. The coordinator prepares the anchor with an embedded decision record, commits the anchor first, then commits the remaining participants and advances acknowledgement progress on the anchored decision record.
+The first confirmed persistent modified key becomes the record anchor. The coordinator initializes a canonical transaction record on that anchor partition, prepares the anchor partition's intents in the same ordered proposal when possible, replicates prepared intents for every other modified persistent partition, validates reads, then compare-and-sets the canonical record to `Commit` or `Abort`.
 
 Persistent participants store completion receipts when committed values are applied. Recovery uses those receipts to distinguish "already committed" from "unknown" after original intents are gone.
 
-The ordering is:
+The durable commit ordering is:
 
 ```text
-participant value and receipt committed
-  -> participant acknowledgement persisted on the decision record
-  -> receipt may be forgotten
+prepare durable intents
+  -> decide canonical record
+  -> return Committed when deferred settlement is enabled
+  -> materialize committed values with receipts
+  -> settle prepared intents
 ```
 
-Durable decision mode does not persist the active interactive session or participant prepare state. If the coordinator disappears before the anchor decision is installed, the session is lost like a best-effort transaction. Ephemeral modified keys are rejected because their values and receipts cannot survive process loss.
+Durable decision mode does not persist the active interactive session. If the coordinator disappears before a canonical record is installed, the session is lost like a best-effort transaction. Once prepared intents exist, participant leader changes do not lose the staged value; recovery can resolve the intents from the canonical record. Ephemeral modified keys are rejected in durable mode because their values, intents, and receipts cannot survive process loss.
+
+With default deferred settlement, a committed transaction can return before materialization and settlement finish. While a committed intent is still pending, point reads, scans, and writes consult the canonical record, locally or by routing to the anchor leader, and resolve the intent without serving the stale previous value.
+
+For the end-to-end path, see [Transaction Lifecycle](/docs/internals/transaction-lifecycle/).
 
 ## Revisions and Snapshots
 
