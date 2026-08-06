@@ -2,11 +2,121 @@
 <feed xmlns="http://www.w3.org/2005/Atom">
     <id>https://kahunakv.github.io/blog/</id>
     <title>Kahuna Blog</title>
-    <updated>2026-07-11T00:00:00.000Z</updated>
+    <updated>2026-08-06T00:00:00.000Z</updated>
     <generator>https://github.com/jpmonette/feed</generator>
     <link rel="alternate" href="https://kahunakv.github.io/blog/"/>
     <subtitle>Kahuna Blog</subtitle>
     <icon>https://kahunakv.github.io/img/favicon.ico</icon>
+    <entry>
+        <title type="html"><![CDATA[Breaking Kahuna on Purpose with Jepsen]]></title>
+        <id>https://kahunakv.github.io/blog/jepsen-testing-kahuna/</id>
+        <link href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/"/>
+        <updated>2026-08-06T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[Distributed systems usually look reliable when everything is healthy. The network is fast, every server is online, and requests arrive in a convenient order.]]></summary>
+        <content type="html"><![CDATA[<p>Distributed systems usually look reliable when everything is healthy. The network is fast, every server is online, and requests arrive in a convenient order.</p>
+<p>But what happens when a server loses contact with the rest of the cluster? What if a process stops while handling a request? What if Kahuna saves a value, but the reply never reaches the client?</p>
+<p>We recently added a public <a href="https://github.com/kahunakv/kahuna-jepsen" target="_blank" rel="noopener noreferrer" class="">Jepsen test suite for Kahuna</a> to explore these difficult situations. It creates real Kahuna clusters, sends many requests at the same time, and introduces failures on purpose. It then checks whether Kahuna still keeps its promises.</p>
+<p>Our goal is not only to see green test results. We want to find rare problems, understand them, and make sure they do not return.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-is-jepsen">What Is Jepsen?<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#what-is-jepsen" class="hash-link" aria-label="Direct link to What Is Jepsen?" title="Direct link to What Is Jepsen?" translate="no">​</a></h2>
+<p><a href="https://github.com/jepsen-io/jepsen" target="_blank" rel="noopener noreferrer" class="">Jepsen</a> is a testing framework for distributed systems. It records everything that happens during a test: when each request starts, when it finishes, what result it returns, and which failures happen at the same time.</p>
+<p>Jepsen also runs a special process called a nemesis. The name sounds dramatic, but its job is simple: create trouble. It can split the network, stop servers, pause processes, and later bring everything back.</p>
+<p>At the end, Jepsen studies the complete history and asks an important question: can all these results be explained without breaking the system's guarantees?</p>
+<p>This is more powerful than checking HTTP status codes. Imagine that a client sends a write, Kahuna commits it, and the network loses the reply. The client sees a timeout, but the write may still exist. Jepsen keeps this uncertainty in its analysis instead of guessing that the write failed.</p>
+<p>Our tests run against a five-node Kahuna cluster. Client requests use a different network port from the internal Raft communication. This allows us to interrupt replication between servers while clients can still send requests and observe the results.</p>
+<p>The nightly tests use several kinds of failure:</p>
+<ul>
+<li class="">Network partitions separate some nodes from the others.</li>
+<li class="">Process kills stop servers immediately.</li>
+<li class="">Process pauses freeze a server without closing its connections.</li>
+<li class="">Membership changes remove a server from the cluster and add it again as a fresh member.</li>
+</ul>
+<p>These situations create the timing problems that are almost impossible to reproduce with normal tests.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="four-workloads-four-promises">Four Workloads, Four Promises<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#four-workloads-four-promises" class="hash-link" aria-label="Direct link to Four Workloads, Four Promises" title="Direct link to Four Workloads, Four Promises" translate="no">​</a></h2>
+<p>There is no single test for all distributed-system behavior. A key/value store, a lock, a transaction, and a sequence generator each promise something different. Our suite therefore has four workloads.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="keyvalue-operations-behave-like-one-correct-copy">Key/value operations behave like one correct copy<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#keyvalue-operations-behave-like-one-correct-copy" class="hash-link" aria-label="Direct link to Key/value operations behave like one correct copy" title="Direct link to Key/value operations behave like one correct copy" translate="no">​</a></h3>
+<p>The register workload sends reads, writes, and compare-and-set operations to different nodes.</p>
+<p>Compare-and-set means “change the value only if it still equals the value I expect.” For example, two clients may both try to change a value from 4 to 5. Only an operation based on the current value should succeed.</p>
+<p>Jepsen uses a checker called Knossos to test each key for <a href="https://jepsen.io/consistency/models/linearizable" target="_blank" rel="noopener noreferrer" class="">linearizability</a>. The word is technical, but the main idea is friendly: even though many servers and clients are involved, each successful operation should look as if it happened at one exact moment on one correct copy of the data.</p>
+<p>Real-time order also matters. If a write finishes before a new read begins, the read must not return an older value.</p>
+<p>This workload can catch an isolated server that still thinks it is the leader and returns stale data as if it were current.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="locks-keep-owners-apart-and-tokens-moving-forward">Locks keep owners apart and tokens moving forward<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#locks-keep-owners-apart-and-tokens-moving-forward" class="hash-link" aria-label="Direct link to Locks keep owners apart and tokens moving forward" title="Direct link to Locks keep owners apart and tokens moving forward" translate="no">​</a></h3>
+<p>Kahuna locks use leases. A lease gives a client the lock for a limited time. If that client crashes, the lock can expire and another client can continue. Without expiration, one crashed client could block a resource forever.</p>
+<p>Leases also create a challenge. An old client may wake up after its lease has expired and still believe it owns the lock. Kahuna uses fencing tokens to protect other systems from this old owner. Every new owner receives a newer token, so a database or service can reject commands carrying an older one.</p>
+<p>The lock workload checks two promises:</p>
+<ul>
+<li class="">Two different owners must not definitely hold the same valid lease at the same time.</li>
+<li class="">Fencing tokens must never go backwards, and a new owner must receive a higher token.</li>
+</ul>
+<p>The checker understands that leases expire. It does not report a problem when an overlap can be explained by normal expiration or by a release whose reply was lost.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="transactions-behave-like-a-safe-serial-order">Transactions behave like a safe serial order<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#transactions-behave-like-a-safe-serial-order" class="hash-link" aria-label="Direct link to Transactions behave like a safe serial order" title="Direct link to Transactions behave like a safe serial order" translate="no">​</a></h3>
+<p>The transaction workload runs interactive transactions that read lists and append unique values across several keys.</p>
+<p>It uses a checker called Elle. Elle studies the relationships between transactions and looks for cycles that should be impossible. In simpler terms, it asks whether the completed transactions could have run one after another in some valid order, even though they actually ran at the same time.</p>
+<p>This test can find problems that single-key checks cannot see:</p>
+<ul>
+<li class="">A lost update, where one successful write silently replaces another.</li>
+<li class="">An aborted read, where data from a failed transaction becomes visible.</li>
+<li class="">A dirty update, where a transaction builds on data that should never have committed.</li>
+<li class="">Write skew, where two transactions make decisions from old information and together break the expected ordering.</li>
+</ul>
+<p>These bugs are difficult because each request may look correct by itself. The problem only becomes visible when we study the whole transaction history.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="sequences-never-give-the-same-value-to-two-clients">Sequences never give the same value to two clients<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#sequences-never-give-the-same-value-to-two-clients" class="hash-link" aria-label="Direct link to Sequences never give the same value to two clients" title="Direct link to Sequences never give the same value to two clients" translate="no">​</a></h3>
+<p>Kahuna's sequencer can return one number or reserve a range of numbers. Clients can also retry a request with the same idempotency key. An idempotency key tells the server, “this is the same logical request again, not a new one.”</p>
+<p>The sequencer workload checks that:</p>
+<ul>
+<li class="">Two successful allocations never contain the same value.</li>
+<li class="">A reserved range has the size requested by the client.</li>
+<li class="">Retrying with the same idempotency key returns the original allocation.</li>
+</ul>
+<p>The test allows gaps and values that arrive out of order. This is intentional. Kahuna gives nodes blocks of values that they can allocate quickly. A leader change may leave part of a block unused, creating a gap. That is safe because the important promise is uniqueness, not a perfect sequence with no missing numbers.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-does-a-green-result-mean">What Does a Green Result Mean?<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#what-does-a-green-result-mean" class="hash-link" aria-label="Direct link to What Does a Green Result Mean?" title="Direct link to What Does a Green Result Mean?" translate="no">​</a></h2>
+<p>A green Jepsen result is strong evidence, but it is not a mathematical proof that every possible execution is correct.</p>
+<p>It means that, for the requests, load, configuration, duration, and failures in that run, the checker found no broken guarantee. Another timing pattern may still reveal a rare bug. This is why we repeat tests with different request rates and shorter or longer periods between failures.</p>
+<p>We also need to test the testers. During this work, our lock checker reported mutual-exclusion problems that did not really happen. It extended a client's lock period after a release reply was lost. We corrected the logic and added small test histories with known good and bad results. These negative controls prove that the checker can still detect a real violation.</p>
+<p>An empty test is not a successful test either. If no transaction commits, there is nothing useful to analyze. If the sequencer returns too few values, its result is unknown. If the linearizability checker runs out of memory before it finishes, that result is also unknown—not green.</p>
+<p>Being honest about these limits is an important part of reliable testing.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-tests-have-already-helped">The Tests Have Already Helped<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#the-tests-have-already-helped" class="hash-link" aria-label="Direct link to The Tests Have Already Helped" title="Direct link to The Tests Have Already Helped" translate="no">​</a></h2>
+<p>The new suite started finding useful problems almost immediately.</p>
+<p>The key/value workload found stale reads from a node that was separated from the majority. The node refused writes because it could not replicate them, which was correct. However, it still returned old values for reads as normal successful responses. Kahuna now confirms its leadership with the cluster before serving this kind of local read.</p>
+<p>The lock workload found fencing tokens moving backwards after leader changes. One issue involved committed data during a restart. Another involved a new leader reading state before pending storage work was fully available. These failures needed a specific combination of timing and leadership changes, which made them difficult to find with ordinary tests.</p>
+<p>The transaction workload found lost updates and data from aborted transactions becoming visible. It also found write skew in a mode where read validation should stop it. These investigations improved how Kahuna validates read-modify-write operations and how it records the final result when commit and rollback compete.</p>
+<p>Jepsen also found less obvious problems. Some temporary network failures escaped as HTTP 500 responses instead of asking the client to retry. Some runs looked clean only because no useful operation finished. We even found a bug in our own lock checker.</p>
+<p>Finding a checker bug is not wasted time. The test suite is software too, and we must verify its assumptions with the same care that we apply to Kahuna.</p>
+<p>Every run keeps its history, timeline, latency charts, result details, and server logs. This gives us evidence that connects a visible failure to a particular event in the cluster. It is much more useful than a message that only says “the test failed.”</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-it-runs-nightly">Why It Runs Nightly<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#why-it-runs-nightly" class="hash-link" aria-label="Direct link to Why It Runs Nightly" title="Direct link to Why It Runs Nightly" translate="no">​</a></h2>
+<p>The Jepsen suite runs every night and can also be started manually against a selected version of Kahuna. Different jobs combine the four workloads with different failures. Membership testing runs for longer because removing and safely adding a cluster member can take one or two minutes.</p>
+<p>We do not plan to make Jepsen a required check for every pull request. These tests are expensive and intentionally unpredictable. A slow shared runner can create extra timeouts and a history that is too large to analyze. A noisy required check soon becomes a check that everybody ignores.</p>
+<p>A failed nightly run asks us to download the artifacts and investigate. A clean run adds more confidence. Neither one replaces unit tests, focused regression tests, code review, or performance benchmarks.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-comes-next">What Comes Next?<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#what-comes-next" class="hash-link" aria-label="Direct link to What Comes Next?" title="Direct link to What Comes Next?" translate="no">​</a></h2>
+<p>The next major workload will focus on snapshot reads. A snapshot lets a transaction read data as it existed at an earlier logical time, while new writes continue in the cluster. We want to verify that the old view stays stable and that snapshot holds protect the required history correctly.</p>
+<p>Clock faults are another important area. Kahuna uses hybrid logical clocks for snapshots and lock leases. Moving time inside Docker Desktop can affect the whole virtual machine, so we will run these experiments on disposable Linux hosts where the clock changes are isolated.</p>
+<p>We have also added a recovery checker. It measures the time between the end of a failure and the first successful request. This helps us separate two questions:</p>
+<ul>
+<li class="">Is the cluster returning incorrect results?</li>
+<li class="">Is the cluster correct but taking too long to become available again?</li>
+</ul>
+<p>We need more recovery data from runs where transactions make no progress. This will show whether the failure schedule is faster than normal recovery or whether the cluster sometimes gets stuck while finding a leader.</p>
+<p>Other follow-up work includes handling one remaining retryable HTTP/2 error correctly, gathering more evidence for the new sequencer workload, testing membership changes with more workloads, and trying different levels of load and fault timing.</p>
+<p>When Jepsen discovers a bug, we also want to create a smaller and more predictable regression test whenever possible. Jepsen is excellent at finding a surprising order of events. A focused test is better for checking that the same bug never returns.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="better-confidence-starts-with-better-questions">Better Confidence Starts with Better Questions<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#better-confidence-starts-with-better-questions" class="hash-link" aria-label="Direct link to Better Confidence Starts with Better Questions" title="Direct link to Better Confidence Starts with Better Questions" translate="no">​</a></h2>
+<p>Jepsen does not make Kahuna correct on its own. It helps us ask better questions:</p>
+<ul>
+<li class="">Can an isolated leader return old data as current?</li>
+<li class="">Can a fencing token move backwards after a restart?</li>
+<li class="">Can two transactions commit when no safe order can explain both?</li>
+<li class="">Can a sequence value be returned twice after a lost reply?</li>
+<li class="">How long does the cluster need to recover after a failure?</li>
+</ul>
+<p>These questions tell us much more than “did the servers stay online?”</p>
+<p>Kahuna is a coordination system, so its behavior during uncertainty is essential. By breaking the cluster on purpose and carefully checking what happened, we can turn difficult failure scenarios into useful evidence—and use that evidence to keep improving Kahuna.</p>]]></content>
+        <author>
+            <name>Andres Gutierrez</name>
+            <uri>https://github.com/andresgutierrez</uri>
+        </author>
+        <category label="kahuna" term="kahuna"/>
+        <category label="jepsen" term="jepsen"/>
+        <category label="testing" term="testing"/>
+        <category label="distributed-systems" term="distributed-systems"/>
+    </entry>
     <entry>
         <title type="html"><![CDATA[Making Distributed Transactions Easier to Trust]]></title>
         <id>https://kahunakv.github.io/blog/reusable-transaction-coordinator/</id>
