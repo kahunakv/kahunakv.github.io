@@ -22,26 +22,26 @@
 <p>Jepsen also runs a special process called a nemesis. The name sounds dramatic, but its job is simple: create trouble. It can split the network, stop servers, pause processes, and later bring everything back.</p>
 <p>At the end, Jepsen studies the complete history and asks an important question: can all these results be explained without breaking the system's guarantees?</p>
 <p>This is more powerful than checking HTTP status codes. Imagine that a client sends a write, Kahuna commits it, and the network loses the reply. The client sees a timeout, but the write may still exist. Jepsen keeps this uncertainty in its analysis instead of guessing that the write failed.</p>
-<p>Our tests run against a five-node Kahuna cluster. Client requests use a different network port from the internal Raft communication. This allows us to interrupt replication between servers while clients can still send requests and observe the results.</p>
+<p>Our tests run against a five-node Kahuna cluster. Client requests use a different network port from the internal <a class="" href="https://kahunakv.github.io/docs/architecture/raft/">Raft communication</a>. This allows us to interrupt replication between servers while clients can still send requests and observe the results.</p>
 <p>The nightly tests use several kinds of failure:</p>
 <ul>
 <li class="">Network partitions separate some nodes from the others.</li>
 <li class="">Process kills stop servers immediately.</li>
 <li class="">Process pauses freeze a server without closing its connections.</li>
-<li class="">Membership changes remove a server from the cluster and add it again as a fresh member.</li>
+<li class=""><a class="" href="https://kahunakv.github.io/docs/server-configuration/#raft-membership-and-catch-up">Membership changes</a> remove a server from the cluster and add it again as a fresh member.</li>
 </ul>
 <p>These situations create the timing problems that are almost impossible to reproduce with normal tests.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="four-workloads-four-promises">Four Workloads, Four Promises<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#four-workloads-four-promises" class="hash-link" aria-label="Direct link to Four Workloads, Four Promises" title="Direct link to Four Workloads, Four Promises" translate="no">​</a></h2>
 <p>There is no single test for all distributed-system behavior. A key/value store, a lock, a transaction, and a sequence generator each promise something different. Our suite therefore has four workloads.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="keyvalue-operations-behave-like-one-correct-copy">Key/value operations behave like one correct copy<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#keyvalue-operations-behave-like-one-correct-copy" class="hash-link" aria-label="Direct link to Key/value operations behave like one correct copy" title="Direct link to Key/value operations behave like one correct copy" translate="no">​</a></h3>
-<p>The register workload sends reads, writes, and compare-and-set operations to different nodes.</p>
+<p>The register workload sends reads, writes, and compare-and-set operations to different nodes in Kahuna's <a class="" href="https://kahunakv.github.io/docs/distributed-keyvalue-store/">distributed key/value store</a>.</p>
 <p>Compare-and-set means “change the value only if it still equals the value I expect.” For example, two clients may both try to change a value from 4 to 5. Only an operation based on the current value should succeed.</p>
 <p>Jepsen uses a checker called Knossos to test each key for <a href="https://jepsen.io/consistency/models/linearizable" target="_blank" rel="noopener noreferrer" class="">linearizability</a>. The word is technical, but the main idea is friendly: even though many servers and clients are involved, each successful operation should look as if it happened at one exact moment on one correct copy of the data.</p>
 <p>Real-time order also matters. If a write finishes before a new read begins, the read must not return an older value.</p>
 <p>This workload can catch an isolated server that still thinks it is the leader and returns stale data as if it were current.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="locks-keep-owners-apart-and-tokens-moving-forward">Locks keep owners apart and tokens moving forward<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#locks-keep-owners-apart-and-tokens-moving-forward" class="hash-link" aria-label="Direct link to Locks keep owners apart and tokens moving forward" title="Direct link to Locks keep owners apart and tokens moving forward" translate="no">​</a></h3>
-<p>Kahuna locks use leases. A lease gives a client the lock for a limited time. If that client crashes, the lock can expire and another client can continue. Without expiration, one crashed client could block a resource forever.</p>
-<p>Leases also create a challenge. An old client may wake up after its lease has expired and still believe it owns the lock. Kahuna uses fencing tokens to protect other systems from this old owner. Every new owner receives a newer token, so a database or service can reject commands carrying an older one.</p>
+<p><a class="" href="https://kahunakv.github.io/docs/distributed-locks/">Kahuna locks</a> use <a class="" href="https://kahunakv.github.io/docs/distributed-locks/leases/">leases</a>. A lease gives a client the lock for a limited time. If that client crashes, the lock can expire and another client can continue. Without expiration, one crashed client could block a resource forever.</p>
+<p>Leases also create a challenge. An old client may wake up after its lease has expired and still believe it owns the lock. Kahuna uses <a class="" href="https://kahunakv.github.io/docs/distributed-locks/fencing-tokens/">fencing tokens</a> to protect other systems from this old owner. Every new owner receives a newer token, so a database or service can reject commands carrying an older one.</p>
 <p>The lock workload checks two promises:</p>
 <ul>
 <li class="">Two different owners must not definitely hold the same valid lease at the same time.</li>
@@ -49,7 +49,7 @@
 </ul>
 <p>The checker understands that leases expire. It does not report a problem when an overlap can be explained by normal expiration or by a release whose reply was lost.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="transactions-behave-like-a-safe-serial-order">Transactions behave like a safe serial order<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#transactions-behave-like-a-safe-serial-order" class="hash-link" aria-label="Direct link to Transactions behave like a safe serial order" title="Direct link to Transactions behave like a safe serial order" translate="no">​</a></h3>
-<p>The transaction workload runs interactive transactions that read lists and append unique values across several keys.</p>
+<p>The transaction workload runs <a class="" href="https://kahunakv.github.io/docs/distributed-keyvalue-store/transactions/">interactive transactions</a> that read lists and append unique values across several keys.</p>
 <p>It uses a checker called Elle. Elle studies the relationships between transactions and looks for cycles that should be impossible. In simpler terms, it asks whether the completed transactions could have run one after another in some valid order, even though they actually ran at the same time.</p>
 <p>This test can find problems that single-key checks cannot see:</p>
 <ul>
@@ -60,7 +60,7 @@
 </ul>
 <p>These bugs are difficult because each request may look correct by itself. The problem only becomes visible when we study the whole transaction history.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="sequences-never-give-the-same-value-to-two-clients">Sequences never give the same value to two clients<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#sequences-never-give-the-same-value-to-two-clients" class="hash-link" aria-label="Direct link to Sequences never give the same value to two clients" title="Direct link to Sequences never give the same value to two clients" translate="no">​</a></h3>
-<p>Kahuna's sequencer can return one number or reserve a range of numbers. Clients can also retry a request with the same idempotency key. An idempotency key tells the server, “this is the same logical request again, not a new one.”</p>
+<p>Kahuna's <a class="" href="https://kahunakv.github.io/docs/distributed-sequencer/">distributed sequencer</a> can return one number or reserve a range of numbers. Clients can also retry a request with the same <a class="" href="https://kahunakv.github.io/docs/distributed-sequencer/idempotency/">idempotency key</a>. An idempotency key tells the server, “this is the same logical request again, not a new one.”</p>
 <p>The sequencer workload checks that:</p>
 <ul>
 <li class="">Two successful allocations never contain the same value.</li>
@@ -85,11 +85,11 @@
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-it-runs-nightly">Why It Runs Nightly<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#why-it-runs-nightly" class="hash-link" aria-label="Direct link to Why It Runs Nightly" title="Direct link to Why It Runs Nightly" translate="no">​</a></h2>
 <p>The Jepsen suite runs every night and can also be started manually against a selected version of Kahuna. Different jobs combine the four workloads with different failures. Membership testing runs for longer because removing and safely adding a cluster member can take one or two minutes.</p>
 <p>We do not plan to make Jepsen a required check for every pull request. These tests are expensive and intentionally unpredictable. A slow shared runner can create extra timeouts and a history that is too large to analyze. A noisy required check soon becomes a check that everybody ignores.</p>
-<p>A failed nightly run asks us to download the artifacts and investigate. A clean run adds more confidence. Neither one replaces unit tests, focused regression tests, code review, or performance benchmarks.</p>
+<p>A failed nightly run asks us to download the artifacts and investigate. A clean run adds more confidence. Neither one replaces unit tests, focused regression tests, code review, or <a class="" href="https://kahunakv.github.io/docs/benchmarking/">performance benchmarks</a>.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-comes-next">What Comes Next?<a href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/#what-comes-next" class="hash-link" aria-label="Direct link to What Comes Next?" title="Direct link to What Comes Next?" translate="no">​</a></h2>
-<p>The next major workload will focus on snapshot reads. A snapshot lets a transaction read data as it existed at an earlier logical time, while new writes continue in the cluster. We want to verify that the old view stays stable and that snapshot holds protect the required history correctly.</p>
-<p>Clock faults are another important area. Kahuna uses hybrid logical clocks for snapshots and lock leases. Moving time inside Docker Desktop can affect the whole virtual machine, so we will run these experiments on disposable Linux hosts where the clock changes are isolated.</p>
-<p>We have also added a recovery checker. It measures the time between the end of a failure and the first successful request. This helps us separate two questions:</p>
+<p>The next major workload will focus on <a class="" href="https://kahunakv.github.io/docs/distributed-keyvalue-store/snapshot-holds/">snapshot reads and snapshot holds</a>. A snapshot lets a transaction read data as it existed at an earlier logical time, while new writes continue in the cluster. We want to verify that the old view stays stable and that snapshot holds protect the required <a class="" href="https://kahunakv.github.io/docs/internals/mvcc/">MVCC history</a> correctly.</p>
+<p>Clock faults are another important area. Kahuna uses <a class="" href="https://kahunakv.github.io/docs/architecture/hybrid-logical-clocks/">hybrid logical clocks</a> for snapshots and lock leases. Moving time inside Docker Desktop can affect the whole virtual machine, so we will run these experiments on disposable Linux hosts where the clock changes are isolated.</p>
+<p>We have also added a recovery checker. It measures the time between the end of a failure and the first successful request, adding another view of Kahuna's <a class="" href="https://kahunakv.github.io/docs/internals/replication/">replication and recovery behavior</a>. This helps us separate two questions:</p>
 <ul>
 <li class="">Is the cluster returning incorrect results?</li>
 <li class="">Is the cluster correct but taking too long to become available again?</li>
