@@ -5,8 +5,8 @@
 <meta name="generator" content="Docusaurus v3.10.2">
 <title data-rh="true">Distributed Key/Value Store | Kahuna</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://kahunakv.github.io/img/kahuna-social-card.png"><meta data-rh="true" name="twitter:image" content="https://kahunakv.github.io/img/kahuna-social-card.png"><meta data-rh="true" property="og:url" content="https://kahunakv.github.io/docs/distributed-keyvalue-store/"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Distributed Key/Value Store | Kahuna"><meta data-rh="true" name="description" content="A distributed key/value store is a type of database system designed to store, retrieve, and manage data across multiple nodes in a cluster or distributed environment. It follows a simple key-value data model, where keys are unique identifiers, and values are arbitrary byte stream associated data objects."><meta data-rh="true" property="og:description" content="A distributed key/value store is a type of database system designed to store, retrieve, and manage data across multiple nodes in a cluster or distributed environment. It follows a simple key-value data model, where keys are unique identifiers, and values are arbitrary byte stream associated data objects."><link data-rh="true" rel="icon" href="/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://kahunakv.github.io/docs/distributed-keyvalue-store/"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/distributed-keyvalue-store/" hreflang="en"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/distributed-keyvalue-store/" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Distributed Key/Value Store","item":"https://kahunakv.github.io/docs/distributed-keyvalue-store"}]}</script><link rel="alternate" type="application/rss+xml" href="/blog/rss.xml" title="Kahuna RSS Feed">
 <link rel="alternate" type="application/atom+xml" href="/blog/atom.xml" title="Kahuna Atom Feed"><link rel="stylesheet" href="/assets/css/styles.c0a02c08.css">
-<script src="/assets/js/runtime~main.d7aa83a6.js" defer="defer"></script>
-<script src="/assets/js/main.1ab4ad3b.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.0d632e12.js" defer="defer"></script>
+<script src="/assets/js/main.115a4aa1.js" defer="defer"></script>
 </head>
 <body>
 <svg style="display: none;"><defs>
@@ -45,7 +45,7 @@
 </ul>
 <p>These features make Kahuna a great solution for small transactional workloads requiring <strong>data integrity, consistency, and high availability</strong>.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="revisions">Revisions<a href="#revisions" class="hash-link" aria-label="Direct link to Revisions" title="Direct link to Revisions" translate="no">​</a></h2>
-<p>In Kahuna, a <a class="" href="/docs/distributed-keyvalue-store/revisions/">revision</a> is a monotonic version number for a key. Updates advance the key&#x27;s revision. Deletes mark the key as deleted and report the current revision. Revisions are useful for compare-revision updates, debugging, and historical reads.</p>
+<p>In Kahuna, a <a class="" href="/docs/distributed-keyvalue-store/revisions/">revision</a> is a monotonic version number for a key. Updates advance the key&#x27;s revision. Deletes also advance the revision by writing a tombstone revision, which keeps pre-delete historical reads and PITR exact. Revisions are useful for compare-revision updates, debugging, and historical reads.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="routing-model">Routing Model<a href="#routing-model" class="hash-link" aria-label="Direct link to Routing Model" title="Direct link to Routing Model" translate="no">​</a></h2>
 <p>Kahuna supports two routing models for key/value data:</p>
 <ul>
@@ -175,7 +175,7 @@ the node is visited. It can contain stale data. This API is slow because it scan
 <li class=""><strong>durability:</strong> Defines whether the key durability is <strong>Ephemeral</strong> or <strong>Persistent</strong>.</li>
 </ul><p><strong>Returns:</strong></p><ul>
 <li class=""><strong>Success:</strong> <code>true</code> if the key/value pair was deleted.</li>
-<li class=""><strong>Revision:</strong> The key&#x27;s current revision at the time of deletion. Deleting a key does <strong>not</strong> increment the revision counter.</li>
+<li class=""><strong>Revision:</strong> The tombstone revision created by the delete. For example, deleting a key at revision <code>0</code> returns revision <code>1</code>, and the next successful set returns revision <code>2</code>.</li>
 </ul></div></div></div>
 <hr>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="extend">Extend<a href="#extend" class="hash-link" aria-label="Direct link to Extend" title="Direct link to Extend" translate="no">​</a></h3>
