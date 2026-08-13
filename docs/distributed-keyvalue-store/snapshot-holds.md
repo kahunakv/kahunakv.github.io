@@ -84,6 +84,8 @@ Inspect the current floor:
     await client.GetSnapshotFloor();
 ```
 
+`GetSnapshotFloor()` only returns an authoritative floor. If the node cannot confirm the system-partition leader, the client receives a `KahunaException` with `KeyValueErrorCode == KeyValueResponseType.MustRetry` instead of a misleading zero-floor response.
+
 `AcquireSnapshotHold(holderId, timestamp, leaseMs)` is idempotent for the same `(holderId, timestamp)` pair. Calling it again returns the same hold id and renews the lease.
 
 ## REST Endpoints
@@ -95,7 +97,7 @@ Kahuna also exposes the hold API over REST:
 | `POST /v1/kv/snapshot-hold/acquire` | Acquire or renew a hold by `(holderId, timestamp)`. |
 | `POST /v1/kv/snapshot-hold/renew` | Renew an existing hold by `holdId`. |
 | `POST /v1/kv/snapshot-hold/release` | Release an existing hold by `holdId`. |
-| `GET /v1/kv/snapshot-floor` | Return the effective floor and live hold count. |
+| `GET /v1/kv/snapshot-floor` | Return the authoritative effective floor and live hold count, or a retryable response when leadership cannot be confirmed. |
 
 `leaseMs` must be greater than zero. Invalid or expired holds return a key/value response type instead of pinning history.
 

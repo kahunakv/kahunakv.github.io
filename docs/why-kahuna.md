@@ -59,6 +59,7 @@ These features share the same replication, persistence, routing, and client mode
 | Native .NET client | Async APIs, cancellation, transactions, and multiple endpoints fit normal .NET services. |
 | REST, gRPC, CLI, and scripts | Applications and operators can choose the appropriate interface. |
 | Hash and key-range routing | Support both general coordination keys and ordered, scan-heavy key spaces. |
+| Jepsen-tested correctness | Public Jepsen workloads exercise key/value registers, locks, interactive transactions, sequences, and membership churn under faults. |
 | MIT license | Use, modify, and redistribute Kahuna without proprietary runtime fees. |
 
 ## Replacing a Cache and Database for Small State

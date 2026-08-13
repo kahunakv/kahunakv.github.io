@@ -71,7 +71,7 @@ Durable transaction recovery metadata participates in this ordering. Transaction
 
 Point-in-time recovery intentionally keeps committed WAL entries beyond the latest materialized-state checkpoint. Kahuna derives a protected log position from `PitrWindow` and `BaseSnapshotInterval`, approximately corresponding to `now - PitrWindow - BaseSnapshotInterval`, and prevents normal compaction from crossing that position.
 
-Full backups flush pending materialized writes before creating a backend checkpoint. Incremental backups then preserve committed WAL slices after that base image. A restore opens the checkpoint and replays the slices until the selected HLC timestamp. See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for the operational model and current public API limitations.
+Full backups wait for the apply barrier, flush pending materialized writes, create a backend checkpoint, and verify artifact sizes and checksums before publishing the manifest. Incremental backups then preserve committed WAL slices after that base image. Restore opens the checkpoint, verifies artifacts at point of use, and replays key/value mutations whose transaction commit HLC is at or before the selected timestamp. See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for the operational model, API surface, and restore constraints.
 
 ## Persistent vs Ephemeral
 

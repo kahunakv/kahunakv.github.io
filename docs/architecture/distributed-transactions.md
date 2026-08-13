@@ -56,6 +56,16 @@ The coordinator may live on a different node from some or all participants. Rout
 
 The transaction coordinator does not ask the client to provide a final list of keys to commit. It builds that list as operations complete.
 
+## Priority Admission
+
+Kahuna can put a per-node admission gate in front of transaction start. The gate is disabled by default: when `MaxConcurrentTransactions` and `MaxConcurrentSessions` are `0`, every transaction starts immediately and priority is only recorded for observability.
+
+When enabled, script transactions and interactive sessions wait behind separate concurrency ceilings. The gate starts the highest-priority eligible waiter first. Priority affects only admission; it does not preempt running work and does not change MVCC, locking, two-phase commit, durable decisions, or commit semantics.
+
+The priority scale is `Background`, `Low`, `Normal`, `High`, and `Critical`. `Normal` is the default. Reserved slots can be held back for `High` and `Critical` work so bulk transactions cannot occupy every slot on a saturated node. Aging gradually raises a waiter's effective priority for dispatch ordering, but aged ordinary work still cannot consume reserved slots.
+
+See [Transaction Priority Admission](/docs/distributed-keyvalue-store/transaction-priority-admission/) for API examples, tuning, and metrics.
+
 ## Transaction Handle
 
 Interactive transactions use a canonical transaction handle:
@@ -82,7 +92,7 @@ The coordinator keeps the authoritative working set for the transaction. It reco
 - Latest-read observations used for optional validation
 - Snapshot-read policy and timestamps
 - Pending and completed registered operations
-- Transaction timeout and finalization state
+- Admission priority, transaction timeout, and finalization state
 - The durable record anchor, when one exists
 
 Only confirmed effects enter the working set. A failed conditional write does not count as a modified key. A failed lock acquisition does not count as a held lock. Snapshot reads do not create live read dependencies because they read from a fixed historical timestamp.
@@ -342,6 +352,13 @@ Several bounds keep transaction coordination predictable:
 | `CollectionInterval` | `60 seconds` | Tick interval for the transaction reaper, range-lock renewal, and prepared-intent recovery. |
 | Pending operations per session | `4096` | Safety bound for in-flight registered operations in one transaction. Additional registrations receive a retryable capacity rejection. |
 | Total operations per session | `65536` | Safety bound for retained operation records in one transaction. Exceeding it is terminal for that session. |
+| `MaxConcurrentTransactions` | `0` | Script transaction start gate. `0` disables the gate. |
+| `MaxConcurrentSessions` | `0` | Interactive session start gate. `0` disables the gate. |
+| `TransactionPriorityReservedSlots` | `0` | Slots reserved for `High` and `Critical` priorities when a gate is enabled. |
+| `TransactionPriorityAgingThreshold` | `1000 ms` | Wait time per effective priority promotion. `0` disables aging. |
+| `TransactionPriorityMaxQueued` | `4096` | Waiters allowed per gate before new arrivals receive `AdmissionRefused`. `0` makes the queue unbounded. |
+| `DefaultAdmissionWaitMs` | `5000` | Admission wait used when the caller does not specify one. |
+| `MaxAdmissionWaitMs` | `30000` | Maximum admission wait allowed by the server. |
 | Participant in-doubt results | `8192 per node` | Bounded cache for acknowledgement-loss recovery. |
 | Participant finalize retries | `20 retries, 250 ms apart` | Retry window used while committing or rolling back prepared participants. |
 

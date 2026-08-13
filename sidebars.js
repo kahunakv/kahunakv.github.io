@@ -48,6 +48,7 @@ const sidebars = {
         'distributed-keyvalue-store/cas',
         'distributed-keyvalue-store/revisions',
         'distributed-keyvalue-store/transactions',
+        'distributed-keyvalue-store/transaction-priority-admission',
         'distributed-keyvalue-store/buckets',
         'distributed-keyvalue-store/snapshot-holds'
       ],
@@ -97,6 +98,7 @@ const sidebars = {
       items: [
         'server-installation',
         'server-configuration',
+        'backend-io-scheduler',
         'leader-balancing',
         'backups-and-point-in-time-recovery',
         'embedded-kahuna-node',

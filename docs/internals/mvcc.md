@@ -26,6 +26,7 @@ A transaction context tracks:
 - Variables and script parameters for script execution
 - Transaction status
 - Locking mode
+- Admission priority
 - Timeout
 - Decision durability mode
 - Finalization state and frozen working-set snapshot
@@ -161,5 +162,7 @@ The floor constrains both revision cleanup paths:
 - On disk, persistent revision cleanup must not delete the boundary revision or anything newer, even when count-based or age-based retention would otherwise remove it.
 
 Historical reads first try the in-memory archive. If the requested timestamp is older than the in-memory window, persistent read paths fall back to on-disk revision history. Point reads, range reads, bucket reads, and prefix scans all use the same rule: return the newest revision whose commit timestamp is at or before the requested snapshot timestamp.
+
+When a snapshot floor pins a boundary revision, the in-memory archive can become the pinned boundary plus the newest retained revisions. If the revisions between them have been trimmed from memory, Kahuna treats a boundary hit inside that gap as a cache miss and falls back to persisted revision history. This prevents a held floor from returning an older value when a newer disk-only revision is actually visible at the requested timestamp.
 
 The hold API is described in [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/).

@@ -23,6 +23,8 @@ The public transport layer parses the request and calls the `IKahuna` surface. F
 
 Clients may contact any node. If the receiving node is not the leader for the target partition, Kahuna routes or forwards the request to the current leader.
 
+Transaction priority admission runs only after this leader routing. Followers do not queue transaction starts they will not execute. When a script or interactive session is admitted after waiting, Kahuna starts it with the HLC timestamp from admission time, not from the time it first entered the queue.
+
 ## Routing
 
 Routing decides which partition and actor own the operation.
@@ -109,9 +111,13 @@ client
 
 Simple one-command scripts may be optimized into the direct command path. Multi-statement scripts and explicit `begin` blocks use the full transaction path.
 
+When `MaxConcurrentTransactions` is enabled, multi-statement and explicit transaction scripts pass through the script transaction admission gate. Single-command scripts do not open a transaction and are not gated.
+
 ## Interactive Transaction Operation
 
 Interactive transactions are gRPC-only at the client transport level. A session begins with a transaction handle that contains a transaction ID and coordinator key.
+
+When `MaxConcurrentSessions` is enabled, session start passes through the session admission gate. The session holds that slot until it commits, rolls back, or is reaped.
 
 Each transaction-scoped operation follows a registered path:
 

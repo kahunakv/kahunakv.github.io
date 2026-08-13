@@ -22,6 +22,16 @@ set `example` 'value3'
 r2 set 9ms
 ```
 
+Deletes also allocate a revision. The delete writes a tombstone, so historical reads before the delete can still find the previous value:
+
+```kahuna
+delete `example`
+r3 deleted 8ms
+
+set `example` 'value4'
+r4 set 10ms
+```
+
 When querying a key, you can see its current revision. The revision does not change during read operations:
 
 ```kahuna

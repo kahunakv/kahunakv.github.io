@@ -34,6 +34,18 @@ REST / gRPC / embedded
 
 After leader routing, a consistent-hash actor router selects the local `KeyValueActor` shard that owns the key, bucket, or range state. Actors process one message at a time, so the mutable entry, lock, proposal, and MVCC maps do not need broad shared locking.
 
+## Priority Admission
+
+Transaction priority admission sits after coordinator-leader routing and before the transaction ID is minted. That ordering matters: a queued transaction should receive the HLC timestamp of when it actually starts, not a timestamp from before it waited.
+
+The gate is per node and in memory. It has separate orderers for script transactions and interactive sessions, because scripts hold a slot for bounded server execution while sessions hold a slot for as long as the client keeps the session open.
+
+When a ceiling is disabled, admission is pass-through and only records priority metrics. When a ceiling is enabled, the orderer either grants a slot immediately or parks the caller in a priority queue. Slot release happens when a script transaction exits or when an interactive session is finalized, reaped, or otherwise retired.
+
+Dispatch uses effective priority, including aging. Capacity eligibility uses base priority, so an aged `Background` waiter can move forward in the ordinary line but cannot consume a slot reserved for `High` or `Critical` traffic.
+
+If the wait queue is full or the caller's admission wait expires before starting, admission returns `AdmissionRefused`. No transaction has started, so retrying is safe, but clients should back off because the node is shedding load.
+
 ## Separate Keyspaces
 
 Every key/value operation is either ephemeral or persistent:
@@ -236,7 +248,7 @@ The transaction result intentionally separates conflicts from uncertainty:
 | `MustRetry` | The outcome is uncertain or transient work remains; retry the same finalization |
 | `Errored` | The handle is unknown, expired, or the outcome is unavailable |
 
-Only conflict aborts are reported as `Aborted`. Prepare failures, admission rejection, deadline expiry, presumed abort, leader change, restore-in-progress, and infrastructure failure surface as `MustRetry` whenever retrying the same finalization is the honest answer.
+Only conflict aborts are reported as `Aborted`. Admission rejection surfaces as `AdmissionRefused` before a transaction starts. Prepare failures, deadline expiry, presumed abort, leader change, restore-in-progress, and infrastructure failure surface as `MustRetry` whenever retrying the same finalization is the honest answer.
 
 ## Bounds and Backpressure
 
@@ -250,6 +262,13 @@ Important transaction bounds:
 | `TransactionOutcomeRetentionMax` | Retained terminal outcome count for duplicate finalize idempotency |
 | `TransactionOutcomeRetentionTtl` | Retained terminal outcome age window |
 | `MaxTransactionTimeout` | Upper bound for admitted interactive session lifetime |
+| `MaxConcurrentTransactions` | Script transaction concurrency ceiling. `0` disables the script gate |
+| `MaxConcurrentSessions` | Interactive session concurrency ceiling. `0` disables the session gate |
+| `TransactionPriorityReservedSlots` | Slots reserved for `High` and `Critical` work |
+| `TransactionPriorityAgingThreshold` | Wait time per effective priority promotion |
+| `TransactionPriorityMaxQueued` | Waiters allowed per gate before admission returns `AdmissionRefused` |
+| `DefaultAdmissionWaitMs` | Admission wait used when the caller does not specify one |
+| `MaxAdmissionWaitMs` | Maximum admission wait allowed by the server |
 | Pending operations per session | In-flight operation bound |
 | Total operations per session | Retained operation-record bound |
 

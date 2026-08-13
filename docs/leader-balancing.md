@@ -41,7 +41,7 @@ It is also a prerequisite for [load-based range splitting](/docs/distributed-key
 Enable it on every cluster node and perform a rolling restart:
 
 ```bash
-dotnet Kahuna.Server.dll \
+kahuna-server \
   --raft-enable-leader-balancer true \
   <other-server-options>
 ```

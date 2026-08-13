@@ -2,72 +2,94 @@ import Architecture1 from '../assets/architecture.png';
 
 # Architecture Overview
 
-Kahuna is designed to be **scalable, consistent, and easy to use**. Developers might wonder how this is achieved which is why this section aims to explain the key concepts behind Kahuna’s architecture.
-
-Kahuna's architecture operates as a highly scalable, fault-tolerant distributed system that combines [lock management](/docs/distributed-locks), [key-value storage](/docs/distributed-keyvalue-store), and [sequencing](/docs/distributed-sequencer) capabilities. At its foundation lies a distributed key-value storage model where data is organized into discrete partitions similar to sharding mechanisms in other distributed systems. These **partitions function as independent units that can be distributed and managed** across the entire node cluster.
+Kahuna is a partitioned cluster for [distributed locks](/docs/distributed-locks), [key/value storage](/docs/distributed-keyvalue-store), and [sequences](/docs/distributed-sequencer). Each partition is a Raft group with one leader and multiple replicas. Clients can talk to any node; Kahuna routes each request to the leader that owns the target key, lock, or sequence.
 
 <div style={{textAlign: 'center'}}>
 <img src={Architecture1} height="350" />
 </div>
 
-In the previous diagram, we can see a cluster of three nodes named **Kahuna 1, 2, and 3.** Each of these nodes shows the initial partitions available, labeled **partition A, B, C, and D**. The leader of each partition is highlighted in dark gray. A **leader is responsible for processing reads and writes consistently** for its assigned partition.
+The diagram shows three nodes and four partitions. A node can lead some partitions while replicating others, so leadership and work are spread across the cluster.
 
-With this small example, we can already observe some of the key characteristics of Kahuna's architecture:
+## Partitions
 
- - It’s possible to have multiple nodes (Kahuna 1, 2, and 3) in a cluster. Each Raft partition is replicated to its group of members. **Replication is synchronous through Raft for persistent mutations, ensuring another replica can become the leader of a partition** if the current leader fails or becomes unavailable.
+Kahuna routes data by partition:
 
- - The **leader nodes for specific partitions are responsible for serving reads and writes in a serialized manner**, offering strong consistency. This guarantees that the value read by a client is the most recent and committed version.
+- Point key/value operations route by key.
+- Locks route by resource name.
+- Sequences route through reserved key/value entries.
+- Registered key ranges can use range routing instead of hash routing.
 
- - With multiple partitions and distributed leadership across the cluster nodes, **Kahuna promotes optimal use of computing resources**. In other words, all nodes act as both primaries and secondaries at the same time.
+The leader for a partition serializes operations for that partition. Persistent mutations are replicated through Raft before they are acknowledged. If the leader fails, another replica can be elected and continue from the committed log.
 
- - **A client can contact any node for a read or write operation**. Internally, Kahuna nodes locate the leader of the appropriate partition transparently, so the client doesn’t need to know where the leader is.
+## Consensus
 
- - For on-disk storage, Kahuna leverages battle-tested embedded databases like RocksDB and SQLite, each with their own strengths. **Kahuna then acts as a distributed replication and high-level coordination layer built on top of these solid embedded storage engines**.
+Kahuna uses [Kommander](https://github.com/kahunakv/kommander) for Raft. Each partition has its own Raft log, leader, and replication group.
 
-Additionally, to make the system more scalable and optimize compute resource usage:
+For persistent data, the normal path is:
 
-- **New nodes** can be added to the cluster **on the fly**. These new nodes can eventually become leaders of partitions once they are caught up with the latest activity.
-- **Nodes can be removed** from the cluster for maintenance or decommissioning. The opt-in [leader balancer](/docs/leader-balancing/) can gradually redistribute partition leadership while maintaining consistency.
-- A **general monitoring algorithm** tracks partition activity to determine if a partition is too large (based on a configured threshold) or experiencing too much activity (becoming a hotspot). When this happens, the partition is **split** into two, distributing its size and load across two available nodes in the cluster.
+1. The receiving node finds the partition leader.
+2. The leader validates and orders the operation.
+3. Raft replicates the log entry to a quorum.
+4. The committed entry is applied to actor-owned memory.
+5. Background writers materialize state to RocksDB, SQLite, or memory.
 
-## Goals of Kahuna
+This keeps the client API simple while preserving one committed history per partition.
 
-Building distributed systems is hard, and many problems can involve edge cases that are extremely difficult to solve. Solutions are not always perfect for every scenario. Kahuna is designed to abstract much of this complexity by offering a simple and intuitive API, making it easier for developers to build and manage distributed applications.
+## Correctness Testing
 
-Kahuna is designed to address the following challenges:
+Kahuna has a public [Jepsen test suite](https://github.com/kahunakv/kahuna-jepsen) for distributed correctness testing. The suite runs against a multi-node cluster with network partitions, process kills, process pauses, and membership changes. It currently covers:
 
-- **Offer a predictable and easy-to-use API for distributed locks**, including leases and fencing tokens, along with practical guidance for implementing mutual exclusion in distributed systems.
-- **Provide a robust key/value system that prioritizes usability, data durability and consistency**. Additionally, it should offer a simple yet powerful interface for multi-key distributed transactions, while recognizing that some scenarios don’t require durability and instead benefit from a high-performance ephemeral mode.
-- **Propose a pragmatic distributed sequencing system** that gives developers a ready-made solution for generating unique, ordered values in a distributed environment.
-- **Ensure strong data consistency, even in multi-node, multi-partition clusters**. Kahuna abstracts away the complexity of distributed key/value transactions and shields developers from issues like stale reads or inconsistent state.
-- **Enable high availability, allowing any node in the cluster to accept reads and writes**. It also distributes load intelligently and minimizes downtime due to cluster topology changes.
-- Developed in the C# programming language and the modern .NET platform, **Kahuna empowers developers to hack, extend, and customize the database to fit their specific needs**, whether through configuration or plugin-based extensions. Additionally, it’s built to run in a robust, multi-threaded environment that leverages all available CPU cores and computing power.
-- **Reduce vendor lock-in** by being deployable in any environment or cloud provider.
+- `register`: linearizable CAS-register behavior over the key/value store
+- `lock`: lease-aware mutual exclusion and fencing-token monotonicity
+- `append`: Elle list-append histories over interactive transactions, checking serializability
+- `sequencer`: duplicate-free allocation, allocation-range integrity, and idempotent replay
+- `membership`: leave and rejoin fault injection around the Raft roster while workloads continue
 
-## Raft-Based Consensus
+These tests complement unit, integration, and benchmark tests. They are intentionally scoped to the workloads they model, so a passing Jepsen run should be read as evidence for the covered key/value, lock, transaction, sequencer, and membership-change properties rather than a blanket proof of every Kahuna feature.
 
-Consensus across the distributed system is achieved through the **Raft** protocol, with **each partition in Kahuna being governed by its own Raft group**. This protocol ensures consistent replication of all changes across multiple nodes, thereby establishing the foundation for Kahuna's fault tolerance and high availability characteristics.
+## Scaling and Membership
 
-Within each Raft group, the consensus mechanism designates one node as the leader through an election process. This leader node coordinates all write operations for its assigned partition. To maintain consistency, all operations are recorded as log entries which are systematically replicated to follower nodes. This replication process ensures that data remains consistent across all nodes responsible for a particular partition.
+Kahuna scales by adding partitions and distributing partition leadership:
 
-## Scalability and Fault Tolerance
+- New nodes can join an existing cluster, catch up, and become eligible to lead partitions.
+- Nodes can leave for maintenance or decommissioning.
+- The opt-in [leader balancer](/docs/leader-balancing/) can gradually redistribute partition leadership.
+- Key-range spaces can split when a range becomes too large or too hot.
 
-Horizontal scalability is achieved through dynamic partition management. Partitions can be automatically split and redistributed across nodes to achieve optimal load balancing. This architecture supports linear scalability as additional nodes are integrated into the cluster, allowing Kahuna to expand its capacity proportionally with infrastructure growth.
+Membership changes are separate from request routing. Clients can still use multiple endpoints and let Kahuna locate the current leader for each operation.
 
-High availability is ensured through Raft-based replication mechanisms. The system maintains operation even when individual nodes fail, as data remains accessible through replicas. Kahuna's recovery processes are designed to restore system integrity after failures without compromising committed transactions, maintaining both data consistency and service availability.
+## Storage and Runtime
 
-## Performance Optimizations
+Kahuna separates the replicated log from materialized state:
 
-While Kahuna maintains strong consistency guarantees through the Raft protocol, it also incorporates performance optimizations around partition write coalescing, actor-local state, direct leader routing, background materialization, eviction, and WAL checkpointing.
+- Kommander stores the Raft WAL.
+- Kahuna stores materialized locks, key/value entries, revisions, and sequence state.
+- RocksDB is the default persistent storage engine.
+- SQLite is available for smaller deployments and easier inspection.
+- Memory storage is available for tests, embedded usage, and temporary state.
 
-Background maintenance processes continuously perform compaction, checkpointing, eviction, and garbage collection operations to reclaim storage space and memory resources. These routines preserve performance while respecting WAL retention, snapshot holds, and durable transaction recovery metadata.
+Actors keep hot state in memory. Background writers flush committed persistent state to the configured backend. Eviction, WAL checkpointing, backup/PITR retention, and revision cleanup run as maintenance paths around the same committed state model.
 
-## When to use Kahuna?
+## Performance Paths
 
-Kahuna is a distributed key/value database that offers both persistent and ephemeral durability, adapting to many different use cases. It also provides ready-to-use abstractions for locks and sequences. It has many useful applications across different areas, which may also overlap with functionality provided by other existing databases.
+Kahuna keeps the strongly consistent path practical with:
 
-Its versatility ranges from strong persistence, with data synchronously replicated across multiple nodes to ensure no data is lost in the event of failures, to the speed of in-memory storage, adapting to workloads that require low latency.
+- Actor-local state for hot reads and mutation staging
+- Direct leader routing after the target partition is known
+- Partition write coalescing for persistent key/value writes
+- Dedicated backend read and write schedulers
+- Background materialization, eviction, and checkpointing
 
-In both cases, strong consistency is guaranteed. Additionally, transactions that manipulate key/value pairs of any durability are fully supported, opening up a world of possibilities for building reliable and scalable systems.
+These optimizations do not replace Raft. They reduce avoidable work around the replicated path.
 
-Written in modern C# and running on the latest high-performance .NET runtime used by the project, Kahuna offers developers the ability to extend, adapt, and enhance it to meet their own needs easily and efficiently.
+## When to Use Kahuna
+
+Use Kahuna when several services must agree on ownership, small shared state, or ordered allocation:
+
+- Distributed locks with leases and fencing tokens
+- Configuration, metadata, sessions, reservations, and feature flags
+- Retry-safe sequence allocation
+- Multi-key transactions and scripts
+- Persistent or ephemeral coordination state
+
+Use a simpler cache or local store when data can be lost, rebuilt, or briefly inconsistent.

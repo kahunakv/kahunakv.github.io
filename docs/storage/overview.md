@@ -110,6 +110,33 @@ Operational caveats:
 - A write burst in one RocksDB database can cause more frequent flushing that affects the shared memory budget for the other database.
 - Kahuna uses a soft cache and a non-stalling write-buffer manager for this mode, so sizing should be conservative rather than relying on RocksDB stalls for back-pressure.
 
+### Direct Reads and Statistics
+
+Kahuna enables RocksDB direct reads by default for the materialized state backend. Direct reads bypass the operating-system page cache for SST reads, so RocksDB's block cache becomes the main read cache. This avoids double-caching the same data in both RocksDB and the OS page cache and makes the process memory budget easier to reason about, especially when shared RocksDB memory is enabled.
+
+Disable direct reads when the operating-system page cache is intentionally part of the deployment's read strategy, or when a small local installation benefits more from buffered filesystem reads than from a strictly RocksDB-managed cache:
+
+```bash
+kahuna-server \
+  --storage rocksdb \
+  --disable-rocksdb-direct-reads
+```
+
+RocksDB statistics are disabled by default because they add per-operation accounting overhead. Enable them while tuning or diagnosing storage behavior:
+
+```bash
+kahuna-server \
+  --storage rocksdb \
+  --rocksdb-statistics
+```
+
+When enabled, RocksDB records internal counters such as block-cache activity, compaction work, write stalls, and per-level file state, then dumps them every 60 seconds to the RocksDB `LOG` file under the configured storage path.
+
+| Setting | Default | Use when | Trade-off |
+|---------|---------|----------|-----------|
+| `--disable-rocksdb-direct-reads` | disabled | You want buffered reads through the OS page cache instead of direct I/O. | Can reintroduce double caching and less predictable read-memory accounting. |
+| `--rocksdb-statistics` | disabled | You are investigating block-cache efficiency, compaction behavior, write stalls, or file-level state. | Adds per-operation overhead and more LOG output. |
+
 ## SQLite in Kahuna
 
 SQLite is a lightweight, serverless, self-contained relational database engine widely used in embedded and client-side applications. It stores tables and indexes using B-Tree structures and provides full SQL support, including ACID-compliant transactions through rollback journals or write-ahead logging (WAL). SQLite is designed for simplicity, reliability, and minimal deployment overhead while delivering strong transactional guarantees.

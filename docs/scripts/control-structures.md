@@ -93,6 +93,20 @@ end
 
 Using `begin` gives you full control over **when to finalize** or **cancel** a transaction based on your logic. Check the [transactions section](../distributed-keyvalue-store/transactions.md) for more information about the customization options.
 
+`begin` can also set admission options for nodes that enable transaction concurrency gates:
+
+```kahuna
+begin (priority="high", admissionWait=2000, locking="optimistic")
+  let current = get `inventory/item-42`
+  set `inventory/item-42` current - 1
+  commit
+end
+```
+
+`priority` controls where the transaction waits in the admission queue. `admissionWait` controls how long it waits, in milliseconds, before Kahuna returns `AdmissionRefused`.
+
+See [Transaction Priority Admission](../distributed-keyvalue-store/transaction-priority-admission.md) for the queueing behavior and tuning options.
+
 ## Let
 
 Allows assigning values to variables. If the variable does not exist, it is **automatically created** in the script's **temporary execution scope**.

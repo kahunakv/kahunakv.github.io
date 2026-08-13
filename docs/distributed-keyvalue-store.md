@@ -37,12 +37,13 @@ In the context of **Kahuna**, its **distributed key/value store** capability all
 - **Server-owned transaction coordination** so commit and rollback use the working set recorded by Kahuna, not a client-built summary.
 - **Two-Phase Commit (2PC)** for atomicity across modified participants.
 - **Durable Commit Decisions** when an all-persistent write set needs recovery after durable finalization starts.
+- **Transaction Priority Admission** so latency-critical transactions can start ahead of bulk work when a node is saturated and admission ceilings are enabled.
 
 These features make Kahuna a great solution for small transactional workloads requiring **data integrity, consistency, and high availability**.
 
 ## Revisions
 
-In Kahuna, a [revision](/docs/distributed-keyvalue-store/revisions) is a monotonic version number for a key. Updates advance the key's revision. Deletes mark the key as deleted and report the current revision. Revisions are useful for compare-revision updates, debugging, and historical reads.
+In Kahuna, a [revision](/docs/distributed-keyvalue-store/revisions) is a monotonic version number for a key. Updates advance the key's revision. Deletes also advance the revision by writing a tombstone revision, which keeps pre-delete historical reads and PITR exact. Revisions are useful for compare-revision updates, debugging, and historical reads.
 
 ## Routing Model
 
@@ -539,7 +540,7 @@ Task<KahunaKeyValue> DeleteKeyValue(
 
 **Returns:**
 - **Success:** `true` if the key/value pair was deleted.
-- **Revision:** The key's current revision at the time of deletion. Deleting a key does **not** increment the revision counter.
+- **Revision:** The tombstone revision created by the delete. For example, deleting a key at revision `0` returns revision `1`, and the next successful set returns revision `2`.
 
 </TabItem>
 </Tabs>

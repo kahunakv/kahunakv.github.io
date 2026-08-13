@@ -22,13 +22,19 @@ Every script runs through Kahuna's transaction coordinator. The coordinator trac
 For a script author, the important behavior is:
 
 - Plain scripts are transactional even without an explicit `begin` block.
-- `begin (...)` lets you customize options such as `timeout`, `locking`, `snapshot`, `asyncRelease`, and `autoCommit`.
+- `begin (...)` lets you customize options such as `timeout`, `admissionWait`, `locking`, `snapshot`, `priority`, `asyncRelease`, and `autoCommit`.
 - `commit` makes accepted changes visible.
 - `rollback` cancels the transaction and releases transactional state.
 - `throw` aborts the script and rolls back the transaction.
 - Snapshot scripts created with `begin (snapshot=...)` are read-only historical views.
 
 See [Transactions](/docs/distributed-keyvalue-store/transactions/) for the full transaction lifecycle and option reference.
+
+## Script Results
+
+Script execution returns a result type plus the values produced by the script. Each returned value includes the key, value bytes, revision, expiration, and last-modified timestamp. The .NET client exposes these through `KahunaKeyValueTransactionResult.Values`, plus `FirstValue`, `FirstValueAsString`, and `FirstRevision` helpers for scripts that return one value.
+
+REST and gRPC expose the same per-value result shape, so scripts return the same revision and timestamp metadata regardless of transport.
 
 ## When to Use Scripts
 

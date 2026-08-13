@@ -2,11 +2,11 @@
 
 Kahuna's backup design combines storage-engine checkpoints with the committed Raft write-ahead log (WAL). This supports full backups, incremental backups, and recovery to a selected Hybrid Logical Clock (HLC) timestamp.
 
-:::caution Current restore scope
+:::caution Restore scope
 
 Kahuna Server exposes backup and restore through REST, gRPC, `Kahuna.Client`, and `kahuna-cli`. Restore is offline: it writes a new storage directory and never replaces the live state of the node handling the request.
 
-The current incremental restore path replays key/value mutations. It does not replay incremental lock or key-range metadata changes. Plan recovery procedures around this limitation and test them with the data types used by the application.
+PITR restore reconstructs committed key/value state. Locks are runtime coordination leases and are not part of the restored PITR image. Range metadata is managed by the cluster and should be rebuilt or caught up through normal membership and Raft recovery. Plan recovery procedures around the data types used by the application and test them before relying on a runbook.
 
 :::
 
@@ -38,11 +38,16 @@ Kahuna retains a sliding interval of WAL history for point-in-time recovery. The
 | `--pitr-window` | `3600` seconds | More than `0`, up to `21600` | How far back a restore target may be. Increasing it retains more WAL and consumes more disk. |
 | `--base-snapshot-interval` | `1800` seconds | More than `0`, no greater than `--pitr-window` | Intended interval between base checkpoints. A shorter interval reduces WAL replay during restore but creates checkpoints more often. |
 | `--pitr-backup-dir` | empty | Writable directory path used for backup manifests and artifacts. Kahuna creates it when needed. Backup APIs are disabled when this is empty. |
+| `--pitr-backup-cluster-id` | empty | String | Operator-assigned cluster identity stamped into backup manifests. Set the same value on every node to prevent chaining or restoring artifacts from another cluster. |
+| `--pitr-backup-mac-key-file` | empty | File path | Secret key file used to authenticate manifests with HMAC-SHA-256. Set the same key file contents on every node and keep it outside the backup directory. |
+| `--pitr-restore-root` | empty | Directory path | Server-owned root that remote restore targets must stay under. Setting it enables confined restore over REST/gRPC/client/CLI. |
+| `--pitr-allow-unconfined-remote-restore` | `false` | Boolean | Allows remote restore without `--pitr-restore-root`. This is an administrative escape hatch and should not be enabled on shared nodes. |
+| `--backup-restore-throttle-mbps` | `0` | `0` or more | Throughput cap for the bulk checkpoint copy during restore. `0` is unlimited. |
 
 For example, retain four hours of recoverable WAL and plan hourly base checkpoints with:
 
 ```bash
-dotnet Kahuna.Server.dll \
+kahuna-server \
   --pitr-window 14400 \
   --base-snapshot-interval 3600
 ```
@@ -68,13 +73,18 @@ Raft compaction must not remove entries at or above this floor. The extra snapsh
 Configure the server first:
 
 ```bash
-dotnet Kahuna.Server.dll \
+kahuna-server \
   --pitr-backup-dir /var/lib/kahuna/backups \
+  --pitr-backup-cluster-id prod-us-east-1 \
+  --pitr-backup-mac-key-file /etc/kahuna/backup-mac.key \
+  --pitr-restore-root /var/lib/kahuna/restores \
   --pitr-window 14400 \
   --base-snapshot-interval 3600
 ```
 
-The backup catalog is local to the node receiving the request. Keep clients pointed at the same node when creating an incremental chain or inspecting that node's catalog.
+For production clusters, point every node at the same shared `--pitr-backup-dir`. Coordinated backups are accepted only by the node currently leading the meta partition. Because that coordinator can move over time, a node-local backup directory gives each node only a partial catalog.
+
+`--pitr-backup-cluster-id` and `--pitr-backup-mac-key-file` should be identical on every node. The cluster ID prevents accidental cross-cluster chain resolution. The MAC key authenticates manifest identity, coverage, and digest metadata before restore.
 
 ### Kahuna CLI
 
@@ -93,9 +103,15 @@ kahuna-cli -c "https://kahuna-1:8082" \
 # Inspect the local catalog and validate a chain
 kahuna-cli -c "https://kahuna-1:8082" --list-backups
 kahuna-cli -c "https://kahuna-1:8082" --backup-chain <leaf-backup-id>
+
+# Reclaim backup disk or preview the GC plan
+kahuna-cli -c "https://kahuna-1:8082" --backup-gc
+kahuna-cli -c "https://kahuna-1:8082" --backup-gc --backup-gc-dry-run
 ```
 
 Add `--format json` for machine-readable output. Interactive mode supports `backup full`, `backup coordinated`, and `list backups`.
+
+An incremental request can fall back to a full backup when the WAL range needed for the parent has already been compacted. This is visible in the returned fields: `RequestedKind` remains `Incremental`, `ActualKind` is `Full`, and `SubstitutionReason` explains why Kahuna took a new base image instead.
 
 ### .NET Client
 
@@ -112,13 +128,18 @@ KahunaBackupInfo incremental =
 List<KahunaBackupInfo> backups = await client.ListBackupsAsync();
 List<KahunaBackupInfo> chain =
     await client.GetBackupChainAsync(incremental.BackupId);
+
+KahunaBackupGcResult preview =
+    await client.RunBackupGarbageCollectionAsync(dryRun: true);
 ```
 
-The client supports full, incremental, and coordinated backups over REST or gRPC communication.
+The client supports full, incremental, coordinated backups, catalog inspection, offline restore, and backup garbage collection over REST or gRPC communication.
 
 ## Restore to a New Directory
 
 `RestoreAsync` and `--restore` copy the chain's full checkpoint into a target directory and replay incremental entries. A target time of `0` restores through the natural end of the selected chain. A positive target is the HLC physical component expressed as Unix epoch milliseconds.
+
+Kahuna maps a positive `--target-time-ms` to the inclusive end of that millisecond. That prevents same-millisecond commits with a higher HLC counter from being accidentally excluded.
 
 ```bash
 # Restore the complete chain
@@ -133,7 +154,15 @@ kahuna-cli -c "https://kahuna-1:8082" \
   --target-time-ms 1781478000000
 ```
 
-The target path is on the filesystem of the server node handling the request, not the machine running `kahuna-cli`.
+The target path is on the filesystem of the server node handling the request, not the machine running `kahuna-cli`. For remote restore, configure `--pitr-restore-root` and choose a target under that directory:
+
+```bash
+kahuna-server \
+  --pitr-backup-dir /var/lib/kahuna/backups \
+  --pitr-restore-root /var/lib/kahuna/restores
+```
+
+Kahuna rejects restore targets outside the restore root, targets that overlap the live storage path or backup directory, symlinked paths, and non-empty target directories. Restore builds the result in a private staging directory and publishes it with an atomic rename, so a cancelled or failed restore does not leave a partial directory at the final target path.
 
 The equivalent .NET call is:
 
@@ -147,12 +176,14 @@ KahunaRestoreResponse restored = await client.RestoreAsync(
 
 Start a fresh node against the restored directory using the same storage adapter and storage revision as the backup source. Hot in-place restore of a running node is not supported.
 
+The response includes `Outcome`, `EntriesApplied`, `LastAppliedPhysicalMs`, and the exact chain coverage bounds: `MinRecoverablePhysicalMs` and `MaxRecoverablePhysicalMs`. A restore target outside those chain coverage bounds is rejected even if it is still inside the wall-clock PITR window.
+
 ## Bootstrap a Joining Node
 
 A new node can seed its persistence backend and WAL from a backup before joining an existing cluster. Normal Raft catch-up then transfers changes after the restore point.
 
 ```bash
-dotnet Kahuna.Server.dll \
+kahuna-server \
   --join-existing \
   --initial-cluster https://kahuna-1:8082 https://kahuna-2:8082 \
   --pitr-backup-dir /var/lib/kahuna/backups \
@@ -173,19 +204,61 @@ Omit `--pitr-target-time-ms` or set it to `0` to bootstrap through the chain's n
 | `GET` | `/v1/backups/{id}/chain` | Resolve and validate a chain |
 | `POST` | `/v1/backups/validate-chain` | Validate the chain identified by `leafBackupId` |
 | `POST` | `/v1/restore` | Restore a chain into `targetDir` through `targetTimeMs` |
+| `POST` | `/v1/backups/gc` | Run backup garbage collection. Pass `?dryRun=true` to preview without deleting. |
 
-The equivalent gRPC `Backups` service exposes `TakeFullBackup`, `TakeIncrementalBackup`, `TakeCoordinatedBackup`, `ListBackups`, `GetBackupChain`, `ValidateChain`, and `Restore`. Backup endpoints return unavailable when `--pitr-backup-dir` is not configured on the target node.
+The equivalent gRPC `Backups` service exposes `TakeFullBackup`, `TakeIncrementalBackup`, `TakeCoordinatedBackup`, `ListBackups`, `GetBackupChain`, `ValidateChain`, `Restore`, and `RunBackupGarbageCollection`. Backup endpoints return unavailable when `--pitr-backup-dir` is not configured on the target node.
+
+Listing responses include `ClusterId` and `CoordinatorNode` when available. Use these fields to verify that a shared catalog contains backups produced by different coordinators. A listing that only shows the local node as coordinator is usually a node-local, partial view.
+
+## Production Hardening
+
+### Coordinator and Catalog Placement
+
+`POST /v1/backups/coordinated` creates the cluster-wide backup. Kahuna accepts it only on the node that currently leads the meta partition. A request sent to another node is rejected with `NotBackupCoordinator`; retry against the current coordinator.
+
+`ListBackups`, chain resolution, parent lookup, and restore read whatever is present in the receiving node's `BackupDir`. To make those operations node-independent, use shared durable storage for `BackupDir` across all nodes. With node-local directories, coordinated backups are scattered across whichever node was coordinator at the time they were taken.
+
+### Confidentiality and Authenticity
+
+Backup artifacts contain the physical storage checkpoint and committed WAL segments. Treat the backup directory as sensitive production data.
+
+- Kahuna creates backup directories with restrictive permissions where the platform supports it.
+- On startup, Kahuna refuses an unsafe backup root that is a symlink or group/world-writable on POSIX.
+- `--pitr-backup-mac-key-file` enables HMAC-SHA-256 manifest authentication. Store the key outside `BackupDir`, restrict it to the server user, and deploy the same key contents to every node.
+- Backup artifacts are not encrypted by Kahuna. Put `BackupDir` on an encrypted volume or an encrypted object-store mount when backups contain sensitive data.
+- Error responses are sanitized and include an operation ID. Full paths and backend exception details stay in server logs under that ID.
+
+Enabling a MAC key means older unsigned backups cannot be restored under that configuration. Re-take production backups after enabling the key.
+
+### Topology Changes
+
+A full or coordinated backup can fail with `TopologyChanged` if partition ownership, range metadata, or cluster membership changes while Kahuna is building the backup. Nothing is published in that case. Retry once the topology is stable.
+
+### Root Safety
+
+Restore target safety is enforced separately from backup-root safety:
+
+- `BackupDir` must not be a symlink or broadly writable.
+- Remote restore targets should be confined under `--pitr-restore-root`.
+- Restore targets cannot overlap the live storage path or backup directory.
+- Symlinked restore paths and non-empty target directories are rejected.
+
+These checks make backup and restore fail closed before Kahuna writes or trusts production artifacts.
 
 ## Full Backups
 
 A full backup performs these operations in order for active partitions:
 
 1. Record the last committed WAL position covered by the backup.
-2. Flush pending persistent writes to the materialized storage backend.
-3. Create a storage-engine checkpoint.
-4. Write a manifest containing the backup ID, creation time, partition ranges, checksums, and optional cluster snapshot timestamp.
+2. Wait for the apply barrier so every covered committed write has reached the in-memory state and persistence queue.
+3. Flush pending persistent writes to the materialized storage backend.
+4. Create a storage-engine checkpoint.
+5. Verify artifact sizes and SHA-256 checksums.
+6. Write a manifest containing the backup ID, creation time, partition ranges, checksums, sizes, and optional cluster snapshot timestamp.
 
 Recording the committed position before the flush is important. It guarantees the checkpoint contains at least every mutation promised by the manifest, including mutations that were committed but still waiting in the background persistence queue.
+
+If Kahuna cannot prove that the checkpoint exactly covers the requested cut, the full backup fails closed with `ExactCheckpointUnavailable` and publishes no manifest. This includes an apply barrier timeout, a backend flush failure, a cut below the durable pruned-history floor, or a no-revision key modified after the requested cut.
 
 Checkpoint behavior depends on the storage adapter:
 
@@ -193,13 +266,13 @@ Checkpoint behavior depends on the storage adapter:
 - SQLite creates a consistent copy of its sharded database files. Writes to a shard can pause while that shard is copied.
 - The memory backend serializes key/value and lock state to checkpoint files. It is useful for testing, not durable production recovery.
 
-Checkpoint directories and manifests are created through temporary paths and moved into place, preventing an interrupted write from appearing as a complete artifact.
+Checkpoint directories and manifests are created through temporary paths and moved into place, preventing an interrupted write from appearing as a complete artifact. Artifact verification rejects missing files, unexpected extra files, size mismatches, checksum mismatches, unsupported legacy manifests, unsafe relative paths, and symlinks or reparse points.
 
 ## Incremental Backups
 
 An incremental backup reads committed WAL entries after its parent's final index and writes one segment per partition. It pages through the WAL instead of loading an unbounded log into memory.
 
-Incremental backups are proportional to the write volume since the parent, not the total dataset size. However, every required WAL entry must still be available. If compaction has advanced beyond the incremental's starting index, Kahuna rejects the operation and requires a new full backup.
+Incremental backups are proportional to the write volume since the parent, not the total dataset size. However, every required WAL entry must still be available. If compaction has advanced beyond the incremental's starting index, Kahuna takes a new full backup instead and reports the substitution in `RequestedKind`, `ActualKind`, and `SubstitutionReason`.
 
 Keep the checkpoint, every incremental artifact, and every manifest in the chain together. A missing artifact or manifest makes later descendants unusable for restore.
 
@@ -211,11 +284,17 @@ To reconstruct state at timestamp `T`, the restore process:
 2. Resolves and validates the selected backup chain.
 3. Opens the root full checkpoint in the destination backend.
 4. Replays incremental WAL segments in partition order.
-5. Applies committed key/value entries whose HLC is less than or equal to `T` and stops before the first entry after `T`.
+5. Applies committed key/value entries whose transaction commit HLC is less than or equal to `T`.
 
 Restore writes are idempotent upserts keyed by key and revision. An interrupted incremental replay can be restarted without creating duplicate logical revisions.
 
 Only committed WAL entries are included. Prepared but uncommitted transaction intents are absent, so an unfinished transaction does not become visible after restore.
+
+Restore uses the commit HLC carried by the key/value payload, not the per-partition WAL append time, as the PITR cut axis. All participants of a committed distributed transaction share that commit HLC, so restore includes or excludes the transaction as one unit instead of cutting through different partitions.
+
+Segment replay streams one record at a time and writes batches of key/value rows to the destination backend. It verifies each incremental segment immediately before replay and stages the exact bytes that will be consumed, reducing verify-then-use races.
+
+Keys written with no revisions cannot be rolled back across overwritten values. If such a key changed after the requested cut, Kahuna refuses an exact backup or restore path rather than silently over-including the newer value. Use no-revision writes for cache-like keys that do not require PITR.
 
 ## Coordinated Cluster Snapshots
 
@@ -223,7 +302,55 @@ Each Raft partition has its own WAL position, so a log index cannot identify one
 
 The coordinator chooses a timestamp strictly before the earliest transaction currently preparing across the scanned partitions. This prevents a transaction that is actively committing from being split by the snapshot boundary.
 
-This is not an unconditional guarantee for every earlier cross-partition transaction because participants currently receive partition-local commit timestamps. For the strongest operational consistency, take coordinated backups during a quiet write period until Kahuna assigns one shared commit timestamp to every participant.
+Coordinated backup chooses a safe cluster timestamp. During restore, Kahuna cuts key/value replay on the shared transaction commit HLC carried in each payload, so a committed distributed transaction is replayed whole or skipped whole.
+
+## Backup Retention and Garbage Collection
+
+Kahuna has two backup cleanup mechanisms:
+
+| Mechanism | What it deletes | Default |
+|-----------|-----------------|---------|
+| Orphan sweep | Leftover temporary, staging, quarantine, merge, or artifact directories that no valid manifest owns. | Always enabled. |
+| Retention | Valid backup chains outside configured count, age, or byte limits. | Disabled until at least one retention bound is set. |
+
+Retention is chain-aware. Kahuna keeps or deletes a full backup and its incrementals as a unit, so no retained incremental is left without its parent chain. The newest chain is always kept, even if it alone exceeds the byte budget.
+
+Configure retention with:
+
+| Server option | Default | Description |
+|---------------|---------|-------------|
+| `--backup-retention-max-chains` | `0` | Keep at most this many most-recent backup chains. `0` is unbounded. |
+| `--backup-retention-max-age` | `0` seconds | Delete chains whose newest backup is older than this. `0` is unbounded. |
+| `--backup-retention-max-bytes` | `0` | Keep the most-recent chains whose artifact bytes fit this budget. `0` is unbounded. |
+| `--backup-gc-interval` | `3600` seconds | Periodic GC cadence. `0` disables the periodic pass, but inline GC still runs after backups. |
+
+GC runs inline after backup creation and periodically in the background. Use `--backup-gc --backup-gc-dry-run` to inspect the plan before deleting anything.
+
+GC removes manifests before artifacts and deletes descendants before ancestors. If a process stops mid-delete, the remaining artifact directory becomes an orphan and the next sweep can reclaim it. Symlinked top-level artifact entries are unlinked, not followed.
+
+The result reports `RetentionDeletions`, `OrphanReclamations`, `BytesReclaimed`, and whether the pass was actually `Applied`.
+
+## Outcomes and Observability
+
+Backup and restore failures expose stable outcome names so automation does not need to match exception text:
+
+| Outcome | Meaning |
+|---------|---------|
+| `NotConfigured` | Backup APIs are disabled because no backup directory is configured. |
+| `ParentMissing` | The requested incremental parent does not exist. |
+| `NeedsFull` | An incremental cannot be produced from the requested parent. |
+| `CorruptChain` | Parent links, ordering, or partition ranges are invalid. |
+| `CorruptArtifact` | Files are missing, extra, truncated, modified, duplicated, or unsafe. |
+| `TargetConflict` | Restore target already exists, escapes the restore root, or overlaps a protected path. |
+| `TargetOutsideCoverage` | Requested restore time is outside the selected chain coverage. |
+| `RetryableLeadershipLoss` | Leadership changed during the operation; retry on the current leader. |
+| `ExactCheckpointUnavailable` | Kahuna cannot prove the base checkpoint exactly represents the requested cut. |
+| `UnsupportedFormat` | A legacy or unsupported manifest was found. |
+| `TopologyChanged` | Partition topology or membership changed during backup. Retry after the cluster is stable. |
+| `NotBackupCoordinator` | The node is not the current coordinated-backup owner. Retry against the meta-partition leader. |
+| `InsecureRoot` | The configured backup or restore root is unsafe. Fix permissions or path layout before retrying. |
+
+Metrics are emitted on the `Kahuna` meter. Backup and restore operations report operation counts, failures, bytes, duration, and restored entry counts. Backup GC reports runs, orphan reclamations, retention deletions, and reclaimed bytes.
 
 ## Operational Planning
 
@@ -232,7 +359,11 @@ This is not an unconditional guarantee for every earlier cross-partition transac
 - Archive full backups externally when recovery beyond six hours is required. The live PITR window is intentionally bounded.
 - Store backup artifacts on durable storage separate from the node's live data directories.
 - Treat the manifest catalog and its referenced artifacts as one recovery set.
-- Verify SHA-256 checksums and validate the chain before modifying a destination data directory.
+- Validate the chain and artifact checksums before modifying a destination data directory. Kahuna does this automatically before restore, but external archivers should preserve manifests and artifact files together.
 - Perform restores offline. Restoring data does not add the restored node to cluster membership.
+- Use shared durable storage for `--pitr-backup-dir` when coordinated backups may be requested from different coordinator nodes over time.
+- Set `--pitr-backup-cluster-id` and `--pitr-backup-mac-key-file` consistently on every production node.
+- Configure `--pitr-restore-root` on any node that accepts remote restore requests.
+- Use `--backup-restore-throttle-mbps` when restore I/O competes with foreground traffic.
 
 A restored node can seed a later cluster join, but membership and Raft catch-up are separate operations. If its restore point is still within retained history, replicas can transfer only the remaining log. Otherwise, normal cluster recovery may require a complete state transfer.

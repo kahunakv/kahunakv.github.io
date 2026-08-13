@@ -71,11 +71,23 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `RocksDbSharedMemoryEnabled` | `false` | Share one RocksDB block cache and write-buffer manager between the key/value backend and Raft WAL when both use RocksDB. |
 | `RocksDbSharedMemoryBudgetMb` | `320` | Total shared RocksDB block-cache budget in MiB. The memtable sub-budget is charged inside this total. |
 | `RocksDbSharedMemtableBudgetMb` | `128` | Shared RocksDB memtable sub-budget in MiB. Must be less than or equal to `RocksDbSharedMemoryBudgetMb`. |
+| `RocksDbDirectReads` | `true` | Read RocksDB SST files with direct I/O so the RocksDB block cache is the primary read cache. Applies only when `Storage` is `rocksdb`. |
+| `RocksDbStatistics` | `false` | Enable RocksDB internal statistics collection and LOG dumps every 60 seconds. Useful for tuning or diagnosis, but it adds per-operation overhead. Applies only when `Storage` is `rocksdb`. |
 | `LocksWorkers` | `Environment.ProcessorCount` | Lock worker count. |
 | `KeyValueWorkers` | `Environment.ProcessorCount` | Key/value worker count. |
 | `BackgroundWriterWorkers` | `1` | Background persistence worker count. |
+| `BackendReadIOThreads` | `4` | Dedicated Kahuna backend read pool size for point gets, existence checks, read-before-write work, and scans. Separate from the Raft WAL read pool. |
+| `BackendWriteIOThreads` | `1` | Dedicated Kahuna backend writer pool size for background batch writes and pruning. |
+| `BackendReadQueueDepth` | `4096` | Per-partition pending queue depth for the backend read scheduler. |
 | `DefaultTransactionTimeout` | `5000` | Default transaction timeout in milliseconds. |
 | `MaxTransactionTimeout` | `300000` | Maximum admitted interactive transaction timeout in milliseconds. Caller-provided timeouts are clamped to this bound. |
+| `MaxConcurrentTransactions` | `0` | Script transactions that may execute concurrently before further ones queue and start in priority order. `0` disables the script admission gate. |
+| `MaxConcurrentSessions` | `0` | Interactive transaction sessions that may be open concurrently before further ones queue and start in priority order. `0` disables the session admission gate. |
+| `TransactionPriorityReservedSlots` | `0` | Slots out of each transaction concurrency ceiling that only `High` and `Critical` transactions may occupy. |
+| `TransactionPriorityAgingThreshold` | `1000` | Milliseconds a queued transaction waits to gain one effective priority level. `0` disables aging. |
+| `TransactionPriorityMaxQueued` | `4096` | Callers that may wait for an admission slot per gate before further ones receive `AdmissionRefused`. `0` makes the queue unbounded. |
+| `DefaultAdmissionWaitMs` | `5000` | Admission wait used when the caller does not specify one. |
+| `MaxAdmissionWaitMs` | `30000` | Maximum admission wait allowed by the embedded node. Caller-supplied waits are clamped to this value. |
 | `ScriptCacheExpiration` | `1 minute` | How long parsed scripts stay cached. |
 | `RevisionsToKeepCached` | `100` | Number of key revisions to keep cached in memory. |
 | `CacheEntryTtl` | `5 minutes` | Age threshold used by lock cleanup and legacy cleanup paths. Key/value LRU eviction is budget-based. |
@@ -107,6 +119,15 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `PitrWindow` | `1 hour` | Recoverable WAL history. Values are normalized to more than zero and at most 6 hours. |
 | `BaseSnapshotInterval` | `30 minutes` | Intended interval between base checkpoints. It must be positive and no greater than `PitrWindow`. It also contributes to the protected WAL floor. |
 | `BackupDir` | empty | Root directory for backup manifests and artifacts. Backup methods on `node.Kahuna` are disabled when empty. |
+| `BackupClusterId` | empty | Operator-assigned cluster identity stamped into backup manifests. Use the same value on every node. |
+| `BackupMacKeyFile` | empty | Path to the HMAC-SHA-256 key file used to authenticate backup manifests. Keep it outside `BackupDir`. |
+| `RestoreRoot` | empty | Server-owned root directory that restore targets must be contained within. Setting it enables confined remote restore. |
+| `AllowUnconfinedRemoteRestore` | `false` | Allows remote restore without `RestoreRoot`. Use only in trusted administrative environments. |
+| `BackupRetentionMaxChains` | `0` | Keep at most this many most-recent backup chains. `0` is unbounded. Retention is off unless at least one retention bound is set. |
+| `BackupRetentionMaxAge` | `0` | Delete backup chains whose newest backup is older than this age. `TimeSpan.Zero` is unbounded. |
+| `BackupRetentionMaxBytes` | `0` | Keep the most-recent backup chains within this artifact byte budget. The newest chain is always kept. `0` is unbounded. |
+| `BackupGcInterval` | `1 hour` | Periodic backup garbage-collection cadence. `TimeSpan.Zero` disables the periodic pass, but GC still runs after backups. |
+| `BackupRestoreThrottleBytesPerSec` | `0` | Throughput budget for a restore checkpoint copy. `0` is unlimited. |
 | `RangeSplitThreshold` | `1000` | Sampled key count that triggers count-based range splitting. `0` disables this trigger. |
 | `RangeSplitMinRangeSize` | `10` | Minimum sampled keys required in each child range. |
 | `RangeSplitLoadThreshold` | `0` | Replicated writes per second required for load-based splitting. `0` disables this trigger. |
@@ -159,7 +180,9 @@ EmbeddedKahunaOptions options = new()
     WalStorage = "rocksdb",
     RocksDbSharedMemoryEnabled = true,
     RocksDbSharedMemoryBudgetMb = 512,
-    RocksDbSharedMemtableBudgetMb = 128
+    RocksDbSharedMemtableBudgetMb = 128,
+    RocksDbDirectReads = true,
+    RocksDbStatistics = false
 };
 ```
 

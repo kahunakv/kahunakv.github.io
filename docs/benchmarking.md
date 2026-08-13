@@ -10,7 +10,7 @@ Use it to:
 - Compare server versions, storage adapters, configurations, or hardware
 - Store repeatable performance results in CI
 
-It is a load generator, not a correctness test or server profiler.
+It is a load generator, not a correctness test or server profiler. For distributed correctness testing, see the public [Kahuna Jepsen suite](https://github.com/kahunakv/kahuna-jepsen), which covers key/value registers, distributed locks, interactive transactions, sequencer allocation, and membership churn under fault injection.
 
 :::warning Use a dedicated test environment
 
@@ -66,7 +66,7 @@ Seeding is capped at 100,000 keys and uses at most 64 concurrent writers.
 
 ## Three-Node Cluster Example
 
-Start a native local cluster from the Kahuna checkout with `./scripts/run-cluster.sh`.
+Start a cluster with the Docker image or the `Kahuna.Server` .NET global tool on each node.
 
 Pass every cluster endpoint in one comma-separated connection source:
 

@@ -33,7 +33,7 @@ scan by prefix `services/auth` as of 1718392012345
 
 This returns only the keys that were visible under that prefix at the requested snapshot time.
 
-If a key already existed at that time and was updated later, the snapshot still returns the older visible value from the requested time. Keys created after that time are not returned.
+If a key already existed at that time and was updated or deleted later, the snapshot still returns the older visible value from the requested time. Keys created after that time are not returned.
 
 ## Notes
 

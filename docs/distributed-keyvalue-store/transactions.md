@@ -43,6 +43,7 @@ Kahuna’s transactional engine addresses these issues by:
 | **Operation ID** | Stable identity assigned to an interactive operation so a retry can return the same result without applying the mutation twice. |
 | **Locks** | Optional. Acquired for pessimistic or serialized transactions. Locks have expiration to prevent being held forever. |
 | **Durable Decision** | Optional durable-intent 2PC path for all-persistent write sets. It stores a canonical transaction record plus prepared intents so recovery can finish or presume-abort after coordinator loss. |
+| **Priority Admission** | Optional per-node start gate that can queue transactions by priority when script or session concurrency ceilings are enabled. |
 
 ## Transaction API
 
@@ -177,6 +178,7 @@ By default, durable commits can return success once the canonical decision recor
 - Use **ephemeral keys** for high-speed, non-critical paths.
 - Consider **pessimistic locking** for highly contended keys to avoid retries.
 - Use **durable decisions** only when all modified keys are persistent and recovering durable finalization matters.
+- Use **transaction priority** to keep latency-critical transactions from waiting behind bulk work when admission ceilings are enabled.
 - Retry `MustRetry` with the same transaction/session handle and do not add new operations after finalization starts.
 - Monitor retries to detect **hotspots** in your workload.
 
@@ -270,6 +272,42 @@ begin (asyncRelease="true")
 end
 ```
 
+### Priority
+
+Sets the transaction's admission priority when the node is at its configured transaction concurrency ceiling.
+
+- Accepted values: `background`, `low`, `normal`, `high`, `critical`
+- Default value: `normal`
+- Priority affects only when a transaction starts. It does not change locking, MVCC, two-phase commit, or commit semantics.
+- If the admission gates are disabled, priority is recorded for metrics but does not queue or reorder work.
+
+```kahuna
+begin (priority="high", locking="optimistic")
+  let current = get `inventory/item-42`
+  set `inventory/item-42` current - 1
+  commit
+end
+```
+
+Learn more in [Transaction Priority Admission](/docs/distributed-keyvalue-store/transaction-priority-admission/).
+
+### Admission Wait
+
+Sets how long the transaction waits for an admission slot before it starts.
+
+- Value is in milliseconds.
+- Default value: server `DefaultAdmissionWaitMs`.
+- The server clamps the value to `MaxAdmissionWaitMs`.
+- If the budget expires before a slot opens, Kahuna returns `AdmissionRefused`. No transaction was started.
+
+```kahuna
+begin (priority="high", admissionWait=2000, timeout=10000)
+  let current = get `inventory/item-42`
+  set `inventory/item-42` current - 1
+  commit
+end
+```
+
 ### AutoCommit
 
 Specifies whether an **implicit `commit`** should be executed automatically if all operations in the transaction succeed, or if an **explicit `commit`** is required to finalize the transaction.
@@ -303,6 +341,8 @@ The .NET client exposes these options on `KahunaTransactionOptions`:
 | `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. |
 | `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction point, bucket, range, and paginated-range reads. Do not combine it with `ReadValidation.TrackAndValidate`. |
 | `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
+| `Priority` | `Normal` | Admission priority used when `MaxConcurrentSessions` is enabled on the receiving node. |
+| `AdmissionWaitMs` | server default when `0` | Maximum time to wait for an admission slot before the transaction starts. The server clamps it to `MaxAdmissionWaitMs`. |
 
 ## Interactive Transactions
 

@@ -1,6 +1,8 @@
 # Server Configuration
 
-Kahuna server options are passed as command-line flags to `Kahuna.Server`. The table below documents the options currently exposed by `KahunaCommandLineOptions`.
+Kahuna server options are passed as command-line flags to `kahuna-server`. The table below documents the options currently exposed by `KahunaCommandLineOptions`.
+
+See [Backend I/O Scheduler](/docs/backend-io-scheduler/) for how backend read/write pools relate to Raft WAL I/O.
 
 ## Network and TLS
 
@@ -8,25 +10,41 @@ Kahuna server options are passed as command-line flags to `Kahuna.Server`. The t
 |------------------------|-------------|---------------|
 | `-h`, `--host` | Host option accepted by the CLI. The current Kestrel setup listens on all interfaces for configured HTTP/HTTPS ports. | `*` |
 | `-p`, `--http-ports` | One or more HTTP ports for external REST/gRPC traffic. If omitted, Kahuna listens on HTTP port `2070`. | `2070` |
-| `--https-ports` | One or more HTTPS ports for external REST/gRPC traffic. If omitted, Kahuna listens on HTTPS port `2071`. | `2071` |
+| `--https-ports` | One or more HTTPS ports for external REST/gRPC traffic. HTTPS is bound only when `--https-certificate` is configured. Passing HTTPS ports without a certificate is rejected. | none unless a certificate is configured |
 | `--https-certificate` | Path to the HTTPS certificate used by Kestrel and trusted for internal HTTPS communication. | empty |
 | `--https-certificate-password` | Password for the HTTPS certificate. | empty |
+
+## Health and Readiness
+
+Kahuna exposes `GET /v1/cluster/health` as a readiness endpoint for load balancers and orchestrators. It returns HTTP `200` only when the node has completed cluster initialization and has a serving cluster role. It returns HTTP `503` while the node is still initializing or is not a member.
+
+The JSON response includes:
+
+| Field | Meaning |
+|-------|---------|
+| `ready` | `true` when the node can serve requests. Mirrors the HTTP status. |
+| `initialized` | `true` after the node has received and applied the cluster partition map. |
+| `localRole` | Local membership role, such as `Voter`, `Learner`, `Leaving`, or `NotMember`. |
+
+Use readiness for traffic routing. Membership can be available before the node is initialized, so a node may answer membership queries while still refusing key/value requests.
 
 ## Storage and WAL
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
 | `--storage` | Materialized Kahuna state backend for persistent locks, key/value entries, revisions, and sequences. Supported values are `rocksdb`, `sqlite`, and `memory`. | `rocksdb` |
-| `--storage-path` | File system path for materialized state storage. Use a durable local disk for `rocksdb` or `sqlite`. | empty |
-| `--storage-revision` | Revision name used to select a materialized state database or file set under `--storage-path`. | empty |
+| `--storage-path` | File system path for materialized state storage. Use a durable local disk for `rocksdb` or `sqlite`. If omitted, Kahuna resolves it under `KAHUNA_HOME/data`, `$XDG_DATA_HOME/kahuna/data`, or `~/.local/share/kahuna/data` depending on the environment. | resolved user data path |
+| `--storage-revision` | Revision name used to select a materialized state database or file set under `--storage-path`. If omitted, the server uses `v1` so restarts reopen the same data set. | `v1` |
 | `--wal-storage` | Raft WAL backend used by Kommander. Supported values are `rocksdb`, `sqlite`, and `memory`. | `rocksdb` |
-| `--wal-path` | File system path for Raft WAL storage. Use a durable local disk. | empty |
+| `--wal-path` | File system path for Raft WAL storage. Use a durable local disk. If omitted, Kahuna resolves it under `KAHUNA_HOME/wal`, `$XDG_DATA_HOME/kahuna/wal`, or `~/.local/share/kahuna/wal` depending on the environment. | resolved user data path |
 | `--wal-revision` | Revision name used to select the WAL database or file set under `--wal-path`. | `v1` |
 | `--wal-sync-writes` | Keep synchronous durable WAL writes enabled. This is the default behavior. | enabled |
 | `--disable-wal-sync-writes` | Disable synchronous durable WAL writes for faster non-critical local or test runs. | disabled |
 | `--rocksdb-shared-memory` | Share one RocksDB block cache and write-buffer manager between the materialized state backend and Raft WAL. Applies only when both `--storage` and `--wal-storage` are `rocksdb`. | disabled |
 | `--rocksdb-shared-memory-budget-mb` | Total shared RocksDB block-cache budget in MiB. The memtable sub-budget is charged inside this total. | `320` |
 | `--rocksdb-shared-memtable-budget-mb` | Shared RocksDB memtable sub-budget in MiB. Must be less than or equal to `--rocksdb-shared-memory-budget-mb`. | `128` |
+| `--disable-rocksdb-direct-reads` | Disable RocksDB direct I/O reads for the materialized state backend and use buffered reads through the operating-system page cache. Direct reads are enabled by default. Applies only when `--storage` is `rocksdb`. | disabled |
+| `--rocksdb-statistics` | Enable RocksDB internal statistics collection and LOG dumps every 60 seconds for tuning or diagnosis. This adds per-operation overhead. Applies only when `--storage` is `rocksdb`. | disabled |
 
 ## Cluster Identity and Discovery
 
@@ -48,7 +66,17 @@ Kahuna server options are passed as command-line flags to `Kahuna.Server`. The t
 | `--locks-workers` | Number of lock actors/workers. Values less than or equal to `0` are normalized to at least `256` or `Environment.ProcessorCount * 4`, whichever is larger. | `128` |
 | `--keyvalue-workers` | Number of key/value actors/workers. Values less than or equal to `0` are normalized to at least `256` or `Environment.ProcessorCount * 4`, whichever is larger. | `128` |
 | `--background-writer-workers` | Number of background persistence writer workers. Values less than or equal to `0` are normalized to `1`. | `1` |
+| `--backend-read-io-threads` | Dedicated Kahuna backend read pool threads for point gets, existence checks, read-before-write work, and scans. Separate from the Raft WAL read pool. Values less than or equal to `0` auto-size to the processor count. | `8` |
+| `--backend-write-io-threads` | Dedicated Kahuna backend writer pool threads for background batch writes and pruning. Keep this small because backend writes are fsync-heavy. Values less than or equal to `0` auto-size to the processor count. | `1` |
+| `--backend-read-queue-depth` | Per-partition pending queue depth for the backend read scheduler before reads receive retryable backpressure. | `4096` |
 | `--default-transaction-timeout` | Default transaction timeout in milliseconds. | `5000` |
+| `--max-concurrent-transactions` | Script transactions that may execute concurrently before further ones queue and start in priority order. `0` disables the script admission gate. | `0` |
+| `--max-concurrent-sessions` | Interactive transaction sessions that may be open concurrently before further ones queue and start in priority order. `0` disables the session admission gate. | `0` |
+| `--transaction-priority-reserved-slots` | Slots out of each transaction concurrency ceiling that only `High` and `Critical` transactions may occupy. | `0` |
+| `--transaction-priority-aging-threshold` | Milliseconds a queued transaction waits to gain one effective priority level. `0` disables aging. | `1000` |
+| `--transaction-priority-max-queued` | Callers that may wait for an admission slot per gate before further ones receive `AdmissionRefused`. `0` makes the queue unbounded. | `4096` |
+| `--default-admission-wait` | Milliseconds a caller waits for an admission slot when it does not request its own budget. This is separate from transaction lifetime. | `5000` |
+| `--max-admission-wait` | Maximum admission wait in milliseconds. Caller-supplied waits are clamped to this value. | `30000` |
 | `--script-cache-expiration` | Script parser cache expiration in seconds. | `600` |
 | `--revisions-to-cache` | Number of key revisions intended to stay cached in memory. This flag is defined by the server CLI, but the current server startup path does not pass it into `KahunaConfiguration`. | `4` |
 | `--cache-entry-ttl` | Age threshold used by lock cleanup and legacy cleanup paths, in seconds. Key/value LRU eviction is budget-based. | `1800` |
@@ -78,6 +106,15 @@ Durable transaction decision, materialization, settlement, recovery, and range-m
 | `--pitr-window` | Recoverable WAL history in seconds. Values are normalized to a range greater than `0` and no more than `21600` seconds (6 hours). Increasing this value increases retained WAL storage. | `3600` |
 | `--base-snapshot-interval` | Intended interval between base checkpoints per partition, in seconds. It must be positive and no greater than `--pitr-window`. This setting contributes to the protected WAL floor but does not schedule backups automatically. | `1800` |
 | `--pitr-backup-dir` | Root directory for backup catalog manifests and artifacts. Backup REST/gRPC, client, and CLI operations are disabled when this is empty. It is required by `--pitr-bootstrap-from`. | empty |
+| `--pitr-backup-cluster-id` | Operator-assigned cluster identity stamped into backup manifests. Set the same value on every node to prevent cross-cluster chain resolution. | empty |
+| `--pitr-backup-mac-key-file` | Path to the HMAC-SHA-256 key file used to authenticate backup manifests. Keep it outside `--pitr-backup-dir` and readable only by the server user. | empty |
+| `--pitr-restore-root` | Server-owned root directory that restore targets must be contained within. Setting this enables confined remote restore. | empty |
+| `--pitr-allow-unconfined-remote-restore` | Allows remote restore requests without `--pitr-restore-root`. Use only for trusted administrative environments. | `false` |
+| `--backup-retention-max-chains` | Keep at most this many most-recent backup chains. `0` is unbounded and retention remains off unless at least one retention bound is set. | `0` |
+| `--backup-retention-max-age` | Delete chains whose newest backup is older than this many seconds. `0` is unbounded. | `0` |
+| `--backup-retention-max-bytes` | Keep the most-recent backup chains whose artifact bytes fit this budget. The newest chain is always kept. `0` is unbounded. | `0` |
+| `--backup-gc-interval` | Periodic backup GC cadence in seconds. A pass also runs after each backup. `0` disables the periodic pass only. | `3600` |
+| `--backup-restore-throttle-mbps` | Throughput budget for the restore checkpoint copy in MB/s. `0` is unlimited. | `0` |
 | `--pitr-bootstrap-from` | Leaf backup ID restored into local persistence and WAL before the node joins an existing cluster. Requires `--join-existing`, `--initial-cluster`, and `--pitr-backup-dir`. | none |
 | `--pitr-target-time-ms` | PITR target using the physical HLC component in Unix epoch milliseconds. `0` restores through the selected chain's natural end. | `0` |
 
@@ -100,7 +137,7 @@ Persistent revision cleanup is clamped by live [snapshot holds](/docs/distribute
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
-| `--read-io-threads` | Number of Raft read I/O threads. | `8` |
+| `--read-io-threads` | Number of Raft WAL read I/O threads. Kahuna backend reads use the separate backend read pool. | `4` |
 | `--write-io-threads` | Number of Raft write I/O threads. | `16` |
 | `--raft-enable-shared-executor-pool` | Share a bounded worker pool across Raft partitions instead of using one OS thread per partition. Useful for very high partition counts. | enabled |
 | `--raft-executor-pool-size` | Number of shared Raft executor workers. `0` auto-sizes to the processor count. | `0` |
@@ -207,5 +244,5 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 
 - `--wal-storage` and `--storage` configure different layers. WAL storage persists Raft logs; materialized storage persists Kahuna object state after committed operations are applied.
 - Use stable `--storage-revision` and `--wal-revision` values for existing data directories. Changing revisions points the server at different local storage files.
-- The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, durable-decision deadline/admission knobs, durable deferred-settlement and prepared-intent bounds, terminal write-aggregator reserve knobs, and count- or load-based key-range split/merge thresholds remain code-level or embedded-node configuration today.
+- The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, durable-decision deadline/admission knobs, durable deferred-settlement and prepared-intent bounds, terminal write-aggregator reserve knobs, and count- or load-based key-range split/merge thresholds remain code-level or embedded-node configuration today. Transaction priority admission knobs are exposed as server flags.
 - The embedded node exposes the broader runtime surface, including collector and persistent-revision settings. See [Embedded Kahuna Node](/docs/embedded-kahuna-node/) for the full embedded configuration options.

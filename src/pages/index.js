@@ -10,6 +10,7 @@ const proofPoints = [
   {icon: 'shield', label: 'Locks with fencing tokens'},
   {icon: 'database', label: 'Persistent and ephemeral state'},
   {icon: 'hash', label: 'Distributed sequence allocation'},
+  {icon: 'check', label: 'Jepsen-tested correctness'},
   {icon: 'layers', label: 'RocksDB, SQLite, or memory'},
 ];
 

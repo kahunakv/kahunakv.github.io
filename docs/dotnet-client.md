@@ -242,6 +242,20 @@ However, this comes at the cost of reduced flexibility when adding, removing, or
 
 This trade-off is common in high-performance distributed systems that prioritize low latency and direct communication over automatic infrastructure abstraction.
 
+## Cluster Membership
+
+`GetClusterMembership()` returns the current roster, membership version, the contacted node's local role, and whether that node has completed cluster initialization:
+
+```csharp
+KahunaClusterMembershipResponse membership =
+    await client.GetClusterMembership();
+
+Console.WriteLine($"Initialized={membership.Initialized}");
+Console.WriteLine($"LocalRole={membership.LocalRole}");
+```
+
+Use the server readiness endpoint `GET /v1/cluster/health` for load balancer and orchestrator probes. Membership can be available before a node is initialized enough to serve key/value traffic.
+
 ## Snapshot Reads
 
 The .NET client supports **as-of snapshot reads** directly on top-level client methods through a `snapshotMs` parameter.
@@ -481,6 +495,8 @@ Request item notes:
 - `KahunaDeleteKeyValueRequestItem` supports `Key` and `Durability`
 - `KahunaGetManyKeyValuesRequestItem` supports `Key`, optional `Revision`, and `Durability`
 
+`DeleteKeyValue(...)` and `DeleteManyKeyValues(...)` return the tombstone revision created by the delete. For a key at revision `0`, a successful delete returns revision `1`, and a later set returns revision `2`.
+
 Set `Flags = KeyValueFlags.SetNoRevision` for batch cache writes where old values are not needed. Combine it with conditional flags when the write should still be guarded by existence, value, or revision checks.
 
 Persistent batch writes also benefit from [partition write coalescing](/docs/architecture/partition-write-coalescing/). Kahuna can combine direct writes for the same Raft partition into fewer Raft proposals, even when they come from different client requests. This improves bursts where keys share a bucket or key-space. It does not make a batch atomic; use a transaction when all items must commit or roll back together.
@@ -630,6 +646,28 @@ Console.WriteLine("Result={0}", result.FirstValueAsString);
 
 The recommended way to execute scripts is to pass all dynamic values as parameters, rather than embedding them directly in the script. This allows the server to reuse the execution plan across different calls with different inputs, improving performance and preventing security issues such as script injection.
 
+Scripts can also carry an admission priority. Priority matters only when the server has enabled transaction admission ceilings; otherwise it is recorded for metrics and the script starts immediately.
+
+```csharp
+var result = await client.ExecuteKeyValueTransactionScript(
+    script,
+    hash: null,
+    parameters: parameters,
+    priority: TransactionPriority.Background
+);
+```
+
+If you need a per-script admission wait, set it in the script's `begin (...)` options:
+
+```kahuna
+begin (priority="high", admissionWait=2000, timeout=10000)
+  set `orders/42/status` "processing"
+  commit
+end
+```
+
+Script results expose `Values`, where each item carries the key, value, revision, expiration, and last-modified timestamp returned by the script. `FirstValue`, `FirstValueAsString`, and `FirstRevision` are convenience accessors for the first returned item. REST and gRPC now return the same per-value result shape.
+
 Avoid this:
 
 ```csharp
@@ -686,6 +724,18 @@ public class SessionChecker
 ```
 
 By avoiding re-parsing and re-planning on every call, this approach makes script execution more efficient, especially in high-throughput scenarios. It also makes code easier to maintain by separating logic from runtime logic injection.
+
+Compiled scripts expose the same priority control:
+
+```csharp
+var result = await kahunaScript.Run(
+    TransactionPriority.High,
+    [
+        new() { Key = "@session_key", Value = sessionKey },
+        new() { Key = "@ttl_in_seconds", Value = ttlInSeconds }
+    ]
+);
+```
 
 ### Interactive Transactions
 
@@ -770,11 +820,13 @@ await client.RetryableTransaction(txOptions, async (session, cancellationToken) 
 |--------|---------|-------------|
 | `Locking` | `Pessimistic` | Chooses pessimistic or optimistic concurrency behavior. Pessimistic sessions acquire locks before or during operations. Optimistic sessions validate reads and write intents at commit. |
 | `Timeout` | server default when `0` | Maximum transaction duration in milliseconds. Use short timeouts for interactive work so abandoned sessions are cleaned up quickly. |
+| `AdmissionWaitMs` | server default when `0` | Maximum time to wait for an admission slot before the transaction starts. The server clamps it to `MaxAdmissionWaitMs`. |
 | `AsyncRelease` | `false` | Allows eligible post-commit cleanup to continue in the background. Leave it off when prompt lock cleanup matters. |
 | `AutoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit `Commit`. Disposal of a pending session rolls back. |
 | `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. Optimistic locking validates its read set at commit even when this value is `None`. |
 | `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction reads. It is a snapshot view, not read-your-own-writes, and cannot be combined with `TrackAndValidate`. |
 | `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
+| `Priority` | `Normal` | Admission priority used when the server has enabled `MaxConcurrentSessions`. It affects when the session starts, not how it commits. |
 
 Example with durable commit decisions:
 
@@ -787,7 +839,8 @@ KahunaTransactionOptions options = new()
     Locking = KeyValueTransactionLocking.Pessimistic,
     Timeout = 10_000,
     ReadValidation = ReadValidation.TrackAndValidate,
-    DecisionDurability = DecisionDurability.Durable
+    DecisionDurability = DecisionDurability.Durable,
+    Priority = TransactionPriority.High
 };
 
 await using KahunaTransactionSession session =
@@ -867,6 +920,26 @@ Common result meanings:
 
 Learn more about the coordinator lifecycle in [Distributed Transactions](/docs/architecture/distributed-transactions/) and [Transaction Lifecycle](/docs/internals/transaction-lifecycle/).
 
+#### Transaction Priority Admission
+
+`TransactionPriority` lets a client label latency-sensitive transaction work when a node is saturated:
+
+```csharp
+await using KahunaTransactionSession session =
+    await client.StartTransactionSession(new KahunaTransactionOptions
+    {
+        Priority = TransactionPriority.High,
+        Timeout = 10_000,
+        AdmissionWaitMs = 2_000
+    });
+```
+
+Available priorities are `Background`, `Low`, `Normal`, `High`, and `Critical`. `Normal` is the default. Priority is honored only when the server enables transaction admission ceilings. It does not preempt a running transaction or change consistency semantics.
+
+If the admission queue is full, or the caller's admission wait expires before a slot opens, the server returns `AdmissionRefused`. Retry with backoff; no transaction was started.
+
+See [Transaction Priority Admission](/docs/distributed-keyvalue-store/transaction-priority-admission/) for tuning and metrics.
+
 ## Backup and Point-in-Time Restore
 
 Start the target Kahuna server with `--pitr-backup-dir` before using backup operations. The catalog belongs to the node selected by the client, so use a stable endpoint when building or inspecting an incremental chain.
@@ -899,6 +972,7 @@ Available methods:
 | `ListBackupsAsync()` | List manifests in the selected node's local catalog |
 | `GetBackupChainAsync(leafBackupId)` | Resolve and validate a chain from its full root through the selected leaf |
 | `RestoreAsync(leafBackupId, targetDir, targetTimeMs)` | Restore into a new directory on the selected server node |
+| `RunBackupGarbageCollectionAsync(dryRun)` | Sweep orphaned artifacts and enforce backup retention on the selected server node |
 
 Restore through the chain's natural end with `targetTimeMs: 0`:
 
@@ -911,8 +985,25 @@ KahunaRestoreResponse restored = await client.RestoreAsync(
 
 Console.WriteLine($"Applied {restored.EntriesApplied} WAL entries");
 Console.WriteLine($"Restored to {restored.TargetDir}");
+Console.WriteLine($"Coverage: {restored.MinRecoverablePhysicalMs}..{restored.MaxRecoverablePhysicalMs}");
 ```
 
-For point-in-time recovery, pass the target HLC physical component as Unix epoch milliseconds. `targetDir` refers to the server filesystem. The operation does not replace live state; start a fresh node with the restored directory.
+For point-in-time recovery, pass the target HLC physical component as Unix epoch milliseconds. The server treats the value as the inclusive end of that millisecond. `targetDir` refers to the server filesystem. The operation does not replace live state; start a fresh node with the restored directory.
 
-See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for server setup, node bootstrap, and current replay limitations.
+Run backup garbage collection directly, or preview it first:
+
+```csharp
+KahunaBackupGcResult preview =
+    await client.RunBackupGarbageCollectionAsync(dryRun: true);
+
+KahunaBackupGcResult applied =
+    await client.RunBackupGarbageCollectionAsync();
+
+Console.WriteLine($"Reclaimed {applied.BytesReclaimed} bytes");
+```
+
+Backup responses expose `RequestedKind`, `ActualKind`, and `SubstitutionReason` so callers can detect when an incremental request had to be replaced by a new full backup. Restore responses expose `Outcome`, `MinRecoverablePhysicalMs`, and `MaxRecoverablePhysicalMs` for typed handling and exact coverage checks.
+
+Backup listing entries also expose `ClusterId` and `CoordinatorNode` when the server wrote current-format manifests. In production, use these fields to confirm that all nodes are pointed at the same shared backup catalog and that coordinated backups are not scattered across node-local directories.
+
+See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for server setup, node bootstrap, and restore constraints.

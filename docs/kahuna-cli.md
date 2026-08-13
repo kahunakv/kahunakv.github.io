@@ -6,7 +6,7 @@
 It can be installed in two ways:
 
 ### **Native Client**
-If you have the [**.NET runtime**](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) installed, you can globally install the `kahuna-cli` tool with the following command:
+If you have the [.NET SDK](https://dotnet.microsoft.com/download) installed, you can globally install the `kahuna-cli` tool with the following command:
 
 ```bash
 dotnet tool install -g Kahuna.Control
@@ -16,7 +16,7 @@ Then you can execute the following command on your terminal:
 
 ```bash
 ~> kahuna-cli
-Kahuna Shell 0.0.5 (alpha)
+Kahuna Shell 1.0.0
 
 kahuna-cli>  get my-config
 r14 my-value 18ms
@@ -41,7 +41,7 @@ Then you can execute the following command on your terminal:
 
 ```bash
 ~> docker exec -it kahuna-cli /app/run.sh
-Kahuna Shell 0.0.5 (alpha)
+Kahuna Shell 1.0.0
 
 kahuna-cli>  get my-config
 r14 my-value 18ms
@@ -71,7 +71,7 @@ For the local standalone development server, connect to the HTTPS endpoint and a
 kahuna-cli -c "https://127.0.0.1:8082" --insecure
 ```
 
-For the native cluster started by `./scripts/run-cluster.sh`, connect to all three nodes:
+For a three-node cluster, pass every reachable endpoint in one comma-separated connection string:
 
 ```bash
 kahuna-cli \
@@ -105,9 +105,19 @@ kahuna-cli --delete-sequence orders
 
 Use `--format json` to request JSON output for commands that support it.
 
+## Cluster Membership
+
+Use `--cluster-members` to inspect the live cluster roster:
+
+```bash
+kahuna-cli -c "https://kahuna-1:8082" --cluster-members
+```
+
+The output includes membership version, local role, and an `Initialized` flag. `Initialized` tells you whether the contacted node has completed cluster initialization. A node can appear in membership before it is ready to serve key/value traffic, so use the server readiness endpoint `GET /v1/cluster/health` for load balancer or orchestrator probes.
+
 ## Backup and Restore
 
-The target server must be started with `--pitr-backup-dir`. Backups and catalog operations run against the node selected by `-c`, whose catalog is local to that node.
+The target server must be started with `--pitr-backup-dir`. For production clusters, point every node at the same shared backup directory and set the same `--pitr-backup-cluster-id`. Backups and catalog operations run against the node selected by `-c`, whose visible catalog is whatever that node sees at `--pitr-backup-dir`.
 
 ```bash
 # Create backups
@@ -120,9 +130,17 @@ kahuna-cli -c "https://kahuna-1:8082" \
 # Inspect and validate
 kahuna-cli -c "https://kahuna-1:8082" --list-backups
 kahuna-cli -c "https://kahuna-1:8082" --backup-chain <leaf-backup-id>
+
+# Reclaim backup disk or preview what would be deleted
+kahuna-cli -c "https://kahuna-1:8082" --backup-gc
+kahuna-cli -c "https://kahuna-1:8082" --backup-gc --backup-gc-dry-run
 ```
 
 Use a coordinated backup when all partitions must share one cluster snapshot timestamp. Use the returned backup ID as the parent of the next incremental backup.
+
+Coordinated backups are accepted only by the current backup coordinator, the node leading the meta partition. If the command reports `NotBackupCoordinator`, retry against the current coordinator or another endpoint that routes to it.
+
+If an incremental backup cannot be built because the parent WAL range has already been compacted, Kahuna takes a full backup instead and reports the substitution in the command output or JSON fields.
 
 Restore writes a new storage directory on the server handling the request:
 
@@ -141,6 +159,8 @@ kahuna-cli -c "https://kahuna-1:8082" \
 
 `--target-dir` is a path on the server, not the computer running the CLI. Restore does not modify the running node. Start a fresh node with the restored path and the same storage adapter and revision.
 
+For remote restore, start the server with `--pitr-restore-root` and choose a target directory below that root. Kahuna rejects targets outside the root, symlinked paths, protected-path overlaps, and non-empty destinations.
+
 Interactive mode supports:
 
 ```text
@@ -149,4 +169,4 @@ backup coordinated
 list backups
 ```
 
-See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for retention, bootstrap, and current restore limitations.
+See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for retention, bootstrap, and restore constraints.

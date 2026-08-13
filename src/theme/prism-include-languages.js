@@ -17,6 +17,7 @@ function includeConfiguredLanguages(PrismObject) {
 
 function registerKahunaLanguage(PrismObject) {
   const keywords = [
+    'admissionWait',
     'as',
     'at',
     'begin',

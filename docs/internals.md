@@ -8,7 +8,7 @@ Kahuna is built around a few core ideas:
 - **Actors** serialize access to in-memory state and isolate concurrency-sensitive code.
 - **Write-ahead logs** make committed Raft operations recoverable.
 - **Materialized persistence** stores locks and key/value entries so a node can avoid replaying every log forever.
-- **MVCC, write intents, operation registration, durable decisions, and deferred settlement** provide transactional isolation for key/value scripts and interactive transactions.
+- **MVCC, write intents, operation registration, priority admission, durable decisions, and deferred settlement** provide transactional isolation for key/value scripts and interactive transactions.
 
 ## Main Components
 

@@ -22,34 +22,33 @@ docker run --rm -p 8081:8081 -p 8082:8082 -v kahuna-data:/data --name kahuna kah
 
 The container exposes `http://127.0.0.1:8081` and `https://127.0.0.1:8082`. The named Docker volume `kahuna-data` keeps the server data across container restarts.
 
-Alternatively, clone the Kahuna repository and run the standalone script:
+You can also install the server as a .NET global tool:
 
 ```bash
-git clone https://github.com/kahunakv/kahuna
-cd kahuna
-sh ./scripts/run-standalone.sh
+dotnet tool install --global Kahuna.Server
 ```
 
-The standalone script starts one node on `http://127.0.0.1:8081` and `https://127.0.0.1:8082` using persistent RocksDB data under `/tmp/kahuna-standalone/data` and a WAL under `/tmp/kahuna-standalone/wal`.
+```bash
+kahuna-server \
+  --http-ports 8081 \
+  --storage rocksdb \
+  --wal-storage rocksdb \
+  --storage-path ~/.kahuna/data \
+  --wal-path ~/.kahuna/wal \
+  --storage-revision v1 \
+  --wal-revision v1
+```
 
-Connect to it with:
+Connect to Docker over HTTPS:
 
 ```bash
 kahuna-cli -c "https://127.0.0.1:8082" --insecure
 ```
 
-To test replication and failover with three local nodes, run the native cluster script instead:
+Connect to the NuGet tool server over HTTP:
 
 ```bash
-./scripts/run-cluster.sh
-```
-
-Connect the CLI to the complete cluster:
-
-```bash
-kahuna-cli \
-  -c "https://127.0.0.1:8082,https://127.0.0.1:8084,https://127.0.0.1:8086" \
-  --insecure
+kahuna-cli -c "http://127.0.0.1:8081"
 ```
 
 After installing the necessary components, run the following command:
@@ -64,7 +63,7 @@ Within the Kahuna CLI, you can execute commands, transactions, and scripts. Use 
 
 ```kahuna
 ~> kahuna-cli
-Kahuna Shell 0.0.1 (alpha)
+Kahuna Shell 1.0.0
 
 kahuna-cli> set myconfig "my-value"
 r0 set 9ms
