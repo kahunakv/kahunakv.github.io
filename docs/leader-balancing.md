@@ -21,6 +21,8 @@ node-c:  2 leaders             node-c: 4 leaders
 
 The balancer never moves partition data. It suggests normal Raft leadership transfers between existing replicas. The current leader validates its term and ownership before performing a handoff.
 
+[Replication factor and replica placement](/docs/replica-placement/) is the separate feature that changes which nodes store and vote for a partition.
+
 :::
 
 ## When to Enable It

@@ -24,7 +24,8 @@ For configuration and operator-facing behavior, see [Backups and Point-in-Time R
 | `BackupCatalog` | Stores manifests, resolves parent chains, and validates their structure. |
 | `BackupArtifactVerifier` | Verifies manifest schema, expected file sets, sizes, checksums, and path safety before publish or restore. |
 | `BackupRetention` | Plans and applies chain-aware backup retention and orphan artifact sweeps. |
-| `IBackupStorageTarget` | Abstracts manifest storage. The current implementation writes manifests to a local directory. |
+| `IBackupStorageTarget` | Abstracts manifest storage. |
+| `IBackupArtifactStore` | Abstracts checkpoint and WAL artifact bytes. |
 | `PitrHorizon` | Converts the configured time window into a protected WAL index for each partition. |
 | `LogTimeIndex` | Locates committed WAL positions by HLC timestamp. |
 | `SnapshotCoordinator` | Selects one HLC boundary for a coordinated multi-partition backup. |
@@ -76,7 +77,7 @@ Each backend implements `CreateCheckpoint(destinationPath, appliedIndex, applied
 
 Every checkpoint includes `checkpoint.manifest`, which records the applied WAL index and HLC as plain JSON. The checkpoint is first written to a temporary sibling path and then moved into place so a failed operation does not leave a partial directory that appears complete.
 
-Current manifests record the artifact format version, per-file SHA-256 checksums, per-file sizes, and the required artifact names for the backup type. Legacy manifests are listed honestly as unsupported rather than treated as valid current artifacts.
+Current manifests record the artifact format version, per-file SHA-256 checksums, per-file sizes, covered partitions, and the required artifact names for the backup type. Legacy manifests are listed honestly as unsupported rather than treated as valid current artifacts.
 
 Current manifests also record the configured backup cluster ID and the node that produced the backup. Chain validation rejects a chain that mixes different non-empty cluster IDs. When `BackupMacKeyFile` is configured, Kahuna signs manifest identity, coverage, and digest metadata with HMAC-SHA-256 and verifies it before restore.
 
@@ -122,6 +123,8 @@ The chain must satisfy these rules:
 6. Parent links do not contain a cycle.
 
 A missing manifest or index gap is an error. Restore does not attempt to produce a partial result from a broken chain.
+
+Under replica placement, a node may host only some partitions. Backup manifests record both the cluster partition set and the partitions covered by that artifact. Before restore or PITR bootstrap, Kahuna validates that the chain's covered partitions reach every cluster partition. If not, it fails with `RestrictedCoverage` rather than producing a partial cluster image.
 
 Artifact validation is separate from structural chain validation. Before restore trusts bytes, `BackupArtifactVerifier` checks:
 
@@ -212,6 +215,8 @@ GC runs inline after backups and on `BackupGcInterval`. The public API can run i
 `BackupDir` is validated before use. On POSIX, Kahuna refuses symlinked or group/world-writable backup roots and creates backup files with restrictive permissions. Restore target confinement remains separate and is governed by `RestoreRoot`.
 
 Coordinated backups are owned by the current meta-partition leader. Non-coordinator nodes reject coordinated backup requests with `NotBackupCoordinator` instead of producing partial cluster backups. If topology or membership changes while a backup is being built, the operation fails with `TopologyChanged` and publishes nothing.
+
+Backup manifests and artifacts are stored through separate contracts. The built-in target stores both under the local backup directory. Other targets can be registered by the host so artifact bytes live in object storage or another external system, with local scratch space used when the storage engine must first create a filesystem checkpoint.
 
 Backup and restore errors returned to remote callers are sanitized and carry an operation ID. The full path and backend exception detail stay in server logs under the same ID.
 

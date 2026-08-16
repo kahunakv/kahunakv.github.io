@@ -99,6 +99,7 @@ const sidebars = {
         'server-installation',
         'server-configuration',
         'backend-io-scheduler',
+        'replica-placement',
         'leader-balancing',
         'backups-and-point-in-time-recovery',
         'embedded-kahuna-node',

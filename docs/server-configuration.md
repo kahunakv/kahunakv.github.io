@@ -25,6 +25,7 @@ The JSON response includes:
 | `ready` | `true` when the node can serve requests. Mirrors the HTTP status. |
 | `initialized` | `true` after the node has received and applied the cluster partition map. |
 | `localRole` | Local membership role, such as `Voter`, `Learner`, `Leaving`, or `NotMember`. |
+| `hostedPartitions` | Number of data partitions hosted locally. Informational only; with replica placement a ready node can host zero partitions and still forward requests. |
 
 Use readiness for traffic routing. Membership can be available before the node is initialized, so a node may answer membership queries while still refusing key/value requests.
 
@@ -59,12 +60,32 @@ Use readiness for traffic routing. Membership can be available before the node i
 | `--raft-host` | Host advertised for Raft consensus and replication traffic. | `localhost` |
 | `--raft-port` | Port advertised for Raft consensus and replication traffic. | `2070` |
 
+## Replica Placement
+
+Replication factor controls which nodes host each partition. `0` keeps the default full-replication mode where every roster voter hosts every partition. A positive value creates explicit per-partition replica sets. See [Replication Factor and Replica Placement](/docs/replica-placement/) for rollout, placement inspection, backup behavior, and migration notes.
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--raft-replication-factor` | Desired voter replicas per partition. `0` means full replication. Prefer odd values such as `3` or `5`. | `0` |
+| `--raft-enable-placement-rebalancer` | Enable ongoing replica-placement repair and balancing on the partition `0` leader. Initial placement still applies when `--raft-replication-factor` is positive. | disabled |
+| `--raft-max-replica-moves-per-pass` | Maximum new replica add/remove sequences started in one placement-controller pass. | `2` |
+| `--raft-max-concurrent-replica-transfers` | Maximum partitions with an in-flight learner catch-up or replica removal. | `1` |
+| `--raft-replica-count-deadband` | Replica-count imbalance tolerated before balance moves start. Under-replicated partitions bypass this deadband. | `1` |
+| `--raft-zone` | Optional zone or rack hint for the local node. Placement prefers spreading replicas across distinct zones. | empty |
+| `--raft-enable-load-reports` | Gossip per-partition load reports even when no other feature enabled them. Load reports are enabled automatically by leader balancing, placement rebalancing, or a positive replication factor. | disabled |
+
 ## Workers and Runtime
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
 | `--locks-workers` | Number of lock actors/workers. Values less than or equal to `0` are normalized to at least `256` or `Environment.ProcessorCount * 4`, whichever is larger. | `128` |
 | `--keyvalue-workers` | Number of key/value actors/workers. Values less than or equal to `0` are normalized to at least `256` or `Environment.ProcessorCount * 4`, whichever is larger. | `128` |
+| `--sequencer-workers` | Number of sequence actors/workers. Values less than or equal to `0` are auto-sized. | `128` |
+| `--sequencer-block-size` | Values reserved per sequence compare-and-swap. Larger blocks amortize one Raft commit across more sequence values but can leave larger gaps if a block is abandoned. | `1000` |
+| `--sequencer-idempotency-retention-max` | Maximum idempotency entries retained per sequence record. `0` disables the count cap. | `256` |
+| `--sequencer-idempotency-retention-ttl` | Seconds within which retrying a keyed sequence reservation replays the same allocation. `0` disables age pruning. | `600` |
+| `--sequencer-max-sequences-per-actor` | Maximum resident sequences per actor before least-recently-used sequence state is evicted. `0` is unbounded. | `10000` |
+| `--sequencer-block-lease` | Seconds a reserved sequence block may be served from memory before revalidating against the durable record. `0` disables revalidation. | `5` |
 | `--background-writer-workers` | Number of background persistence writer workers. Values less than or equal to `0` are normalized to `1`. | `1` |
 | `--backend-read-io-threads` | Dedicated Kahuna backend read pool threads for point gets, existence checks, read-before-write work, and scans. Separate from the Raft WAL read pool. Values less than or equal to `0` auto-size to the processor count. | `8` |
 | `--backend-write-io-threads` | Dedicated Kahuna backend writer pool threads for background batch writes and pruning. Keep this small because backend writes are fsync-heavy. Values less than or equal to `0` auto-size to the processor count. | `1` |
@@ -106,6 +127,8 @@ Durable transaction decision, materialization, settlement, recovery, and range-m
 | `--pitr-window` | Recoverable WAL history in seconds. Values are normalized to a range greater than `0` and no more than `21600` seconds (6 hours). Increasing this value increases retained WAL storage. | `3600` |
 | `--base-snapshot-interval` | Intended interval between base checkpoints per partition, in seconds. It must be positive and no greater than `--pitr-window`. This setting contributes to the protected WAL floor but does not schedule backups automatically. | `1800` |
 | `--pitr-backup-dir` | Root directory for backup catalog manifests and artifacts. Backup REST/gRPC, client, and CLI operations are disabled when this is empty. It is required by `--pitr-bootstrap-from`. | empty |
+| `--pitr-backup-target` | Backup storage target. `local` stores manifests and artifacts under `--pitr-backup-dir`. Other values require a host-registered backup storage provider. | `local` |
+| `--pitr-backup-scratch-dir` | Local staging directory used when the selected backup target cannot be written to directly by the storage engine. Size it for one full backup. | empty |
 | `--pitr-backup-cluster-id` | Operator-assigned cluster identity stamped into backup manifests. Set the same value on every node to prevent cross-cluster chain resolution. | empty |
 | `--pitr-backup-mac-key-file` | Path to the HMAC-SHA-256 key file used to authenticate backup manifests. Keep it outside `--pitr-backup-dir` and readable only by the server user. | empty |
 | `--pitr-restore-root` | Server-owned root directory that restore targets must be contained within. Setting this enables confined remote restore. | empty |
@@ -149,10 +172,15 @@ Persistent revision cleanup is clamped by live [snapshot holds](/docs/distribute
 | `--raft-grpc-channels-per-node` | Pooled gRPC channels opened per peer. Values are clamped between `1` and `64`; each channel holds a connection and handler for the process lifetime. | `4` |
 | `--raft-grpc-enable-multiple-http2-connections` | Allow each pooled gRPC channel to open multiple HTTP/2 connections for additional concurrent streams. | disabled |
 | `--raft-grpc-enable-snapshot-compression` | Compress Raft snapshot transfers sent over gRPC. | disabled |
+| `--raft-snapshot-receive-session-ttl` | Idle snapshot-receive session lifetime in milliseconds before the receiver drops buffered bytes. | `30000` |
+| `--raft-snapshot-max-pending-sessions` | Maximum concurrent snapshot-receive sessions across all partitions. Older inactive sessions can be evicted after the cap. | `8` |
+| `--raft-snapshot-max-pending-bytes` | Maximum buffered bytes across in-progress snapshot-receive sessions. | `536870912` |
+| `--raft-allow-legacy-snapshot-senders` | Accept snapshot chunks from older senders that omit session metadata. Use only for temporary mixed-version upgrades. | disabled |
 | `--raft-grpc-enable-append-logs-coalescing` | Coalesce multiple AppendLogs calls into one gRPC frame per write cycle for write-heavy multi-partition workloads. | disabled |
 | `--raft-grpc-append-logs-max-coalesce-batch` | Maximum AppendLogs items drained into one coalesced gRPC frame when coalescing is enabled. | `256` |
 | `--raft-transport-security` | Structured transport security JSON accepted by the CLI. The current server startup path does not parse or apply this field yet. | empty |
 | `--raft-allow-insecure-certificate-validation` | Skip TLS certificate validation for inter-node Raft gRPC traffic. Use only in development or test environments. | disabled |
+| `--raft-max-pre-auth-request-body-bytes` | Maximum Raft REST request body buffered before authentication, in bytes. Bounds unauthenticated memory use independently of host limits. | `33554432` |
 
 ## Raft Timing
 
@@ -161,6 +189,10 @@ Persistent revision cleanup is clamped by live [snapshot holds](/docs/distribute
 | `--raft-heartbeat-interval` | Leader heartbeat interval in milliseconds. | `500` |
 | `--raft-recent-heartbeat` | Recent-heartbeat window in milliseconds. | `100` |
 | `--raft-voting-timeout` | Vote wait timeout in milliseconds. | `1500` |
+| `--raft-leadership-barrier-timeout` | Milliseconds a newly elected leader waits for its promotion barrier entry to commit before stepping down. Raising it tolerates a slower quorum at the cost of failover latency. | `10000` |
+| `--raft-leadership-confirmation-timeout` | Maximum milliseconds a read-index leadership confirmation may wait for quorum acknowledgement and applied-frontier catch-up. | `2000` |
+| `--raft-enable-check-quorum` | Make a leader step down when it has not heard same-term acknowledgement from a majority for the check-quorum window. | disabled |
+| `--raft-check-quorum-interval-multiplier` | Heartbeat intervals without majority acknowledgement before check-quorum steps down a leader. | `8` |
 | `--raft-check-leader-interval` | Leader check interval in milliseconds. | `250` |
 | `--raft-timer-initial-delay` | Initial delay before Raft timers start, in milliseconds. | `2500` |
 | `--raft-update-nodes-interval` | Node registry update interval in milliseconds. | `5000` |
@@ -213,6 +245,7 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 |---------------------|-------------|---------------|
 | `--raft-backfill-threshold` | Committed-entry lag that triggers active follower backfill. | `10` |
 | `--raft-max-backfill-entries-per-round` | Maximum committed entries sent to one stale follower per heartbeat interval. | `128` |
+| `--raft-follower-saturation-backoff` | Milliseconds a leader waits before retrying backfill to a peer that reported a saturated WAL queue. | `1000` |
 | `--raft-learner-promotion-lag` | Maximum entries a learner may trail the leader while remaining eligible for voter promotion. | `10` |
 | `--raft-learner-promotion-stable-window` | Time a learner must remain within the promotion lag on all partitions, in milliseconds. | `3000` |
 
@@ -227,6 +260,7 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 | `--raft-indirect-ping-fanout` | Intermediary nodes used for indirect probing after a direct ping timeout. | `2` |
 | `--raft-suspicion-timeout` | Time a node may remain `Suspect` before becoming `Dead`, in milliseconds. | `5000` |
 | `--raft-dead-member-eviction-grace` | Time a dead node remains in the roster before partition `0` commits its removal, in milliseconds. | `30000` |
+| `--raft-enable-auto-rejoin` | Let a restarted node that finds itself removed from the roster re-run join against the remaining members. Disable only when removed live nodes must stay out. | enabled |
 | `--raft-enable-quiescence` | Stop per-partition heartbeats after an idle period and rely on SWIM for node liveness. Requires `0 < --raft-ping-interval < --raft-start-election-timeout`. | enabled |
 | `--raft-quiesce-after` | Required partition idle time before heartbeat quiescence, in milliseconds. | `1500` |
 

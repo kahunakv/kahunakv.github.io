@@ -256,6 +256,52 @@ Console.WriteLine($"LocalRole={membership.LocalRole}");
 
 Use the server readiness endpoint `GET /v1/cluster/health` for load balancer and orchestrator probes. Membership can be available before a node is initialized enough to serve key/value traffic.
 
+`GetClusterPlacement()` returns the committed per-partition replica map:
+
+```csharp
+KahunaClusterPlacementResponse placement =
+    await client.GetClusterPlacement();
+
+Console.WriteLine($"RF={placement.ReplicationFactor}");
+Console.WriteLine($"HostedHere={placement.HostedPartitionCount}");
+```
+
+When you need to inspect one node's local hosting view, pass that endpoint explicitly:
+
+```csharp
+KahunaClusterPlacementResponse nodePlacement =
+    await client.GetClusterPlacement("https://kahuna-2:8082");
+```
+
+`SetReplicationFactor(...)` commits a per-partition replication-factor override. `0` clears the override so the partition inherits the server-wide replication factor:
+
+```csharp
+KahunaSetReplicationFactorResponse response =
+    await client.SetReplicationFactor(
+        partitionId: 3,
+        replicationFactor: 5
+    );
+
+if (!response.Success)
+    Console.WriteLine(response.Reason);
+```
+
+The change adjusts the placement target. Replica movement happens later through the placement rebalancer.
+
+`LeaveCluster(...)` asks a running node to decommission itself by committing its removal from the roster:
+
+```csharp
+KahunaClusterLeaveResponse left =
+    await client.LeaveCluster("https://kahuna-3:8082");
+
+if (left.Left)
+    Console.WriteLine("Node can be stopped");
+```
+
+When the client was created with multiple endpoints, `nodeUrl` is required so the call does not decommission an arbitrary round-robin target.
+
+See [Replication Factor and Replica Placement](/docs/replica-placement/) for the server-side behavior behind these APIs.
+
 ## Snapshot Reads
 
 The .NET client supports **as-of snapshot reads** directly on top-level client methods through a `snapshotMs` parameter.

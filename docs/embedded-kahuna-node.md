@@ -119,6 +119,9 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `PitrWindow` | `1 hour` | Recoverable WAL history. Values are normalized to more than zero and at most 6 hours. |
 | `BaseSnapshotInterval` | `30 minutes` | Intended interval between base checkpoints. It must be positive and no greater than `PitrWindow`. It also contributes to the protected WAL floor. |
 | `BackupDir` | empty | Root directory for backup manifests and artifacts. Backup methods on `node.Kahuna` are disabled when empty. |
+| `BackupTarget` | `local` | Backup storage target. `local` uses `BackupDir`; other target names require `BackupStorageProvider`. |
+| `BackupScratchDir` | empty | Local staging directory for backup targets that cannot receive checkpoints directly. Size it for one full backup. |
+| `BackupStorageProvider` | `null` | Host-supplied factory for object storage or another non-local backup target. Null uses the local directory implementation. |
 | `BackupClusterId` | empty | Operator-assigned cluster identity stamped into backup manifests. Use the same value on every node. |
 | `BackupMacKeyFile` | empty | Path to the HMAC-SHA-256 key file used to authenticate backup manifests. Keep it outside `BackupDir`. |
 | `RestoreRoot` | empty | Server-owned root directory that restore targets must be contained within. Setting it enables confined remote restore. |
@@ -145,6 +148,13 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `MinLeaderStability` | `5 seconds` | Minimum leadership age before transfer. |
 | `LeaderBalancerOpsWeight` | `1.0` | Operations-per-second weight in the balancer load score. |
 | `LeaderBalancerQueueWeight` | `0.5` | Queue-depth weight in the balancer load score. |
+| `ReplicationFactor` | `0` | Desired voter replicas per partition. `0` keeps full replication. Prefer odd values such as `3` or `5` in multi-node deployments. |
+| `EnablePlacementRebalancer` | `false` | Enable ongoing replica-placement repair and balancing. Initial placement still applies when `ReplicationFactor` is positive. |
+| `MaxReplicaMovesPerPass` | `2` | Maximum new replica add/remove sequences started in one placement pass. |
+| `MaxConcurrentReplicaTransfers` | `1` | Maximum partitions with an in-flight learner catch-up or replica removal. |
+| `ReplicaCountDeadband` | `1` | Replica-count imbalance tolerated before balance moves start. |
+| `Zone` | `null` | Optional zone or rack hint used to spread replicas across failure domains. |
+| `EnableLoadReports` | `false` | Gossip per-partition load reports even when leader balancing, placement rebalancing, or replication factor did not already enable them. |
 | `ReadIOThreads` | `8` | Number of Raft read I/O threads. |
 | `WriteIOThreads` | `8` | Number of Raft write I/O threads. |
 | `EnableSharedExecutorPool` | `true` | Share a bounded worker pool across Raft partitions instead of using one OS thread per partition. |
@@ -220,4 +230,5 @@ Some `KahunaConfiguration` options are not currently exposed by either `Kahuna.S
 - Use distinct `StoragePath` and `WalPath` values when using `sqlite` or `rocksdb`.
 - Set `BackupDir` to enable backup, catalog, and offline restore methods through `node.Kahuna`. See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/).
 - Load-based splitting requires a multi-node embedded deployment, key-range-routed spaces, and `EnableLeaderBalancer = true`. See [Load-Based Range Splitting](/docs/distributed-keyvalue-store/load-based-range-splitting/).
+- Positive `ReplicationFactor` values are intended for multi-node embedded deployments. `0` keeps the single-node/full-replication default. See [Replication Factor and Replica Placement](/docs/replica-placement/).
 - Always dispose the node with `await using` or `DisposeAsync` so Raft leaves the cluster and file-backed resources are released.

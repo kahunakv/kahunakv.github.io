@@ -38,6 +38,8 @@ Kahuna retains a sliding interval of WAL history for point-in-time recovery. The
 | `--pitr-window` | `3600` seconds | More than `0`, up to `21600` | How far back a restore target may be. Increasing it retains more WAL and consumes more disk. |
 | `--base-snapshot-interval` | `1800` seconds | More than `0`, no greater than `--pitr-window` | Intended interval between base checkpoints. A shorter interval reduces WAL replay during restore but creates checkpoints more often. |
 | `--pitr-backup-dir` | empty | Writable directory path used for backup manifests and artifacts. Kahuna creates it when needed. Backup APIs are disabled when this is empty. |
+| `--pitr-backup-target` | `local` | Storage target name. The built-in `local` target uses `--pitr-backup-dir`; non-local targets require a host-registered backup storage provider. |
+| `--pitr-backup-scratch-dir` | empty | Local staging directory required by backup targets that cannot receive storage-engine checkpoints directly. Size it for one whole full backup. |
 | `--pitr-backup-cluster-id` | empty | String | Operator-assigned cluster identity stamped into backup manifests. Set the same value on every node to prevent chaining or restoring artifacts from another cluster. |
 | `--pitr-backup-mac-key-file` | empty | File path | Secret key file used to authenticate manifests with HMAC-SHA-256. Set the same key file contents on every node and keep it outside the backup directory. |
 | `--pitr-restore-root` | empty | Directory path | Server-owned root that remote restore targets must stay under. Setting it enables confined restore over REST/gRPC/client/CLI. |
@@ -85,6 +87,8 @@ kahuna-server \
 For production clusters, point every node at the same shared `--pitr-backup-dir`. Coordinated backups are accepted only by the node currently leading the meta partition. Because that coordinator can move over time, a node-local backup directory gives each node only a partial catalog.
 
 `--pitr-backup-cluster-id` and `--pitr-backup-mac-key-file` should be identical on every node. The cluster ID prevents accidental cross-cluster chain resolution. The MAC key authenticates manifest identity, coverage, and digest metadata before restore.
+
+The built-in backup target is `local`. The backup storage layer also supports host-registered targets for object storage or other artifact stores, but those providers live outside the default server package. When using a non-local target, configure `--pitr-backup-target` to the provider name and set `--pitr-backup-scratch-dir` if the target needs a local checkpoint staging area.
 
 ### Kahuna CLI
 
@@ -234,6 +238,14 @@ Enabling a MAC key means older unsigned backups cannot be restored under that co
 
 A full or coordinated backup can fail with `TopologyChanged` if partition ownership, range metadata, or cluster membership changes while Kahuna is building the backup. Nothing is published in that case. Retry once the topology is stable.
 
+### Replica Placement Coverage
+
+With the default full-replication topology, any voter has every partition locally and can produce a backup covering the whole cluster.
+
+With a positive [replication factor](/docs/replica-placement/), a node stores only the partitions it hosts. A backup taken on that node records both the complete cluster partition set and the subset actually covered by the artifact. Restore, chain validation, and PITR bootstrap reject a chain with `RestrictedCoverage` if the union of its artifacts does not cover every cluster partition.
+
+Kahuna does not currently compose one cluster-wide backup from per-node artifacts. If whole-cluster backup and restore are required, keep full replication enabled or use a replication factor equal to the voter count.
+
 ### Root Safety
 
 Restore target safety is enforced separately from backup-root safety:
@@ -349,6 +361,7 @@ Backup and restore failures expose stable outcome names so automation does not n
 | `TopologyChanged` | Partition topology or membership changed during backup. Retry after the cluster is stable. |
 | `NotBackupCoordinator` | The node is not the current coordinated-backup owner. Retry against the meta-partition leader. |
 | `InsecureRoot` | The configured backup or restore root is unsafe. Fix permissions or path layout before retrying. |
+| `RestrictedCoverage` | The selected chain does not cover every cluster partition, commonly because it was taken on a node that hosted only some partitions under replica placement. |
 
 Metrics are emitted on the `Kahuna` meter. Backup and restore operations report operation counts, failures, bytes, duration, and restored entry counts. Backup GC reports runs, orphan reclamations, retention deletions, and reclaimed bytes.
 
@@ -365,5 +378,6 @@ Metrics are emitted on the `Kahuna` meter. Backup and restore operations report 
 - Set `--pitr-backup-cluster-id` and `--pitr-backup-mac-key-file` consistently on every production node.
 - Configure `--pitr-restore-root` on any node that accepts remote restore requests.
 - Use `--backup-restore-throttle-mbps` when restore I/O competes with foreground traffic.
+- Plan backup coverage before enabling a positive replication factor. A one-node backup may no longer cover the whole cluster.
 
 A restored node can seed a later cluster join, but membership and Raft catch-up are separate operations. If its restore point is still within retained history, replicas can transfer only the remaining log. Otherwise, normal cluster recovery may require a complete state transfer.

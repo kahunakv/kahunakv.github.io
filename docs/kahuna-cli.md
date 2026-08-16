@@ -115,6 +115,47 @@ kahuna-cli -c "https://kahuna-1:8082" --cluster-members
 
 The output includes membership version, local role, and an `Initialized` flag. `Initialized` tells you whether the contacted node has completed cluster initialization. A node can appear in membership before it is ready to serve key/value traffic, so use the server readiness endpoint `GET /v1/cluster/health` for load balancer or orchestrator probes.
 
+Use `--cluster-leave` to decommission a node by committing its removal from the cluster roster:
+
+```bash
+kahuna-cli \
+  -c "https://kahuna-1:8082,https://kahuna-2:8082,https://kahuna-3:8082" \
+  --cluster-leave \
+  --node "https://kahuna-3:8082"
+```
+
+Stop the process only after the response reports that the node left. Kahuna refuses a leave that would remove the last voter needed to keep the cluster available.
+
+## Replica Placement
+
+Use `--cluster-placement` to inspect per-partition replica placement:
+
+```bash
+kahuna-cli -c "https://kahuna-1:8082" --cluster-placement
+kahuna-cli -c "https://kahuna-1:8082" --cluster-placement --format json
+```
+
+The output includes the global replication factor, whether the placement rebalancer is enabled, each partition's effective replication factor, the replica endpoints, replica roles, and which partitions the contacted node hosts locally.
+
+Set a per-partition replication factor override with `--set-replication-factor` and `--partition`:
+
+```bash
+kahuna-cli \
+  -c "https://kahuna-1:8082,https://kahuna-2:8082,https://kahuna-3:8082" \
+  --set-replication-factor 5 \
+  --partition 3
+```
+
+Use `0` to clear the override so the partition inherits the server-wide replication factor:
+
+```bash
+kahuna-cli -c "https://kahuna-1:8082" \
+  --set-replication-factor 0 \
+  --partition 3
+```
+
+See [Replication Factor and Replica Placement](/docs/replica-placement/) for the server flags and operational behavior.
+
 ## Backup and Restore
 
 The target server must be started with `--pitr-backup-dir`. For production clusters, point every node at the same shared backup directory and set the same `--pitr-backup-cluster-id`. Backups and catalog operations run against the node selected by `-c`, whose visible catalog is whatever that node sees at `--pitr-backup-dir`.

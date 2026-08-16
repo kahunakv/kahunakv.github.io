@@ -27,13 +27,15 @@ When network partitions or communication disruptions occur, Raft's intrinsic rec
 
 ## Raft Group Configuration
 
-Within Kahuna, each Region corresponds to a distinct Raft group typically comprising three replica nodes. The operational structure assigns one replica as the leader responsible for processing all read and write requests directed to that partition. The remaining replicas function as followers, continuously replicating data changes from the leader to maintain synchronized states.
+Each Kahuna partition is a distinct Raft group. In the default full-replication mode, every roster voter hosts every partition. With [replication factor and replica placement](/docs/replica-placement/), each partition has an explicit voter set, such as three or five replicas, and quorum is computed over that partition's voter replicas only.
+
+One replica is elected leader and processes requests for that partition. Followers replicate committed data from the leader. Nodes that do not host a partition can still accept client requests and forward them to a hosting replica.
 
 ## Leadership Management
 
 Leadership transitions occur through a voting mechanism triggered when the current leader becomes unresponsive or experiences failures. Each leadership election establishes a new "term" represented by a monotonically increasing counter value. The protocol strictly enforces that only one leader can exist per term within each Raft group, preventing split-brain scenarios.
 
-In multi-partition clusters, independent elections can leave one node leading more partitions or more high-traffic partitions than its peers. Kahuna's optional [leader balancer](/docs/leader-balancing/) monitors leader count and partition load, then suggests normal Raft leadership handoffs. It changes leadership placement without moving partition data.
+In multi-partition clusters, independent elections can leave one node leading more partitions or more high-traffic partitions than its peers. Kahuna's optional [leader balancer](/docs/leader-balancing/) monitors leader count and partition load, then suggests normal Raft leadership handoffs. It changes leadership placement without moving partition data. Replica placement is a separate feature that changes which nodes store and vote for a partition.
 
 ## Transaction Support
 

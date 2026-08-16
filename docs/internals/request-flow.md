@@ -21,7 +21,7 @@ The public transport layer parses the request and calls the `IKahuna` surface. F
 | Sequences | `SequencerManager` |
 | Backup and restore | `BackupService` |
 
-Clients may contact any node. If the receiving node is not the leader for the target partition, Kahuna routes or forwards the request to the current leader.
+Clients may contact any node. If the receiving node is not the leader for the target partition, Kahuna routes or forwards the request to the current leader. With replica placement, the receiving node may also be a non-host for that partition; it resolves a hosting replica and forwards the request instead of rejecting it only because it has no local copy.
 
 Transaction priority admission runs only after this leader routing. Followers do not queue transaction starts they will not execute. When a script or interactive session is admitted after waiting, Kahuna starts it with the HLC timestamp from admission time, not from the time it first entered the queue.
 

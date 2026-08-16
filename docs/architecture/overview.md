@@ -2,7 +2,7 @@ import Architecture1 from '../assets/architecture.png';
 
 # Architecture Overview
 
-Kahuna is a partitioned cluster for [distributed locks](/docs/distributed-locks), [key/value storage](/docs/distributed-keyvalue-store), and [sequences](/docs/distributed-sequencer). Each partition is a Raft group with one leader and multiple replicas. Clients can talk to any node; Kahuna routes each request to the leader that owns the target key, lock, or sequence.
+Kahuna is a partitioned cluster for [distributed locks](/docs/distributed-locks), [key/value storage](/docs/distributed-keyvalue-store), and [sequences](/docs/distributed-sequencer). Each partition is a Raft group with one leader and multiple replicas. Clients can talk to any node; Kahuna routes or forwards each request to the leader that owns the target key, lock, or sequence.
 
 <div style={{textAlign: 'center'}}>
 <img src={Architecture1} height="350" />
@@ -20,6 +20,8 @@ Kahuna routes data by partition:
 - Registered key ranges can use range routing instead of hash routing.
 
 The leader for a partition serializes operations for that partition. Persistent mutations are replicated through Raft before they are acknowledged. If the leader fails, another replica can be elected and continue from the committed log.
+
+By default, every voter hosts every partition. Operators can also configure a [replication factor](/docs/replica-placement/) so each partition is hosted by a smaller replica set while non-hosting nodes continue to forward client requests.
 
 ## Consensus
 
@@ -53,6 +55,7 @@ Kahuna scales by adding partitions and distributing partition leadership:
 
 - New nodes can join an existing cluster, catch up, and become eligible to lead partitions.
 - Nodes can leave for maintenance or decommissioning.
+- A positive replication factor spreads partition replicas without forcing every node to store every partition.
 - The opt-in [leader balancer](/docs/leader-balancing/) can gradually redistribute partition leadership.
 - Key-range spaces can split when a range becomes too large or too hot.
 

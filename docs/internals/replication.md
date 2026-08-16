@@ -59,6 +59,35 @@ Clients may contact any node. If the receiving node is not the leader for a reso
 
 The production implementation uses gRPC and shared batchers. This lets Kahuna combine related inter-node requests and reduce per-operation network overhead.
 
+With [replica placement](/docs/replica-placement/), the receiving node may also be a non-host for the target partition. It still accepts the client request, resolves the partition's hosting replicas, and forwards to a node that can serve the partition. Hosting changes can race with requests, so callers may see retryable responses while a partition is moving.
+
+## Replica Placement
+
+Kahuna's default placement is full replication: every voter hosts every partition. A positive replication factor stores each data partition on an explicit replica set.
+
+The partition map records:
+
+- The partition lifecycle state
+- The partition generation
+- The effective replication factor
+- Replica endpoints
+- Replica roles such as `Voter`, `Learner`, and `Removing`
+
+Replica changes are committed through the meta partition before data movement proceeds. A new replica starts as a learner, catches up from the log or a partition snapshot, and is promoted only after it is close enough to the leader for the configured stable window. Removals are staged so a partition keeps a safe voter set while the old host is drained and purged.
+
+The placement controller runs on the partition `0` leader. It repairs under-replicated partitions first, then removes extra replicas, then balances replica counts across nodes. Per-partition overrides change the target; the controller performs the actual movement on later passes.
+
+Useful placement metrics include:
+
+| Metric | Meaning |
+|--------|---------|
+| `kahuna.placement.replicas_gained` | Replica records added to the local node. |
+| `kahuna.placement.replicas_lost` | Replica records removed from the local node. |
+| `kahuna.placement.forwards_resolved` | Requests forwarded successfully using placement information. |
+| `kahuna.placement.forwards_unresolved` | Forwarding attempts that could not resolve a valid host. |
+| `kahuna.placement.leader_hint_hits` | Forwarding used a known partition leader hint. |
+| `kahuna.placement.leader_hint_misses` | Forwarding had to proceed without a usable leader hint. |
+
 ## Leader Changes
 
 Raft handles leader election per partition. When a leader changes:
