@@ -5,7 +5,7 @@
 <meta name="generator" content="Docusaurus v3.10.2">
 <title data-rh="true">Actor Model | Kahuna</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://kahunakv.github.io/img/kahuna-social-card.png"><meta data-rh="true" name="twitter:image" content="https://kahunakv.github.io/img/kahuna-social-card.png"><meta data-rh="true" property="og:url" content="https://kahunakv.github.io/docs/internals/actor-model/"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Actor Model | Kahuna"><meta data-rh="true" name="description" content="Kahuna uses the Nixie actor system to isolate mutable state and serialize operations that must not run concurrently. The actors are not just a concurrency convenience; they define the ownership boundaries for locks, key/value entries, proposals, and background persistence."><meta data-rh="true" property="og:description" content="Kahuna uses the Nixie actor system to isolate mutable state and serialize operations that must not run concurrently. The actors are not just a concurrency convenience; they define the ownership boundaries for locks, key/value entries, proposals, and background persistence."><link data-rh="true" rel="icon" href="/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://kahunakv.github.io/docs/internals/actor-model/"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/internals/actor-model/" hreflang="en"><link data-rh="true" rel="alternate" href="https://kahunakv.github.io/docs/internals/actor-model/" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Actor Model","item":"https://kahunakv.github.io/docs/internals/actor-model"}]}</script><link rel="alternate" type="application/rss+xml" href="/blog/rss.xml" title="Kahuna RSS Feed">
 <link rel="alternate" type="application/atom+xml" href="/blog/atom.xml" title="Kahuna Atom Feed"><link rel="stylesheet" href="/assets/css/styles.4bb7515f.css">
-<script src="/assets/js/runtime~main.d140c493.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.111d4fde.js" defer="defer"></script>
 <script src="/assets/js/main.1e3c1872.js" defer="defer"></script>
 </head>
 <body>
@@ -19,7 +19,7 @@
 <ul>
 <li class="">Single-message-at-a-time execution for each worker.</li>
 <li class="">Predictable ownership of in-memory maps and B-trees.</li>
-<li class="">Backpressure through actor mailboxes and routers.</li>
+<li class="">Backpressure through actor mailboxes and bounded request admission.</li>
 <li class="">Separate pools for ephemeral and persistent objects.</li>
 <li class="">A clean split between request routing, proposal handling, and state mutation.</li>
 </ul>
@@ -33,7 +33,7 @@
 <li class=""><code>BackgroundWriterActor</code></li>
 <li class="">the selected <code>IPersistenceBackend</code></li>
 </ul>
-<p>The managers are responsible for locating partition leaders, forwarding remote requests, and choosing the right actor router.</p>
+<p>The managers are responsible for locating partition leaders, forwarding remote requests, and choosing the right actor ring or router.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="lock-actors">Lock Actors<a href="#lock-actors" class="hash-link" aria-label="Direct link to Lock Actors" title="Direct link to Lock Actors" translate="no">​</a></h2>
 <p><code>LockManager</code> starts separate routers for ephemeral and persistent lock actors:</p>
 <ul>
@@ -44,7 +44,7 @@
 <p><code>LockActor</code> keeps lock state in memory in a dictionary keyed by resource name. It processes operations such as acquire, extend, release, and get. Because each actor processes one message at a time, lock ownership and fencing-token updates are serialized for the resources routed to that actor.</p>
 <p>Persistent locks queue dirty state to <code>BackgroundWriterActor</code> after committed changes.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="keyvalue-actors">Key/Value Actors<a href="#keyvalue-actors" class="hash-link" aria-label="Direct link to Key/Value Actors" title="Direct link to Key/Value Actors" translate="no">​</a></h2>
-<p><code>KeyValuesManager</code> starts separate routers for ephemeral and persistent key/value actors:</p>
+<p><code>KeyValuesManager</code> starts separate fixed rings for ephemeral and persistent key/value actors:</p>
 <ul>
 <li class=""><code>ephemeral-keyvalue-*</code></li>
 <li class=""><code>persistent-keyvalue-*</code></li>
@@ -58,7 +58,8 @@
 <li class="">Recent revisions</li>
 <li class="">MVCC entries</li>
 </ul>
-<p>Consistent-hash routing keeps operations for the same key or bucket stable across a worker set. This reduces locking inside the actor and keeps related state local.</p>
+<p>Consistent-hash routing keeps operations for the same key or bucket stable across a worker set. Key/value routing now resolves the target actor directly at the call site instead of passing every request through a separate router actor. That removes one mailbox hop from the hot path while preserving the same key-to-actor mapping.</p>
+<p>Each key/value actor can also reject ordinary user messages when its bounded inbox is full. Kahuna maps that rejection to retryable <code>MustRetry</code> backpressure. Control messages such as proposal completions, cache-coherence updates, flush acknowledgements, collection, and snapshot-floor probes are exempt so a hot-key flood cannot strand already in-flight work.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="replication-submission">Replication Submission<a href="#replication-submission" class="hash-link" aria-label="Direct link to Replication Submission" title="Direct link to Replication Submission" translate="no">​</a></h2>
 <p>Persistent lock mutations still use lock proposal actors. Persistent key/value mutations use the partition write aggregator instead.</p>
 <p>For a direct persistent key/value write, the owning <code>KeyValueActor</code> validates the mutation, installs the replication intent, serializes the log record, and submits a compact request to the aggregator. The aggregator performs the Raft <code>ReplicateEntries</code> call off the actor mailbox and sends completion back to the owning actor.</p>
