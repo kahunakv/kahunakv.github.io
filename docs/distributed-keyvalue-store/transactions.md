@@ -169,7 +169,7 @@ Key durability is separate from transaction **decision durability**. `KeyValueDu
 
 Durable decision mode is useful for all-persistent write sets that need recovery after finalization starts. It rejects transactions that confirmed ephemeral modifications because ephemeral values, prepared intents, and receipts cannot survive process loss.
 
-By default, durable commits can return success once the canonical decision record is durable. Materialization and intent settlement run in the background, and intent-aware reads, scans, and writes resolve committed-but-unsettled intents through the canonical record instead of serving stale data.
+By default, durable commits can return success once the canonical decision record is durable. Materialization and intent settlement run in the background, and intent-aware reads, scans, and writes resolve committed-but-unsettled intents through the canonical record instead of serving stale data. Materialization is value-free by default: Kahuna records a `MaterializeIntent` that points at the prepared intent already stored on every replica, reducing write amplification for durable transactions.
 
 ## Best Practices
 

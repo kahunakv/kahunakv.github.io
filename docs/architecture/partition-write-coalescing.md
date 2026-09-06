@@ -19,7 +19,7 @@ The aggregator keeps a queue per partition. Instead of proposing each record imm
 
 The scheduler is shared across compatible persistent log types for the same partition. A batch may contain direct key/value records plus durable transaction-record or prepared-intent entries from concurrent durable transactions. Each queued item keeps its own completion path, so a mixed batch can still resolve each caller or transaction finalizer independently.
 
-Some transaction work intentionally stays outside this scheduler. Ephemeral transaction staging and the ephemeral subset of a mixed transaction still use the legacy in-memory prepare/commit/rollback path. The persistent durable subset enters the scheduler only when finalization writes canonical records, prepared intents, materialized values, or settlement deltas.
+Some transaction work intentionally stays outside this scheduler. Ephemeral transaction staging and the ephemeral subset of a mixed transaction still use the legacy in-memory prepare/commit/rollback path. The persistent durable subset enters the scheduler only when finalization writes canonical records, prepared intents, materialization records, or settlement deltas. Current servers materialize committed durable values by reference to prepared intents by default, avoiding a second value copy through Raft.
 
 Kahuna still preserves normal consistency:
 

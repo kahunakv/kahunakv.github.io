@@ -236,11 +236,68 @@ var client = new KahunaClient([
 // ...
 ```
 
-Using a pool of reachable endpoints instead of a load balancer can help reduce network latency, as the client can connect directly to healthy nodes without going through an additional proxy layer.
+Using a pool of reachable endpoints lets the client avoid a load balancer and also enables leader-aware routing. With the default `KahunaRoutingMode.Auto`, a client configured with several endpoints learns route hints from responses and sends later point key/value, lock, and sequence operations directly to the node that owns the resource.
 
-However, this comes at the cost of reduced flexibility when adding, removing, or reconfiguring nodes in the cluster. Without a centralized load balancer, the client must be manually updated or be able to discover and manage endpoint changes dynamically.
+Route hints are advisory. If leadership or placement changes, the receiving server re-resolves the resource and forwards or returns retryable state as needed.
 
-This trade-off is common in high-performance distributed systems that prioritize low latency and direct communication over automatic infrastructure abstraction.
+See [Client Leader-Aware Routing](/docs/client-routing/) for routing modes, endpoint mapping, server advertisement flags, metadata mode, and metrics.
+
+### Configure client options
+
+Pass `KahunaOptions` when you need to tune transport behavior:
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Client.Routing;
+
+var client = new KahunaClient(
+    [
+        "https://localhost:8082",
+        "https://localhost:8084",
+        "https://localhost:8086"
+    ],
+    options: new KahunaOptions
+    {
+        GrpcChannelPoolSize = 4,
+        DefaultOperationTimeout = TimeSpan.FromSeconds(10),
+        BatchCoalescingThreshold = 10,
+        BatchCoalescingDelayMs = 2,
+        Routing = KahunaRoutingMode.Metadata,
+        RouteCacheCapacity = 8192,
+        RoutingEndpointMap = new Dictionary<string, string>
+        {
+            ["https://172.30.0.2:8082"] = "https://localhost:8082"
+        }
+    }
+);
+```
+
+`GrpcChannelPoolSize` controls how many HTTP/2 channels the client opens per endpoint. The default is `2`. Raise it when one client process is driving high concurrency and a single endpoint needs more parallel streams. Each extra channel is an additional connection, so keep it small unless measurement shows the client is the bottleneck.
+
+Routing options control how the client chooses the first node for an operation. `Learned` reuses route hints from previous responses. `Metadata` also reads the cluster routing map so new resources can go directly to their owner. `RoutingEndpointMap` is needed when servers advertise internal addresses but the application dials mapped or public addresses.
+
+For local HTTPS endpoints with a development certificate, set `AllowInsecureCertificateValidation = true`. For production certificate pinning, set `TrustedServerCertificateThumbprints` instead.
+
+Key `KahunaOptions` fields:
+
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `UpgradeUrls` | `false` | Let the client update lock-handle affinity from the server endpoint that served a lock response. |
+| `Routing` | `Auto` | Select endpoint routing mode: automatic, round-robin, learned hints, or metadata. |
+| `RouteCacheCapacity` | `4096` | Maximum learned routes kept by the client. |
+| `RouteHintLifetime` | `60 seconds` | How long a learned route can be reused before it must be observed again. |
+| `RoutingEndpointCooldown` | `5 seconds` | How long an endpoint is skipped after a transport failure. |
+| `RoutingMetadataLifetime` | `60 seconds` | How long metadata-mode routing maps are cached. |
+| `RoutingEndpointMap` | `null` | Maps server-advertised endpoints to URLs this client actually dials. |
+| `AllowUnlistedRoutingEndpoints` | `false` | Allows dialing advertised endpoints that were not configured or mapped. |
+| `MinConnections` | `1` | Lower bound for connection-related client setup. |
+| `MaxConnections` | `1` | Upper bound for connection-related client setup. |
+| `DefaultOperationTimeout` | `30 seconds` | Timeout used when a call has no cancellation token deadline. |
+| `GrpcChannelPoolSize` | `2` | gRPC channels opened per configured endpoint. |
+| `BatchCoalescingThreshold` | `10` | Minimum batch size before immediate dispatch; smaller batches may wait briefly. |
+| `BatchCoalescingDelayMs` | `2` | Maximum batch coalescing wait in milliseconds. |
+| `AllowInsecureCertificateValidation` | `false` | Skip TLS server certificate validation for local or test environments. |
+| `TrustedServerCertificateThumbprints` | empty | SHA-256 certificate thumbprints accepted for production pinning. |
 
 ## Cluster Membership
 
@@ -296,6 +353,9 @@ KahunaClusterLeaveResponse left =
 
 if (left.Left)
     Console.WriteLine("Node can be stopped");
+
+if (left.Drained)
+    Console.WriteLine("Placed replicas were evacuated first");
 ```
 
 When the client was created with multiple endpoints, `nodeUrl` is required so the call does not decommission an arbitrary round-robin target.
@@ -401,6 +461,17 @@ KahunaKeyValue refreshed = await client.SetKeyValue(
 ```
 
 Use no-revision writes to reduce memory and disk write amplification when Kahuna is acting as a pure distributed key/value cache. Use normal writes for audit history, `GetKeyValueRevision(...)`, and point-in-time reads.
+
+## Null and Empty Values
+
+Kahuna preserves the difference between a key with no payload and a key whose payload is zero bytes. In .NET, pass `null` for no payload and `Array.Empty<byte>()` for an empty byte array:
+
+```csharp
+await client.SetKeyValue("profile/empty-payload", null);
+await client.SetKeyValue("profile/zero-bytes", Array.Empty<byte>());
+```
+
+REST encodes that distinction as JSON `null` versus an empty base64 string. gRPC uses bytes-field presence. This matters for compare-value operations and for applications that use a present-but-empty payload as a meaningful value.
 
 ## Ordered Range Reads
 
@@ -547,17 +618,60 @@ Set `Flags = KeyValueFlags.SetNoRevision` for batch cache writes where old value
 
 Persistent batch writes also benefit from [partition write coalescing](/docs/architecture/partition-write-coalescing/). Kahuna can combine direct writes for the same Raft partition into fewer Raft proposals, even when they come from different client requests. This improves bursts where keys share a bucket or key-space. It does not make a batch atomic; use a transaction when all items must commit or roll back together.
 
-## Register a Key Range
+## Key-Range Administration
 
-For ordered key spaces, the client also exposes `RegisterKeyRange(...)`:
+For ordered key spaces, the client exposes key-range administration over both REST and gRPC transports.
 
 ```csharp
-bool created = await client.RegisterKeyRange("users");
+KahunaRegisterKeyRangeResponse registered =
+    await client.RegisterKeyRange("users");
+
+Console.WriteLine($"{registered.Status} {registered.RoutingMode}");
 ```
 
-This registers a key space for range-based sharding so the cluster routes that space through range descriptors instead of the default hash-routed model.
+Registration changes routing mode on the node that receives the call and seeds the replicated whole-space descriptor if needed. In a multi-node cluster, register the key space on every node. The CLI does this fan-out automatically when you pass multiple endpoints.
 
-Use this only for key spaces that are intentionally modeled as ordered ranges. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for the routing trade-offs.
+Inspect the range map:
+
+```csharp
+KahunaRangeMapResponse ranges = await client.GetRanges("users");
+
+foreach (var keySpace in ranges.KeySpaces)
+{
+    Console.WriteLine($"{keySpace.KeySpace}: {keySpace.RoutingMode}");
+    foreach (var range in keySpace.Descriptors)
+        Console.WriteLine($"{range.StartKey ?? "-inf"}..{range.EndKey ?? "+inf"} -> {range.PartitionId}");
+}
+```
+
+Force a split at an exact key:
+
+```csharp
+KahunaSplitRangeResponse split =
+    await client.SplitRange("users", "users/0500");
+
+if (!split.Determinate)
+{
+    KahunaRangeMapResponse refreshed = await client.GetRanges("users");
+    // Inspect refreshed before deciding whether the split happened.
+}
+```
+
+Run the merge pass on demand:
+
+```csharp
+KahunaMergeRangesResponse merged = await client.MergeRanges();
+Console.WriteLine($"{merged.Status}: {merged.Merges}");
+```
+
+Remove a key space from range routing:
+
+```csharp
+KahunaRemoveKeyRangeResponse removed =
+    await client.RemoveKeyRange("users");
+```
+
+Use key-range administration only for key spaces intentionally modeled as ordered ranges. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for routing behavior, split/merge outcomes, and trade-offs.
 
 ## Transport Notes
 
@@ -565,7 +679,6 @@ Some client features currently require the gRPC transport:
 
 - `GetManyKeyValues(...)` is not available over the REST transport
 - `ExistsManyKeyValues(...)` is not available over the REST transport
-- `RegisterKeyRange(...)` is not available over the REST transport
 
 If you call those APIs through the REST transport, the client throws `NotSupportedException`.
 
@@ -919,7 +1032,7 @@ Durable decision mode is different from persistent key durability:
 
 Durable decision mode rejects transactions that confirmed ephemeral modifications, because ephemeral values, prepared intents, and receipts cannot survive process loss. The active interactive session is still memory-resident; if it disappears before a canonical record is installed, retry the business operation from a new transaction.
 
-When a durable commit returns `true`, Kahuna has durably recorded the transaction decision. By default, value materialization and prepared-intent settlement may continue in the background. Kahuna's read and write paths resolve committed-but-unsettled intents through the canonical record, and recovery finishes settlement if a background run is lost. If commit returns `false` or throws `MustRetry`, retry the same commit operation and treat it as uncertainty rather than a conflict.
+When a durable commit returns `true`, Kahuna has durably recorded the transaction decision. By default, value materialization and prepared-intent settlement may continue in the background. Kahuna's read and write paths resolve committed-but-unsettled intents through the canonical record, and recovery finishes settlement if a background run is lost. Recent servers materialize committed durable values by reference to prepared intents, so this behavior requires no client-side value replay. If commit returns `false` or throws `MustRetry`, retry the same commit operation and treat it as uncertainty rather than a conflict.
 
 #### Snapshot Reads in a Transaction Session
 
@@ -963,6 +1076,8 @@ Common result meanings:
 | `Aborted` | Start a new transaction if the business operation should be retried. |
 | `AlreadyLocked` | Another transaction holds a conflicting lock. Retry through `RetryableTransaction(...)` or back off manually. |
 | `Errored` | The handle is unknown, expired, or the outcome is unavailable. Treat it as an application-level uncertainty. |
+
+Pessimistic point-key operations retry transient lock-acquire refusals inside the session for a short bounded window before returning `MustRetry`. This reduces immediate retries during brief contention while still avoiding long waits inside a transaction timeout.
 
 Learn more about the coordinator lifecycle in [Distributed Transactions](/docs/architecture/distributed-transactions/) and [Transaction Lifecycle](/docs/internals/transaction-lifecycle/).
 

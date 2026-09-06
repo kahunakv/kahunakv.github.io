@@ -2,7 +2,7 @@ import Architecture1 from '../assets/architecture.png';
 
 # Architecture Overview
 
-Kahuna is a partitioned cluster for [distributed locks](/docs/distributed-locks), [key/value storage](/docs/distributed-keyvalue-store), and [sequences](/docs/distributed-sequencer). Each partition is a Raft group with one leader and multiple replicas. Clients can talk to any node; Kahuna routes or forwards each request to the leader that owns the target key, lock, or sequence.
+Kahuna is a partitioned cluster for [distributed locks](/docs/distributed-locks), [key/value storage](/docs/distributed-keyvalue-store), and [sequences](/docs/distributed-sequencer). Each partition is a Raft group with one leader and multiple replicas. Clients can talk to any node; Kahuna routes or forwards each request to the leader that owns the target key, lock, or sequence. New clients can also use [leader-aware routing](/docs/client-routing/) to learn owners and skip many forwarding hops.
 
 <div style={{textAlign: 'center'}}>
 <img src={Architecture1} height="350" />
@@ -78,7 +78,7 @@ Actors keep hot state in memory. Background writers flush committed persistent s
 Kahuna keeps the strongly consistent path practical with:
 
 - Actor-local state for hot reads and mutation staging
-- Direct leader routing after the target partition is known
+- Direct leader routing after the target partition is known, including learned client-side routes
 - Partition write coalescing for persistent key/value writes
 - Dedicated backend read and write schedulers
 - Background materialization, eviction, and checkpointing

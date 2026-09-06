@@ -59,6 +59,8 @@ Clients may contact any node. If the receiving node is not the leader for a reso
 
 The production implementation uses gRPC and shared batchers. This lets Kahuna combine related inter-node requests and reduce per-operation network overhead.
 
+Forwarded key/value and lock requests include a hop count. If leadership or placement metadata is briefly inconsistent, the hop budget turns a potential forwarding loop into `MustRetry`, letting the client retry after the cluster view converges.
+
 With [replica placement](/docs/replica-placement/), the receiving node may also be a non-host for the target partition. It still accepts the client request, resolves the partition's hosting replicas, and forwards to a node that can serve the partition. Hosting changes can race with requests, so callers may see retryable responses while a partition is moving.
 
 ## Replica Placement
@@ -74,6 +76,8 @@ The partition map records:
 - Replica roles such as `Voter`, `Learner`, and `Removing`
 
 Replica changes are committed through the meta partition before data movement proceeds. A new replica starts as a learner, catches up from the log or a partition snapshot, and is promoted only after it is close enough to the leader for the configured stable window. Removals are staged so a partition keeps a safe voter set while the old host is drained and purged.
+
+Catch-up is bounded on both the streaming and buffering paths. Leaders cap outbound bytes per peer, cap backfill by entry count and bytes, and retry lagging followers through heartbeat/backfill. Snapshot rescue has a convergence breaker: if repeated rescue cycles still leave a follower below the compaction floor, the leader pauses aggressive rescue for that peer while allowing periodic probes so a recovered follower can be seeded later. Small snapshot exports can be cached for retry so a failed transfer does not immediately rebuild the same snapshot.
 
 The placement controller runs on the partition `0` leader. It repairs under-replicated partitions first, then removes extra replicas, then balances replica counts across nodes. Per-partition overrides change the target; the controller performs the actual movement on later passes.
 

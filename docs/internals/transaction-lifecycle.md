@@ -145,11 +145,14 @@ The durable finalizer runs this sequence:
 2. Initialize the canonical record as `Undecided` and prepare the anchor partition's intents in one atomic ordered proposal when the anchor is also a participant.
 3. Prepare every other participant partition concurrently.
 4. Retry a prepare in place when it is blocked only by a predecessor's committed-but-unsettled intent.
-5. Validate the read set after every prepare is durable.
-6. Compare-and-set the canonical record to `Commit` only when every prepare succeeded and validation passed. Otherwise compare-and-set it to `Abort`.
-7. Resolve prepared intents from the record outcome.
+5. Validate staged bases and the read set after every prepare is durable.
+6. Confirm staged-base fence verdicts from prepared replicas before committing.
+7. Compare-and-set the canonical record to `Commit` only when every prepare succeeded and validation passed. Otherwise compare-and-set it to `Abort`.
+8. Resolve prepared intents from the record outcome.
 
 The decision record is the point of no return. Once it commits as `Commit`, Kahuna must not later report a definite abort for that transaction. If a concurrent recovery pass wins the record as `Abort`, the finalizer reports the record's actual outcome, not the outcome it hoped to write.
+
+Validated-base writes get a second lost-update fence after prepare. The leader checks the current committed base before prepare, each replica remembers the committed head it saw while applying the prepare, and the finalizer asks replicas for those verdicts before writing `Commit`. A `StaleBase` verdict aborts the transaction as a conflict. Missing or unreachable verdicts are counted as unattested and do not by themselves block commit; the canonical decision still follows the ordered record path.
 
 ## Decision Deadlines
 
@@ -198,6 +201,16 @@ Kahuna handles that window through intent-aware visibility:
 When the canonical record is not local, the read or write path can route a lookup to the anchor-partition leader and retry with the terminal decision. It does not serve the stale pre-transaction value just because settlement has not materialized yet.
 
 Setting `DurableDeferredSettlement` to `false` restores synchronous settlement: the finalizer waits for materialization and settlement before returning success.
+
+By default, durable materialization writes `MaterializeIntent` records. These records carry the intent identity, revision, state, and commit timestamp, but not the value bytes. Each replica resolves the value from the prepared intent it already holds, which avoids sending and storing the same committed value through Raft a second time. Use by-value materialization only during mixed-version upgrades from builds that cannot apply `MaterializeIntent`.
+
+## One-Phase Apply-Time Validation
+
+Some durable transactions can avoid the full two-phase sequence. When all modified keys are on the anchor partition and the read dependencies can be checked on that same partition, Kahuna can bundle record initialization, prepare, and commit into one Raft proposal.
+
+`OnePhaseApplyTimeValidation` extends that fast path to read-modify-write and read-carrying durable transactions in multi-process Raft groups. The bundled commit carries its written keys, validated bases, and same-partition point-read dependencies. Each replica judges the bundle at apply time, in log order, against the committed-head ledger. If another committed write moved a base or read dependency before the bundle applies, the bundled commit is rejected rather than committing a lost update.
+
+The option is off by default. Enable it only after every node in the group runs a version that persists the committed-head ledger and applies the extended gate. While it is enabled, `StagedBaseFenceRetentionMs` must match across the group because that horizon controls how long the ledger can prove a base or read has not moved.
 
 ## Recovery
 
@@ -259,6 +272,9 @@ Important transaction bounds:
 | `DurableDecisionOutstandingMax` | Hard cap on outstanding undecided canonical records admitted by a node |
 | `DurablePreparedIntentMaxCount` | Resident prepared-intent count bound |
 | `DurablePreparedIntentMaxBytes` | Resident prepared-intent value-byte bound |
+| `DurableMaterializeByReference` | Enables value-free committed-intent materialization |
+| `SessionOwnedIntentCeilingMs` | Maximum age for orphaned session-owned write intents and no-expiry range locks |
+| `OnePhaseApplyTimeValidation` | Allows eligible bundled durable commits to validate reads and bases at apply time |
 | `TransactionOutcomeRetentionMax` | Retained terminal outcome count for duplicate finalize idempotency |
 | `TransactionOutcomeRetentionTtl` | Retained terminal outcome age window |
 | `MaxTransactionTimeout` | Upper bound for admitted interactive session lifetime |

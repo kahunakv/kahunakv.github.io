@@ -83,6 +83,13 @@ Start with the defaults. They intentionally move leadership slowly to limit chur
 | `--raft-suggestion-timeout` | `15000` ms | Time allowed for a suggested transfer to appear in reports |
 | `--raft-leader-balancer-ops-weight` | `1.0` | Weight assigned to operations per second in the load score |
 | `--raft-leader-balancer-queue-weight` | `0.5` | Weight assigned to pending queue depth in the load score |
+| `--raft-enable-slow-node-avoidance` | `false` | Avoid nodes whose WAL commit wait is far above the cluster median |
+| `--raft-slow-node-multiplier` | `3.0` | Ratio above median commit wait required for slow-node candidacy |
+| `--raft-slow-node-floor-ms` | `10.0` ms | Absolute commit-wait floor below which a node is never slow |
+| `--raft-slow-node-min-samples` | `20` | WAL group batch samples required before classification |
+| `--raft-slow-node-observation-ttl` | `30000` ms | Maximum age of a commit-wait observation |
+| `--raft-slow-node-enter-passes` | `3` | Consecutive passes required to enter slow classification |
+| `--raft-slow-node-exit-passes` | `6` | Consecutive clean passes required to exit slow classification |
 
 The partition load score is approximately:
 
@@ -100,6 +107,7 @@ Change settings only for an observed problem:
 - **Hot partitions remain together:** increase the operations or queue weight that best represents the workload bottleneck
 - **Successful transfers time out:** increase `--raft-suggestion-timeout` so the new leader report has time to reach the planner
 - **Planning passes are skipped:** verify every node has balancing enabled and keep the report TTL comfortably above the report interval
+- **One node has much slower storage:** enable slow-node avoidance so the balancer stops sending it new leaders and gradually drains the leaders it already has
 
 Faster convergence creates more leadership changes. Prefer gradual movement unless a measured bottleneck justifies more aggressive settings.
 

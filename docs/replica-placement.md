@@ -49,10 +49,13 @@ kahuna-server \
   --raft-replication-factor 3 \
   --raft-enable-placement-rebalancer true \
   --raft-max-replica-moves-per-pass 2 \
+  --raft-max-concurrent-replica-repairs 3 \
   --raft-max-concurrent-replica-transfers 1
 ```
 
-The rebalancer repairs under-replicated partitions, trims over-replicated partitions, and smooths replica-count skew. It moves data gradually so catch-up and snapshot transfer do not overwhelm foreground traffic.
+The rebalancer repairs under-replicated partitions, trims over-replicated partitions, and smooths replica-count skew. It has its own controller interval, `--raft-placement-pass-interval`, so it does not require the leader balancer to be enabled.
+
+Repair and balance are budgeted separately. Repair moves restore durability after a node leaves or fails and are controlled by `--raft-max-concurrent-replica-repairs`. Balance moves smooth replica-count skew and are controlled by `--raft-max-concurrent-replica-transfers`. `--raft-max-replica-moves-per-pass` caps how many new moves can start during one pass across both priorities.
 
 Replica moves happen in stages:
 
@@ -63,6 +66,27 @@ Replica moves happen in stages:
 5. Purge local data from nodes that no longer host the partition
 
 During a move, a request can receive a retryable response if leadership or hosting changes at the same time. Retrying against the cluster is the normal client behavior.
+
+## Decommissioning a Node
+
+On a placed cluster, a graceful leave drains the node before removing it from the roster. Kahuna first copies the departing node's hosted replicas to survivors, then commits the membership removal.
+
+```bash
+kahuna-cli \
+  -c "https://kahuna-1:8082,https://kahuna-2:8082,https://kahuna-3:8082" \
+  --cluster-leave \
+  --node "https://kahuna-3:8082"
+```
+
+The leave response includes:
+
+- `left`: the node is no longer in the committed roster and can be stopped
+- `drained`: the node's placed replicas were evacuated before removal
+- `outcome`: `Committed`, `NotAMember`, `RefusedDrainInProgress`, `DrainTimedOut`, or another membership outcome
+
+`--raft-decommission-drain-timeout` bounds how long the leave waits for evacuation. If it times out, the node stays in the roster, already-moved replicas stay moved, and retrying resumes the drain.
+
+Only one drain runs at a time. A second leave can return `RefusedDrainInProgress`; remove nodes sequentially during scale-down.
 
 ## Zones
 

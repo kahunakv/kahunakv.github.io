@@ -73,12 +73,22 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `RocksDbSharedMemtableBudgetMb` | `128` | Shared RocksDB memtable sub-budget in MiB. Must be less than or equal to `RocksDbSharedMemoryBudgetMb`. |
 | `RocksDbDirectReads` | `true` | Read RocksDB SST files with direct I/O so the RocksDB block cache is the primary read cache. Applies only when `Storage` is `rocksdb`. |
 | `RocksDbStatistics` | `false` | Enable RocksDB internal statistics collection and LOG dumps every 60 seconds. Useful for tuning or diagnosis, but it adds per-operation overhead. Applies only when `Storage` is `rocksdb`. |
-| `LocksWorkers` | `Environment.ProcessorCount` | Lock worker count. |
-| `KeyValueWorkers` | `Environment.ProcessorCount` | Key/value worker count. |
+| `LocksWorkers` | `0` | Lock actors per durability ring. `0` auto-sizes to `max(32, CPU cores * 4)`. |
+| `KeyValueWorkers` | `0` | Key/value actors per durability ring. `0` auto-sizes to `max(32, CPU cores * 4)`. |
 | `BackgroundWriterWorkers` | `1` | Background persistence worker count. |
+| `SequencerWorkers` | `0` | Sequence actors. `0` auto-sizes to `max(8, CPU cores)`. |
+| `SequencerBlockSize` | `1000` | Values reserved from one durable sequence record per compare-and-swap. Larger blocks reduce storage traffic but can leave larger gaps if an abandoned block is not fully issued. |
+| `SequencerIdempotencyRetentionMax` | `256` | Maximum keyed sequence-reservation idempotency entries retained per sequence record. A non-positive value disables the count cap. |
+| `SequencerIdempotencyRetentionTtl` | `10 minutes` | Window in which retrying a keyed sequence reservation replays the same allocation. `TimeSpan.Zero` disables age pruning. |
+| `SequencerMaxSequencesPerActor` | `10000` | Maximum sequence records one sequence actor keeps resident before evicting least-recently-used records and abandoning their reserved blocks. A non-positive value leaves residency unbounded. |
+| `SequencerBlockLease` | `5 seconds` | Maximum time a reserved sequence block can be served from memory before revalidation against the durable record. A non-positive value disables revalidation. |
 | `BackendReadIOThreads` | `4` | Dedicated Kahuna backend read pool size for point gets, existence checks, read-before-write work, and scans. Separate from the Raft WAL read pool. |
 | `BackendWriteIOThreads` | `1` | Dedicated Kahuna backend writer pool size for background batch writes and pruning. |
 | `BackendReadQueueDepth` | `4096` | Per-partition pending queue depth for the backend read scheduler. |
+| `ScanPageRetryBudgetMs` | `5000` | Maximum retry window for one range-scan page that keeps returning retryable state before the scan fails loudly with a retryable server error. |
+| `SessionOwnedIntentCeilingMs` | `0` | Maximum age for session-owned write intents and no-expiry range locks after their owner disappears. `0` derives the ceiling from the transaction timeout, reaper grace, and participant-effect TTL. Prepared durable intents are exempt. |
+| `StagedBaseFenceRetentionMs` | `600000` | How long the prepared-intent store remembers recently committed heads for validated-base fencing. Keep this above the longest transaction lifetime allowed by the deployment. Use the same value on every node when `OnePhaseApplyTimeValidation` is enabled. |
+| `OnePhaseApplyTimeValidation` | `false` | Allows eligible read-modify-write and read-carrying durable transactions to use the one-phase fast path in multi-process Raft groups by validating their reads and bases at apply time against the replicated committed-head ledger. Enable only after every node in the group supports the ledger and gate. |
 | `DefaultTransactionTimeout` | `5000` | Default transaction timeout in milliseconds. |
 | `MaxTransactionTimeout` | `300000` | Maximum admitted interactive transaction timeout in milliseconds. Caller-provided timeouts are clamped to this bound. |
 | `MaxConcurrentTransactions` | `0` | Script transactions that may execute concurrently before further ones queue and start in priority order. `0` disables the script admission gate. |
@@ -88,6 +98,7 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `TransactionPriorityMaxQueued` | `4096` | Callers that may wait for an admission slot per gate before further ones receive `AdmissionRefused`. `0` makes the queue unbounded. |
 | `DefaultAdmissionWaitMs` | `5000` | Admission wait used when the caller does not specify one. |
 | `MaxAdmissionWaitMs` | `30000` | Maximum admission wait allowed by the embedded node. Caller-supplied waits are clamped to this value. |
+| `StagedWriteIntentLeaseMs` | `15000` | Lease for transactional staged writes before other transactions may treat them as abandoned and write past them. |
 | `ScriptCacheExpiration` | `1 minute` | How long parsed scripts stay cached. |
 | `RevisionsToKeepCached` | `100` | Number of key revisions to keep cached in memory. |
 | `CacheEntryTtl` | `5 minutes` | Age threshold used by lock cleanup and legacy cleanup paths. Key/value LRU eviction is budget-based. |
@@ -95,8 +106,10 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `CollectionInterval` | `60 seconds` | Interval for cache collection and eviction checks. |
 | `TransactionOutcomeRetentionMax` | `10000` | Strict maximum retained terminal transaction outcomes. A non-positive value disables best-effort outcome retention. |
 | `TransactionOutcomeRetentionTtl` | `5 minutes` | Age window for retained terminal transaction outcomes. A non-positive value disables age-based removal. |
+| `CompletionReceiptRetentionTtl` | `10 minutes` | Age after which orphaned durable completion receipts can be dropped once their transaction record has already been reclaimed. |
 | `DurableDecisionOutstandingMax` | `100000` | Maximum outstanding undecided canonical durable transaction records admitted by this node. Completed records do not count against this budget. |
 | `DurableDeferredSettlement` | `true` | Return from durable commit once the canonical decision record is durable, then materialize values and settle intents in the background. Set `false` to await settlement inline. |
+| `DurableMaterializeByReference` | `true` | Materialize committed durable transactions with a value-free record that references the prepared intent already held by each replica. Set `false` only during mixed-version rollouts from builds that cannot apply `MaterializeIntent`. |
 | `DurablePreparedIntentMaxCount` | `500000` | Resident prepared-intent count bound for durable transactions. A non-positive value disables the count bound. |
 | `DurablePreparedIntentMaxBytes` | `1073741824` | Resident prepared-intent value-byte bound for durable transactions. A non-positive value disables the byte bound. |
 | `MaxEntriesPerActor` | `50000` | Maximum cached entries per actor before collection pressure applies. |
@@ -104,6 +117,7 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `CollectBatchMax` | `1000` | Maximum number of entries evicted in one collection pass. |
 | `RevisionRetention` | `16` | Number of revisions retained for in-memory revision history. |
 | `DirtyObjectsWriterDelay` | `1000` | Delay between dirty object writer flush passes, in milliseconds. Longer values can increase batching but keep dirty persistent entries pinned in memory longer. |
+| `CheckpointInterval` | `30 seconds` | Minimum checkpoint cadence for dirty partitions after flushes. Shorter intervals advance WAL compaction sooner; longer intervals reduce checkpoint churn. |
 | `KeyValueWriteLingerMs` | `1` | Delay from the oldest queued persistent partition write before a partition batch is proposed. `0` dispatches an idle partition immediately. |
 | `KeyValueWriteMaxBatchItems` | `512` | Maximum log entries selected for one partition write coalescing Raft call. |
 | `KeyValueWriteMaxBatchBytes` | `4194304` | Target serialized bytes selected for one partition write coalescing Raft call. |
@@ -133,6 +147,7 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `BackupRestoreThrottleBytesPerSec` | `0` | Throughput budget for a restore checkpoint copy. `0` is unlimited. |
 | `RangeSplitThreshold` | `1000` | Sampled key count that triggers count-based range splitting. `0` disables this trigger. |
 | `RangeSplitMinRangeSize` | `10` | Minimum sampled keys required in each child range. |
+| `RangeMergeMinSize` | `10` | Adjacent key ranges smaller than this value can be considered for automatic merging. `0` disables automatic merge. |
 | `RangeSplitLoadThreshold` | `0` | Replicated writes per second required for load-based splitting. `0` disables this trigger. |
 | `RangeSplitLoadMinQueueDepth` | `8` | WAL backlog required alongside the load threshold. |
 | `RangeSplitLoadMinCommitWaitMs` | `0` | Optional commit-wait gate in milliseconds. `0` disables it. |
@@ -141,6 +156,7 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `RangeSplitLoadImbalanceMax` | `0.8` | Maximum acceptable write fraction assigned to either child. |
 | `RangeSplitIndivisibleCooldown` | `5 minutes` | Delay before reconsidering an indivisible range. |
 | `RangeSplitSettleWindow` | `10 seconds` | Post-split delay before evaluating either child again. |
+| `RangeMoveSettleTimeout` | `10 seconds` | Maximum quiesce wait for in-flight transactions in a moving range before split or merge cutover. |
 | `EnableLeaderBalancer` | `false` | Enable cross-node load reports and leader redistribution. Required with load splitting. |
 | `LeaderBalancerReportInterval` | `5 seconds` | Interval between node load reports. |
 | `LeaderBalancerInterval` | `30 seconds` | Interval between balancing passes. |
@@ -150,11 +166,15 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `LeaderBalancerQueueWeight` | `0.5` | Queue-depth weight in the balancer load score. |
 | `ReplicationFactor` | `0` | Desired voter replicas per partition. `0` keeps full replication. Prefer odd values such as `3` or `5` in multi-node deployments. |
 | `EnablePlacementRebalancer` | `false` | Enable ongoing replica-placement repair and balancing. Initial placement still applies when `ReplicationFactor` is positive. |
-| `MaxReplicaMovesPerPass` | `2` | Maximum new replica add/remove sequences started in one placement pass. |
-| `MaxConcurrentReplicaTransfers` | `1` | Maximum partitions with an in-flight learner catch-up or replica removal. |
+| `PlacementPassInterval` | `5 seconds` | Cadence for placement-controller passes. Commit-triggered passes can still run immediately. |
+| `MaxReplicaMovesPerPass` | `4` | Maximum new replica add/remove sequences started in one placement pass across repair and balance priorities. |
+| `MaxConcurrentReplicaTransfers` | `1` | Maximum partitions with an in-flight learner catch-up or replica removal caused by balance moves. |
+| `MaxConcurrentReplicaRepairs` | `3` | Maximum in-flight repair moves for under-replicated ranges or replicas stranded on departed nodes. |
+| `DecommissionDrainTimeout` | `2 minutes` | Graceful leave wait for evacuating this node's hosted replicas before removal. |
 | `ReplicaCountDeadband` | `1` | Replica-count imbalance tolerated before balance moves start. |
 | `Zone` | `null` | Optional zone or rack hint used to spread replicas across failure domains. |
 | `EnableLoadReports` | `false` | Gossip per-partition load reports even when leader balancing, placement rebalancing, or replication factor did not already enable them. |
+| `JoinExistingSeeds` | `null` | Seed endpoints for joining an existing embedded cluster through the cluster constructor. Null or empty boots from the configured discovery roster. |
 | `ReadIOThreads` | `8` | Number of Raft read I/O threads. |
 | `WriteIOThreads` | `8` | Number of Raft write I/O threads. |
 | `EnableSharedExecutorPool` | `true` | Share a bounded worker pool across Raft partitions instead of using one OS thread per partition. |
@@ -163,7 +183,7 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `HttpAuthBearerToken` | empty | Bearer token sent with Raft REST communication. |
 | `HttpTimeout` | `5` | Raft REST request timeout in seconds. |
 | `HttpVersion` | `2.0` | HTTP protocol version used by Raft REST communication. |
-| `HeartbeatInterval` | `500 ms` | Leader heartbeat interval. |
+| `HeartbeatInterval` | `100 ms` | Leader heartbeat interval. |
 | `RecentHeartbeat` | `100 ms` | Recent-heartbeat window. |
 | `VotingTimeout` | `1500 ms` | Vote wait timeout. |
 | `CheckLeaderInterval` | `250 ms` | Leader check interval. |
@@ -175,6 +195,9 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `EndElectionTimeoutIncrement` | `200` | Maximum election timeout increment in milliseconds. |
 | `SlowRaftStateMachineLog` | `50` | Slow state-machine operation log threshold in milliseconds. |
 | `SlowRaftWALMachineLog` | `25` | Slow WAL state-machine operation log threshold in milliseconds. |
+| `RaftMaxWalGroupBatchPartitions` | `64` | Maximum partitions coalesced into one cross-partition WAL group-commit batch. |
+| `RaftWalGroupCommitLingerMs` | `0` | Optional group-commit linger window in milliseconds. `0` disables linger. |
+| `RaftWalSingleFsyncCommit` | `false` | Enables Kommander's single-fsync commit fast path for embedded nodes. Server defaults differ; embedded hosts opt in explicitly. |
 | `CompactEveryOperations` | `1000` | Number of committed operations between automatic Raft WAL compaction checks. |
 | `CompactNumberEntries` | `50` | Number of Raft WAL entries removed per compaction batch. |
 | `MaxEntriesPerCompaction` | `5000` | Maximum Raft WAL entries processed per compaction run. |
@@ -205,7 +228,7 @@ Some `KahunaConfiguration` options are not currently exposed by either `Kahuna.S
 | Option | Default | Description |
 |--------|---------|-------------|
 | `ScriptCacheMaxEntries` | `1000` | Maximum parsed scripts retained in the server-side script cache. New entries are dropped when the limit is reached. |
-| `RangeMergeMinSize` | `10` | Adjacent key ranges smaller than this value can be considered for automatic merging. `0` disables automatic merge. |
+| `MaxKeyValueActorInboxSize` | `16384` | Maximum ordinary user messages queued in one key/value actor before new ordinary messages receive retryable backpressure. Control messages such as completions, cache-coherence updates, and maintenance are exempt. `0` disables the bound. |
 | `KeyValueWriteTerminalReserveItemsPerPartition` | `256` | Extra per-partition item headroom reserved for terminal durable transaction work such as decision, materialization, settlement, recovery, and metadata handoff. |
 | `KeyValueWriteTerminalReserveBytesPerPartition` | `4194304` | Extra per-partition byte headroom reserved for terminal durable transaction work. |
 | `KeyValueWriteMaxQueuedItemsGlobal` | `131072` | Node-wide ordinary submission item cap across all partitions. |

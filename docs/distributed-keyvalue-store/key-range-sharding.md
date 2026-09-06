@@ -74,15 +74,17 @@ Range moves are protected by a **generation fence**:
 
 This prevents writes from silently landing on stale partitions after a split or merge.
 
+Splits and merges also quiesce the moving key interval during the copy and cutover window. Kahuna combines a range lock on the source partition with a replicated descriptor deadline, so writes that race with movement are refused retryably instead of being acknowledged on the old partition and lost after routing changes.
+
 ## Meta Partition
 
-The range-descriptor map is replicated on a dedicated **meta partition** so every node can resolve key-range ownership consistently.
+The range-descriptor map is replicated on the **meta partition** so every node can resolve key-range ownership consistently.
 
 At a high level:
 
-- partition `0` is reserved by Kommander
-- partition `1` stores the replicated range map
-- data ranges live on later partitions
+- partition `0` is the system and meta partition
+- the range map is committed on partition `0` beside the cluster partition-map coordinator
+- data ranges live on data partitions starting at partition `1`
 
 That detail matters for maintainers and operators because the descriptor map is itself durable cluster state, not a local cache.
 
@@ -105,9 +107,103 @@ Once a key-range space has actually split, you should think in terms of **ordere
 
 Key-range routing is an explicit opt-in. The key space must be registered so Kahuna flips that space from hash mode to key-range mode and seeds its initial whole-space descriptor.
 
-That registration is currently a **startup concern**, not a `kahuna-cli` flag:
+Registration has two parts:
 
-- the routing-mode registry is node-local, so each node must register the key space
-- the initial descriptor is replicated once through the meta partition leader
+- the routing-mode flag is node-local and must be set on every node
+- the initial whole-space descriptor is replicated once through the meta partition
 
-In practice, this is an advanced configuration path used by applications that need ordered key spaces, large table-like prefixes, or range-scoped coordination.
+Use the CLI to register on every endpoint in the connection string:
+
+```bash
+kahuna-cli \
+  -c "https://kahuna-1:8082,https://kahuna-2:8082,https://kahuna-3:8082" \
+  --register-key-range users
+```
+
+The CLI fans out because registering only one node leaves a mixed cluster: that node routes `users/*` by key range while the others still hash it. Use `--node` only when you intentionally want to target one node and accept that intermediate state.
+
+The registration response reports:
+
+| Field | Meaning |
+|-------|---------|
+| `success` | The answering node routes the space by key range and sees at least one descriptor. |
+| `status` | `Seeded`, `AlreadySeeded`, `Indeterminate`, `InvalidInput`, or `KeyRangeDisabled`. |
+| `seeded` | This request committed the initial descriptor. False can still be success if another request already seeded it. |
+| `routingMode` | The answering node's local routing mode for the key space. |
+| `descriptorCount` | Descriptors visible to the answering node. |
+
+`Indeterminate` means the node-local mode changed but the descriptor is not visible on that node yet. Re-read the range map before writing to the space.
+
+Unregister a key space with:
+
+```bash
+kahuna-cli \
+  -c "https://kahuna-1:8082,https://kahuna-2:8082,https://kahuna-3:8082" \
+  --unregister-key-range users
+```
+
+## Inspect and Administer Ranges
+
+Read the applied range map from any node:
+
+```bash
+kahuna-cli -c "https://kahuna-1:8082" --ranges
+kahuna-cli -c "https://kahuna-1:8082" --ranges --key-space users
+```
+
+REST exposes the same map:
+
+```http
+GET /v1/ranges
+GET /v1/ranges?keySpace=users
+```
+
+The response includes `initialized`, the answering node's `localEndpoint`, and one entry per key space. Each key-space entry includes its node-local `routingMode` plus ordered descriptors with `startKey`, `endKey`, `partitionId`, and `generation`.
+
+Force a split at an exact key:
+
+```bash
+kahuna-cli \
+  -c "https://kahuna-1:8082,https://kahuna-2:8082,https://kahuna-3:8082" \
+  --split-range users \
+  --split-key users/0500
+```
+
+REST:
+
+```http
+POST /v1/ranges/split
+Content-Type: application/json
+
+{"keySpace":"users","splitKey":"users/0500"}
+```
+
+Split is leader-only for the partition that owns the range map. A non-leader refuses with `NotLeader` and may include `leaderHint`.
+
+The split response includes `determinate`. Use it before taking action:
+
+| `status` | `determinate` | Meaning |
+|----------|---------------|---------|
+| `Succeeded` | `true` | The range split and `newPartitionId` serves the upper half. |
+| `NotLeader` | `true` | Nothing was attempted. Retry against the hinted leader or another endpoint. |
+| `NoRange` | `true` | The key space is unregistered or no descriptor covers the split key. |
+| `InvalidSplitKey` | `true` | The key would create an empty range or is outside the covering range. |
+| `BelowMinRangeSize` | `true` | The policy refused the split because one half would be too small. |
+| `PartitionCreationFailed` | `true` | The map did not change, though an unused partition may have been created. Retry allocates a fresh partition ID. |
+| `TransferFailed`, `QuiesceFailed`, `CutoverFailed`, `ConcurrentSplit`, `Indeterminate` | `false` | The map may still change. Re-read `GET /v1/ranges`. |
+
+Run the merge pass on demand:
+
+```bash
+kahuna-cli -c "https://kahuna-1:8082" --merge-ranges
+```
+
+REST:
+
+```http
+POST /v1/ranges/merge
+```
+
+Merge scans every key-range space and folds adjacent ranges that are below the configured minimum. There is no per-key-space merge API and no request-level size override. A non-leader returns `NotLeader` instead of reporting `0` merges, so `0` means a leader actually ran the pass and found nothing eligible.
+
+Range admin is also available through gRPC and `Kahuna.Client`.

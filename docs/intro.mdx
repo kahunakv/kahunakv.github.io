@@ -17,10 +17,10 @@ You will also need the **[Kahuna CLI](/docs/kahuna-cli/)** to execute commands o
 For a local standalone server with Docker, run:
 
 ```bash
-docker run --rm -p 8081:8081 -p 8082:8082 -v kahuna-data:/data --name kahuna kahunakv/kahuna:latest
+docker run --rm -p 8081:8081 -p 8082:8082 -p 8083:8083 -v kahuna-data:/data --name kahuna kahunakv/kahuna:latest
 ```
 
-The container exposes `http://127.0.0.1:8081` and `https://127.0.0.1:8082`. The named Docker volume `kahuna-data` keeps the server data across container restarts.
+The container exposes `http://127.0.0.1:8081` for REST, `https://127.0.0.1:8082` for HTTPS REST/gRPC, and `http://127.0.0.1:8083` for cleartext gRPC. The named Docker volume `kahuna-data` keeps the server data across container restarts.
 
 You can also install the server as a .NET global tool:
 
@@ -31,6 +31,7 @@ dotnet tool install --global Kahuna.Server
 ```bash
 kahuna-server \
   --http-ports 8081 \
+  --grpc-cleartext-ports 8083 \
   --storage rocksdb \
   --wal-storage rocksdb \
   --storage-path ~/.kahuna/data \
@@ -45,10 +46,10 @@ Connect to Docker over HTTPS:
 kahuna-cli -c "https://127.0.0.1:8082" --insecure
 ```
 
-Connect to the NuGet tool server over HTTP:
+Connect to Docker or the NuGet tool server over cleartext gRPC:
 
 ```bash
-kahuna-cli -c "http://127.0.0.1:8081"
+kahuna-cli -c "http://127.0.0.1:8083"
 ```
 
 After installing the necessary components, run the following command:

@@ -8,7 +8,7 @@ Actors give Kahuna:
 
 - Single-message-at-a-time execution for each worker.
 - Predictable ownership of in-memory maps and B-trees.
-- Backpressure through actor mailboxes and routers.
+- Backpressure through actor mailboxes and bounded request admission.
 - Separate pools for ephemeral and persistent objects.
 - A clean split between request routing, proposal handling, and state mutation.
 
@@ -23,7 +23,7 @@ Actors give Kahuna:
 - `BackgroundWriterActor`
 - the selected `IPersistenceBackend`
 
-The managers are responsible for locating partition leaders, forwarding remote requests, and choosing the right actor router.
+The managers are responsible for locating partition leaders, forwarding remote requests, and choosing the right actor ring or router.
 
 ## Lock Actors
 
@@ -39,7 +39,7 @@ Persistent locks queue dirty state to `BackgroundWriterActor` after committed ch
 
 ## Key/Value Actors
 
-`KeyValuesManager` starts separate routers for ephemeral and persistent key/value actors:
+`KeyValuesManager` starts separate fixed rings for ephemeral and persistent key/value actors:
 
 - `ephemeral-keyvalue-*`
 - `persistent-keyvalue-*`
@@ -53,7 +53,9 @@ Persistent locks queue dirty state to `BackgroundWriterActor` after committed ch
 - Recent revisions
 - MVCC entries
 
-Consistent-hash routing keeps operations for the same key or bucket stable across a worker set. This reduces locking inside the actor and keeps related state local.
+Consistent-hash routing keeps operations for the same key or bucket stable across a worker set. Key/value routing now resolves the target actor directly at the call site instead of passing every request through a separate router actor. That removes one mailbox hop from the hot path while preserving the same key-to-actor mapping.
+
+Each key/value actor can also reject ordinary user messages when its bounded inbox is full. Kahuna maps that rejection to retryable `MustRetry` backpressure. Control messages such as proposal completions, cache-coherence updates, flush acknowledgements, collection, and snapshot-floor probes are exempt so a hot-key flood cannot strand already in-flight work.
 
 ## Replication Submission
 

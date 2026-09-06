@@ -26,7 +26,7 @@ Persistent partition writes use a leader-local partition write aggregator before
 
 This optimization applies across requests. A `SetManyKeyValues(...)` call and independent single-key writes can land in the same partition queue if they target the same partition at the same time.
 
-The aggregator does not coalesce ephemeral writes or open transaction staging. Ephemeral writes do not use Raft, and open transactions stage MVCC intents through the transaction coordinator. Durable transaction records enter the aggregator when finalization writes canonical records, prepared-intent deltas, materialized values, and settlement deltas.
+The aggregator does not coalesce ephemeral writes or open transaction staging. Ephemeral writes do not use Raft, and open transactions stage MVCC intents through the transaction coordinator. Durable transaction records enter the aggregator when finalization writes canonical records, prepared-intent deltas, materialization records, and settlement deltas. By default, committed durable values materialize by reference to the prepared intent already held on each replica.
 
 See [Partition Write Coalescing](/docs/architecture/partition-write-coalescing/) for tuning options and metrics.
 
@@ -50,7 +50,7 @@ Persistent lock and key/value actors keep hot state in memory. Dirty entries are
 
 ## Background Flush
 
-`BackgroundWriterActor` batches writes with limits on item count and packet size. It retries failed backend writes with jittered backoff. Successfully flushed batches mark their partitions as needing a checkpoint.
+`BackgroundWriterActor` batches writes with limits on item count and packet size. It retries failed backend writes with jittered backoff. If a storage write still fails, the dequeued batch is retained in memory and retried on the next flush cycle instead of being dropped. The partition remains unflushed, so checkpoints and WAL compaction cannot advance past data whose only durable copy is still the Raft log.
 
 The flush path is:
 
@@ -64,6 +64,8 @@ The flush path is:
 ## Checkpoints
 
 Checkpoints connect materialized persistence with Raft log compaction. Once dirty state for a partition has been written, the background writer can ask Raft to replicate a checkpoint for that partition. After checkpointing, the system does not need to replay all older logs to reconstruct the same state.
+
+`--checkpoint-interval` controls how often a dirty partition is allowed to checkpoint after flushes. The interval starts when the partition first becomes dirty after its last checkpoint; later writes do not keep pushing the timer forward. That means a continuously written partition can still checkpoint periodically and keep its Raft WAL compactable. A shorter interval advances the WAL retention floor sooner and can reduce retained Raft log size, but it rewrites snapshots more often. A longer interval reduces checkpoint churn but lets the WAL grow further between compaction opportunities.
 
 Durable transaction recovery metadata participates in this ordering. Transaction records, prepared-intent snapshots, and completion receipts must be durable before the checkpoint allows WAL retention to move past log entries that may be needed to reconstruct them.
 

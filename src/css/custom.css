@@ -19,14 +19,40 @@
 
 /* For readability concerns, you should choose a lighter palette in dark mode. */
 [data-theme='dark'] {
-  --ifm-color-primary: #6dff3b;
-  --ifm-color-primary-dark: #53ff19;
-  --ifm-color-primary-darker: #45f808;
-  --ifm-color-primary-darkest: #39cf07;
-  --ifm-color-primary-light: #87ff5d;
-  --ifm-color-primary-lighter: #95ff6f;
-  --ifm-color-primary-lightest: #b3ff9a;
+  --ifm-color-primary: #8fd892;
+  --ifm-color-primary-dark: #77ce7b;
+  --ifm-color-primary-darker: #69c66d;
+  --ifm-color-primary-darkest: #4fb054;
+  --ifm-color-primary-light: #a7e0a9;
+  --ifm-color-primary-lighter: #b4e5b6;
+  --ifm-color-primary-lightest: #d1f0d2;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+/* Homepage-aligned footer: forest foundation with restrained alpine-green signals. */
+.footer {
+  --ifm-footer-background-color: #022c22;
+  --ifm-footer-color: #dcefe6;
+  --ifm-footer-link-color: #dcefe6;
+  --ifm-footer-link-hover-color: #6de1ae;
+  background: #022c22;
+  border-top: 1px solid #075a42;
+}
+
+.footer__title {
+  color: #ffffff;
+}
+
+.footer__link-item {
+  color: #dcefe6;
+}
+
+.footer__link-item:hover {
+  color: #6de1ae;
+}
+
+.footer__copyright {
+  color: #a8c7b9;
 }
 
 

@@ -61,7 +61,7 @@ RocksDB is the best default for production Kahuna nodes with sustained persisten
 - **Persistent revisions**. Kahuna writes latest-state and revision records for every persistent update; RocksDB handles that append-heavy pattern well.
 - **Cache-style writes**. `NOREV` writes keep the current value durable while avoiding the extra historical revision record when old versions are not needed.
 - **Batched actor output**. Kahuna's background writer can hand RocksDB batches of dirty locks and key/value entries, which maps cleanly to `WriteBatch`.
-- **Crash recovery**. The adapter opens RocksDB with absolute WAL recovery and uses synchronous write options for materialized-state writes.
+- **Crash recovery**. The adapter opens RocksDB with absolute WAL recovery, uses synchronous write options for materialized-state writes, and can close and reopen the native engine after repeated storage-write failures.
 
 ### Where RocksDB Is Not Ideal
 
@@ -72,6 +72,12 @@ RocksDB is powerful, but it has a larger operational footprint.
 - Data files are not convenient to inspect manually compared with a SQL database.
 - For very small deployments, local development, and simple embedded usage, RocksDB may be more machinery than needed.
 - Revision-heavy workloads retain both current and historical records, so disk growth and compaction behavior should be planned.
+
+### Storage Failure Recovery
+
+If RocksDB latches a storage error after a failed append, for example after a temporary full-disk condition, Kahuna keeps the failed background-write batch instead of dropping it. After repeated failed flush cycles, the background writer asks the backend to recover. RocksDB recovery closes and reopens the native engine behind a swap fence, then retries the retained batch when the backend is writable again.
+
+This path is for transient storage failures. Operators still need to fix the underlying disk or filesystem problem. While the backend remains unavailable, affected partitions keep unflushed writes resident and checkpoints cannot advance for those writes.
 
 ### Shared RocksDB Memory
 

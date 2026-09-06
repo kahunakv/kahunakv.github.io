@@ -23,6 +23,10 @@ The public transport layer parses the request and calls the `IKahuna` surface. F
 
 Clients may contact any node. If the receiving node is not the leader for the target partition, Kahuna routes or forwards the request to the current leader. With replica placement, the receiving node may also be a non-host for that partition; it resolves a hosting replica and forwards the request instead of rejecting it only because it has no local copy.
 
+When routing hints are enabled, successful key/value, lock, and sequence responses can include the client-reachable endpoint for the resolved owner. The hint is emitted after the server has already resolved the request, so it affects only later client endpoint selection.
+
+Forwarded requests carry a small hop budget. During elections or placement-map transitions, two nodes can briefly disagree about the right owner for a partition. When the hop budget is exhausted, Kahuna returns `MustRetry` instead of forwarding again, so clients retry after the routing view settles.
+
 Transaction priority admission runs only after this leader routing. Followers do not queue transaction starts they will not execute. When a script or interactive session is admitted after waiting, Kahuna starts it with the HLC timestamp from admission time, not from the time it first entered the queue.
 
 ## Routing
@@ -163,7 +167,8 @@ freeze working set
   -> build durable finalize input
   -> initialize canonical transaction record and prepare anchor intents
   -> replicate other prepared intents
-  -> validate reads after the prepare barrier
+  -> validate staged bases and reads after the prepare barrier
+  -> confirm staged-base replica fences
   -> compare-and-set the canonical record to Commit or Abort
   -> return Committed after the durable decision when deferred settlement is enabled
   -> materialize committed values or discard aborted intents in settlement

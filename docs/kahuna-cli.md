@@ -65,10 +65,16 @@ $ kahuna-cli -c "https://kahuna-dev.company.internal:8082,https://kahuna-dev.com
 
 This tells the CLI to connect to the specified Kahuna nodes, enabling interaction with a custom or remote environment.
 
-For the local standalone development server, connect to the HTTPS endpoint and allow the local development certificate:
+For the local Docker standalone server, connect to the HTTPS endpoint and allow the local development certificate:
 
 ```bash
 kahuna-cli -c "https://127.0.0.1:8082" --insecure
+```
+
+The Docker and NuGet standalone examples from [Server Installation](/docs/server-installation/) also expose cleartext gRPC on `8083`:
+
+```bash
+kahuna-cli -c "http://127.0.0.1:8083"
 ```
 
 For a three-node cluster, pass every reachable endpoint in one comma-separated connection string:
@@ -126,6 +132,8 @@ kahuna-cli \
 
 Stop the process only after the response reports that the node left. Kahuna refuses a leave that would remove the last voter needed to keep the cluster available.
 
+On a cluster using replica placement, leave drains the node first. The response includes `drained` when hosted replicas were evacuated before removal. `DrainTimedOut` means the node stayed in the roster; retry later or raise `--raft-decommission-drain-timeout`.
+
 ## Replica Placement
 
 Use `--cluster-placement` to inspect per-partition replica placement:
@@ -155,6 +163,40 @@ kahuna-cli -c "https://kahuna-1:8082" \
 ```
 
 See [Replication Factor and Replica Placement](/docs/replica-placement/) for the server flags and operational behavior.
+
+## Key-Range Administration
+
+Key-range administration is available in single-command mode for operators and tests:
+
+```bash
+# Inspect the range map
+kahuna-cli -c "https://kahuna-1:8082" --ranges
+kahuna-cli -c "https://kahuna-1:8082" --ranges --key-space users
+
+# Register or unregister a key space
+kahuna-cli \
+  -c "https://kahuna-1:8082,https://kahuna-2:8082,https://kahuna-3:8082" \
+  --register-key-range users
+
+kahuna-cli \
+  -c "https://kahuna-1:8082,https://kahuna-2:8082,https://kahuna-3:8082" \
+  --unregister-key-range users
+
+# Force a split at an exact key
+kahuna-cli \
+  -c "https://kahuna-1:8082,https://kahuna-2:8082,https://kahuna-3:8082" \
+  --split-range users \
+  --split-key users/0500
+
+# Run the merge pass on demand
+kahuna-cli -c "https://kahuna-1:8082" --merge-ranges
+```
+
+`--register-key-range` and `--unregister-key-range` are sent to every endpoint in the connection string because the routing-mode flag is node-local. Use `--node` only when you intentionally want to target one node.
+
+`--split-range` and `--merge-ranges` are leader-only operations for the partition that owns the range map. The CLI tries connected endpoints until one accepts. For split responses, branch on `determinate`: an indeterminate response means the map may still change, so re-read `--ranges` before deciding what happened.
+
+See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for routing behavior, API endpoints, and split/merge outcomes.
 
 ## Backup and Restore
 

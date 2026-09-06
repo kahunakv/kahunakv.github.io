@@ -60,6 +60,12 @@ Learn more in [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sh
 
 Kahuna provides an API for performing various operations on key/value pairs:
 
+### Payload Values
+
+Values are byte payloads. A `null` payload means the key exists without a value, while an empty byte array means the key exists with a zero-byte value. Kahuna preserves that difference over both REST and gRPC, including compare-value operations and transaction results.
+
+In REST JSON, `null` stays `null` and any byte array is encoded as base64. That means a zero-byte payload is the empty base64 string `""`.
+
 ### Set
 
 Sets or overwrites key/value pairs. The behavior of the API is modified based on the provided flags, which determine whether the operation occurs depending on the key's existence, current value, or current revision.
@@ -78,7 +84,7 @@ Task<KahunaKeyValue> SetKeyValue(
 ```
 
 - **key:** A unique identifier for the key/value pair.
-- **value:** The data object associated with the key.
+- **value:** The data object associated with the key. `null` is distinct from an empty byte array.
 - **expiresMs:** The expiration time of the key in milliseconds.
 - **flags:**
   - If `KeyValueFlags.SetIfExists` is specified, the value is set only if the key already exists.

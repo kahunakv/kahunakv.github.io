@@ -11,7 +11,6 @@ const proofPoints = [
   {icon: 'database', label: 'Persistent and ephemeral state'},
   {icon: 'hash', label: 'Distributed sequence allocation'},
   {icon: 'check', label: 'Jepsen-tested correctness'},
-  {icon: 'layers', label: 'RocksDB, SQLite, or memory'},
 ];
 
 const advantageCards = [
@@ -174,11 +173,11 @@ function HomepageHeader() {
             The distributed coordination layer for .NET
           </Heading>
           <p className={styles.heroSubtitle}>
-          Kahuna is a self-hosted server cluster that gives your services distributed{' '}
-          <strong>locks</strong>, a consistent <strong>key/value store</strong>, and
-          ordered <strong>ID sequences</strong>, like etcd or ZooKeeper, but built for
-          .NET. One node owns the work, writes stay ordered, and another node takes over
-          safely on failure.
+            Kahuna is a self-hosted server cluster that gives your services distributed{' '}
+            <strong>locks</strong>, a consistent <strong>key/value store</strong>, and
+            ordered <strong>ID sequences</strong>, like etcd or ZooKeeper, but built for
+            .NET. One node owns the work, writes stay ordered, and another node takes over
+            safely on failure.
           </p>
           <div className={styles.buttons}>
             <Link className="button button--primary button--lg" to="/docs/getting-started">
@@ -186,6 +185,9 @@ function HomepageHeader() {
             </Link>
             <Link className="button button--secondary button--lg" to="/docs/intro">
               Tutorial
+            </Link>
+            <Link className="button button--secondary button--lg" to="/docs/book">
+              Read the book
             </Link>
           </div>
           <div className={styles.proofGrid}>

@@ -40,3 +40,5 @@ If a key already existed at that time and was updated or deleted later, the snap
 `escan by prefix` reads from ephemeral storage and scans across the cluster. Ephemeral keys can expire or be evicted under memory pressure, and a cluster-wide scan can be expensive. Prefer `eget by bucket` when keys share a bucket and a partition-local read is enough.
 
 The command returns the matching set in one response and is capped at `4096` entries. Use paginated range reads from the .NET client for large or unbounded ordered scans.
+
+Range-backed scans are internally paged. If one page keeps returning retryable state because a range is moving, leadership is changing, or an undecided transaction intent blocks the page, Kahuna bounds the retry loop and returns a retryable server error instead of scanning forever. Retry the command after a short backoff.

@@ -124,7 +124,7 @@ Read-only transactions can commit without a prepare round.
 
 Best-effort transactions keep terminal outcomes in memory for a bounded idempotency window. Durable decision mode adds durable-intent 2PC for all-persistent write sets.
 
-The first confirmed persistent modified key becomes the record anchor. The coordinator initializes a canonical transaction record on that anchor partition, prepares the anchor partition's intents in the same ordered proposal when possible, replicates prepared intents for every other modified persistent partition, validates reads, then compare-and-sets the canonical record to `Commit` or `Abort`.
+The first confirmed persistent modified key becomes the record anchor. The coordinator initializes a canonical transaction record on that anchor partition, prepares the anchor partition's intents in the same ordered proposal when possible, replicates prepared intents for every other modified persistent partition, validates staged bases and reads, then compare-and-sets the canonical record to `Commit` or `Abort`.
 
 Persistent participants store completion receipts when committed values are applied. Recovery uses those receipts to distinguish "already committed" from "unknown" after original intents are gone.
 
@@ -141,6 +141,10 @@ prepare durable intents
 Durable decision mode does not persist the active interactive session. If the coordinator disappears before a canonical record is installed, the session is lost like a best-effort transaction. Once prepared intents exist, participant leader changes do not lose the staged value; recovery can resolve the intents from the canonical record. Ephemeral modified keys are rejected in durable mode because their values, intents, and receipts cannot survive process loss.
 
 With default deferred settlement, a committed transaction can return before materialization and settlement finish. While a committed intent is still pending, point reads, scans, and writes consult the canonical record, locally or by routing to the anchor leader, and resolve the intent without serving the stale previous value.
+
+Durable materialization is by reference by default. The committed log record names the prepared intent and carries the canonical timestamp and revision, while each replica reads the value from its local prepared-intent store. This keeps MVCC visibility correct and avoids copying the value through the Raft log a second time.
+
+Unprepared session-owned write intents and no-expiry range locks have a liveness ceiling. If the owning transaction disappeared and the ceiling has passed, the next touch can drop the orphaned state instead of letting it block reads or scans forever. Prepared durable intents are exempt because their outcome belongs to the canonical decision record.
 
 For the end-to-end path, see [Transaction Lifecycle](/docs/internals/transaction-lifecycle/).
 

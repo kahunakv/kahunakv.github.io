@@ -56,6 +56,15 @@ kahuna-bench \
   --duration 30
 ```
 
+When the server exposes a cleartext gRPC port with `--grpc-cleartext-ports`, point the benchmark at that h2c endpoint and omit `--insecure`:
+
+```bash
+kahuna-bench \
+  -c http://127.0.0.1:8083 \
+  --workload mixed \
+  --duration 30
+```
+
 A run has three phases:
 
 1. **Seed:** create keys needed by `get` or `mixed`, or create the shared sequence
@@ -81,8 +90,9 @@ Example output from a three-node cluster using the default mixed workload and pe
 
 ```text
 Kahuna Benchmark — mixed, 30s + 5s warmup, concurrency=64, target=unbounded
-  endpoints : https://127.0.0.1:8082
+  endpoints : https://127.0.0.1:8082, https://127.0.0.1:8084, https://127.0.0.1:8086
   tls       : disabled (--insecure)
+  routing   : Learned (auto)
   key-space : 10000   value-size : 128B   durability : persistent
 Seeding key-space…
   Seeding 10,000 keys (parallelism=64)…
@@ -106,6 +116,11 @@ Use a longer measurement, such as `--warmup 10 --duration 60`, when establishing
 | `set` | Write a random payload using `SetKeyValue` |
 | `get` | Read keys using `GetKeyValue` |
 | `mixed` | Select reads and writes using `--read-pct` |
+| `delete` | Delete one generated key per operation |
+| `set-many` | Write `--batch-size` generated keys per operation |
+| `delete-many` | Delete `--batch-size` generated keys per operation |
+| `txn` | Open an interactive transaction, write `--keys-per-txn` keys, and commit |
+| `bank` | Run contended transactional transfers between seeded account keys |
 | `lock` | Acquire and release one lock per operation |
 | `sequence` | Allocate the next value from the shared `bench:seq:0` sequence |
 | `script` | Execute the transaction script supplied with `--script` |
@@ -127,6 +142,10 @@ kahuna-bench -c https://kahuna-1:8082 \
 kahuna-bench -c https://kahuna-1:8082 \
   --workload script --script ./transfer.4gl --duration 60
 
+# Bank-style read-modify-write transfers
+kahuna-bench -c https://kahuna-1:8082 \
+  --workload bank --txn-locking optimistic --duration 60
+
 # Ephemeral writes with 1 KiB values
 kahuna-bench -c https://kahuna-1:8082 \
   --workload set --durability ephemeral --value-size 1024
@@ -137,23 +156,50 @@ kahuna-bench -c https://kahuna-1:8082 \
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-c`, `--connection-source` | required | Comma-separated Kahuna endpoints |
-| `--workload` | `mixed` | `set`, `get`, `mixed`, `lock`, `sequence`, or `script` |
+| `--workload` | `mixed` | `set`, `get`, `mixed`, `delete`, `set-many`, `delete-many`, `txn`, `bank`, `lock`, `sequence`, or `script` |
 | `--duration` | `30` | Measured duration in seconds, excluding warmup |
 | `--warmup` | `5` | Warmup duration in seconds whose samples are discarded |
 | `--concurrency` | `64` | Closed-loop workers or open-loop consumers |
 | `--rate` | `0` | Target requests per second. `0` selects unbounded closed-loop mode |
 | `--key-space` | `10000` | Number of distinct `bench:{n}` keys |
+| `--key-prefix` | `bench:` | Prefix for generated keys. End it with `/` to keep a `set-many` or `delete-many` batch in one hash key space |
 | `--value-size` | `128` | Write payload size in bytes |
 | `--read-pct` | `50` | Read percentage for `mixed`; the remainder are writes |
+| `--batch-size` | `100` | Keys mutated per `set-many` or `delete-many` request |
+| `--keys-per-txn` | `4` | Keys written inside each `txn` workload transaction |
+| `--txn-locking` | `pessimistic` | Transaction locking mode for `txn`: `pessimistic` or `optimistic` |
 | `--durability` | `persistent` | `persistent` or `ephemeral` for key/value and lock workloads |
 | `--script` | none | Path to the `.4gl` file required by the `script` workload |
 | `--timeout` | `10` | Per-request timeout in seconds |
 | `--format` | `console` | `console`, `json`, or `csv` |
 | `--output` | stdout | Output file for JSON or CSV |
 | `--insecure` | `false` | Skip TLS certificate validation |
+| `--grpc-channels` | `2` | HTTP/2 connections opened per endpoint. Raise this when one client process needs more parallel streams per node |
+| `--batch-coalescing-threshold` | `10` | Batch size below which the client may wait briefly to gather more work before dispatch. Set to `1` to disable coalescing. |
+| `--batch-coalescing-delay` | `2` | Maximum client batch coalescing wait in milliseconds. `0` disables the wait. |
 | `--seed` | time-based | Random seed; use a nonzero value for repeatability |
+| `--routing` | `auto` | Client endpoint selection: `auto`, `roundrobin`, `learned`, or `metadata` |
+| `--routing-endpoint-map` | none | Comma-separated `advertised=dialed` endpoint pairs for mapped deployments |
+| `--allow-unlisted-routing-endpoints` | `false` | Allow route hints to dial endpoints that were not configured or mapped |
+| `--routing-counters` | `false` | Print totals from the `Kahuna.Client.Routing` meter after the run |
 
 Localhost endpoints automatically disable certificate validation. Use `--insecure` explicitly for other development endpoints with self-signed certificates.
+
+## Routing Measurements
+
+`kahuna-bench` uses the same leader-aware routing modes as `Kahuna.Client`. The console header prints the effective mode, so an `auto` run with several endpoints reports `Learned (auto)` while a single-endpoint run reports `RoundRobin (auto)`.
+
+In one local three-node read benchmark, learned routing reached 116,808 requests per second versus 72,188 requests per second with round-robin endpoint selection. See [Client Leader-Aware Routing](/docs/client-routing/#measured-effect) for context and caveats.
+
+Use explicit routing modes when comparing the cost of forwarded requests:
+
+```bash
+kahuna-bench -c "$ENDPOINTS" --workload get --routing roundrobin --duration 60
+kahuna-bench -c "$ENDPOINTS" --workload get --routing learned --routing-counters --duration 60
+kahuna-bench -c "$ENDPOINTS" --workload get --routing metadata --routing-counters --duration 60
+```
+
+Enable `--routing-counters` when you need to prove the selected mode is actually being used. For example, a `learned` run with a working set larger than `RouteCacheCapacity` may show few cache hits and behave like endpoint rotation. A rising `hints_rejected[endpoint_rejected]` counter usually means servers advertise endpoints the benchmark process cannot dial; use `--routing-endpoint-map` to map advertised URLs to dialed URLs.
 
 ## Closed-Loop and Open-Loop Tests
 
@@ -195,25 +241,30 @@ If achieved throughput remains below the target while p99 grows rapidly, the ins
 
 The console report contains one row per operation and one aggregate row:
 
+```bash
+kahuna-bench -c "https://127.0.0.1:8082" --insecure --duration 240 --durability ephemeral --concurrency 256
+```
+
 ```text
-Kahuna Benchmark — mixed, 30s + 5s warmup, concurrency=64, target=unbounded
+Kahuna Benchmark — mixed, 240s + 5s warmup, concurrency=256, target=unbounded
   endpoints : https://127.0.0.1:8082
   tls       : disabled (--insecure)
+  routing   : RoundRobin (auto)
   key-space : 10000   value-size : 128B   durability : ephemeral
 Seeding key-space…
   Seeding 10,000 keys (parallelism=64)…
 Warming up for 5s…
-Running measurement for 30s…
+Running measurement for 240s…
 
-Operation     Count    req/s     p50     p90     p95     p99   p99.9       max    mean   errors   misses
-get         372,214   12,407   2.5ms   3.3ms   3.4ms   4.1ms   8.4ms   262.0ms   2.6ms        0        0
-set         371,846   12,394   2.5ms   3.3ms   3.4ms   4.1ms   8.4ms   262.0ms   2.6ms        0        0
-TOTAL       744,060   24,801   2.5ms   3.3ms   3.4ms   4.1ms   8.4ms   262.0ms   2.6ms        0        0
+Operation        Count    req/s     p50     p90     p95     p99   p99.9      max    mean   errors   misses
+get          6,767,821   28,199   4.6ms   5.3ms   5.4ms   5.8ms   7.7ms   98.2ms   4.5ms        0        0
+set          6,771,788   28,216   4.6ms   5.3ms   5.3ms   5.7ms   7.6ms   98.2ms   4.5ms        0        0
+TOTAL       13,539,609   56,415   4.6ms   5.3ms   5.4ms   5.8ms   7.6ms   98.2ms   4.5ms        0        0
 ```
 
-This run completed 744,060 successful operations at 24,801 requests per second. The default mixed workload produced an approximately even split between reads and writes. Its p99 was 4.1 ms and p99.9 was 8.4 ms, with no errors or misses.
+This run completed 13,539,609 successful operations at 56,415 requests per second. The default mixed workload produced an approximately even split between reads and writes. Its p99 was 5.8 ms and p99.9 was 7.6 ms, with no errors or misses.
 
-The 262 ms maximum shows why a single worst request should not be treated as representative latency. Use p99 or p99.9 for a stable tail-latency objective, while still investigating repeated or unusually large maximums.
+The 98.2 ms maximum shows why a single worst request should not be treated as representative latency. Use p99 or p99.9 for a stable tail-latency objective, while still investigating repeated or unusually large maximums.
 
 | Field | Meaning |
 |-------|---------|
@@ -223,13 +274,13 @@ The 262 ms maximum shows why a single worst request should not be treated as rep
 | `max` | Highest recorded successful-request latency |
 | `mean` | Average successful-request latency |
 | `errors` | Errors plus timeouts in console output |
-| `misses` | Reads that did not find a value |
+| `misses` | Reads that did not find a value, or lock acquisitions that found the lock busy |
 
 Errors, timeouts, and misses do not contribute to successful `req/s`. JSON and CSV separate `errors` from `timeouts`, while the console combines them in its `errors` column.
 
 Focus on p99 and p99.9 for user-facing latency. A low p50 with a high p99 indicates occasional stalls hidden by the median.
 
-For `get` and `mixed`, a key space above 100,000 produces some misses because seeding stops at 100,000 keys. Use `--key-space 100000` or lower for an all-seeded read test.
+For `get` and `mixed`, a key space above 100,000 produces some misses because seeding stops at 100,000 keys. Use `--key-space 100000` or lower for an all-seeded read test. For `delete`, misses mean the generated key was already absent.
 
 ## JSON and CSV Output
 

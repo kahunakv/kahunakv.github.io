@@ -9,12 +9,6 @@ Key-range sharding can split one ordered range into two partitions. Kahuna suppo
 
 Load-based splitting is disabled by default. It applies only to key spaces registered for [key-range sharding](/docs/distributed-keyvalue-store/key-range-sharding/).
 
-:::caution Current configuration surface
-
-Load-splitting options are currently exposed by `EmbeddedKahunaOptions` and `KahunaConfiguration`. `Kahuna.Server` does not yet expose equivalent command-line flags.
-
-:::
-
 ## Why Key Count Is Not Enough
 
 A partition can contain relatively few keys but receive most of the cluster's writes. A key-count threshold never splits it because the range is small, even though its single Raft leader has become a throughput bottleneck.
@@ -30,7 +24,7 @@ After
 [orders/6200, orders/9999) -> partition B
 ```
 
-The split point follows observed write distribution, not the alphabetical midpoint or median stored key.
+The split point follows observed write distribution, not the alphabetical midpoint or median stored key. For monotonic append patterns, when the newest writes cluster at the ordinal tail, Kahuna can split closer to the 75th percentile so the hot tail moves to the new partition instead of staying concentrated on the right child.
 
 ## Leader Balancing Is Required
 
@@ -69,20 +63,25 @@ The sustained window filters short bursts and delayed gossip reports. Keep the w
 
 After splitting, both children enter `RangeSplitSettleWindow`. This gives leadership time to stabilize and the balancer time to relocate a child before either range is evaluated again.
 
-## Embedded Options
+## Configuration
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `RangeSplitLoadThreshold` | `0` | Minimum replicated writes per second. `0` disables load-based splitting |
-| `RangeSplitLoadMinQueueDepth` | `8` | Minimum WAL queue depth required with the rate threshold |
-| `RangeSplitLoadMinCommitWaitMs` | `0` | Optional minimum commit-wait latency. `0` disables this additional gate |
-| `RangeSplitLoadWindow` | `15 seconds` | Time all load gates must remain continuously satisfied |
-| `RangeSplitLoadPollInterval` | `5 seconds` | Frequency of load-gate evaluation. Keep below the load window |
-| `RangeSplitLoadImbalanceMax` | `0.8` | Maximum acceptable write fraction on either child after selecting a split key |
-| `RangeSplitIndivisibleCooldown` | `5 minutes` | Delay before reconsidering a range that cannot be split usefully |
-| `RangeSplitSettleWindow` | `10 seconds` | Post-split delay before either child can be evaluated again |
-| `RangeSplitThreshold` | `1000` keys | Count-based split threshold. `0` disables count-based splitting |
-| `RangeSplitMinRangeSize` | `10` keys | Minimum number of sampled keys required in each child |
+Kahuna Server exposes the primary range split and merge knobs as command-line flags. The same settings are available on `EmbeddedKahunaOptions` using the corresponding property names.
+
+| Server Flag | Embedded Option | Default | Description |
+|-------------|-----------------|---------|-------------|
+| `--range-split-load-threshold` | `RangeSplitLoadThreshold` | `0` | Minimum replicated writes per second. `0` disables load-based splitting |
+| `--range-split-load-min-queue-depth` | `RangeSplitLoadMinQueueDepth` | `8` | Minimum WAL queue depth required with the rate threshold |
+| `--range-split-load-window` | `RangeSplitLoadWindow` | `15 seconds` | Time all load gates must remain continuously satisfied |
+| `--range-split-load-poll-interval` | `RangeSplitLoadPollInterval` | `5 seconds` | Frequency of load-gate evaluation. Keep below the load window |
+| not exposed | `RangeSplitLoadMinCommitWaitMs` | `0` | Optional minimum commit-wait latency. `0` disables this additional gate |
+| not exposed | `RangeSplitLoadImbalanceMax` | `0.8` | Maximum acceptable write fraction on either child after selecting a split key |
+| not exposed | `RangeSplitIndivisibleCooldown` | `5 minutes` | Delay before reconsidering a range that cannot be split usefully |
+| `--range-split-settle-window` | `RangeSplitSettleWindow` | `10 seconds` | Post-split delay before either child can be evaluated again |
+| `--range-move-settle-timeout` | `RangeMoveSettleTimeout` | `10 seconds` | Maximum quiesce wait for in-flight transactions in the moving range before split or merge cutover |
+| `--range-split-threshold` | `RangeSplitThreshold` | `1000` keys | Count-based split threshold. `0` disables count-based splitting |
+| `--range-split-min-range-size` | `RangeSplitMinRangeSize` | `10` keys | Minimum number of sampled keys required in each child |
+| `--range-merge-min-size` | `RangeMergeMinSize` | `10` keys | Adjacent ranges below this size can merge. `0` disables auto-merge |
+| `--range-collection-interval` | `CollectionInterval` | `60 seconds` | Sampling cadence for split/merge checks and related maintenance |
 
 `RangeSplitSettleWindow` must be at least `MinLeaderStability`. Embedded startup rejects a shorter settle window. `LeaderBalancerReportInterval` must also remain shorter than `LeaderBalancerReportTtl`.
 
@@ -90,7 +89,7 @@ After splitting, both children enter `RangeSplitSettleWindow`. This gives leader
 
 Splitting helps when writes can be divided across two key spans. It cannot help when nearly every write targets one key.
 
-Kahuna evaluates the best achievable write distribution before committing a load split. If either child would retain at least `RangeSplitLoadImbalanceMax` of writes, the range is considered indivisible and the split is refused.
+Kahuna evaluates the best achievable write distribution before committing a load split. If either child would retain at least `RangeSplitLoadImbalanceMax` of writes, the range is considered indivisible and the split is refused. The same refusal metric is reported when a range is hot but too small to divide and most writes are concentrated on one key.
 
 For a persistent hot-key pattern, change the application key design or shard the value at the application level. Repeatedly lowering thresholds cannot make one key divisible.
 
@@ -131,4 +130,3 @@ Splitting distributes Raft leadership and write coordination. It does not reduce
 ### Ranges Merge and Split Repeatedly
 
 The warm-range merge guard normally prevents this cycle. If it occurs, increase the settle window or adjust the load threshold so a recently active range is not immediately considered cold enough to merge.
-

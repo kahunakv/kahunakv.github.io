@@ -13,16 +13,22 @@ No repository files are required to run a server.
 
 ## Docker
 
-For the quickest container-based setup, run the published Kahuna image with HTTP, HTTPS, and a named Docker volume for persistent data:
+For the quickest container-based setup, run the published Kahuna image with HTTP, HTTPS, cleartext gRPC, and a named Docker volume for persistent data:
 
 ```bash
-docker run --rm -p 8081:8081 -p 8082:8082 -v kahuna-data:/data --name kahuna kahunakv/kahuna:latest
+docker run --rm -p 8081:8081 -p 8082:8082 -p 8083:8083 -v kahuna-data:/data --name kahuna kahunakv/kahuna:latest
 ```
 
-Use `http://127.0.0.1:8081` or `https://127.0.0.1:8082` from local clients. When connecting with `kahuna-cli` to the local HTTPS endpoint, allow the development certificate:
+Use `http://127.0.0.1:8081` for REST, `https://127.0.0.1:8082` for HTTPS REST/gRPC, or `http://127.0.0.1:8083` for cleartext gRPC from local clients. When connecting with `kahuna-cli` to the local HTTPS endpoint, allow the development certificate:
 
 ```bash
 kahuna-cli -c "https://127.0.0.1:8082" --insecure
+```
+
+For local cleartext gRPC, use:
+
+```bash
+kahuna-cli -c "http://127.0.0.1:8083"
 ```
 
 Stop the container with `Ctrl+C`. Because the command uses `--rm`, the container is removed after it exits, but the `kahuna-data` Docker volume remains available for the next run.
@@ -46,6 +52,7 @@ Start a standalone server:
 ```bash
 kahuna-server \
   --http-ports 8081 \
+  --grpc-cleartext-ports 8083 \
   --storage rocksdb \
   --wal-storage rocksdb \
   --storage-path ~/.kahuna/data \
@@ -54,10 +61,10 @@ kahuna-server \
   --wal-revision v1
 ```
 
-The server listens on `http://127.0.0.1:8081`. Connect with:
+The server listens on `http://127.0.0.1:8081` for REST and `http://127.0.0.1:8083` for cleartext gRPC. Connect local gRPC clients with:
 
 ```bash
-kahuna-cli -c "http://127.0.0.1:8081"
+kahuna-cli -c "http://127.0.0.1:8083"
 ```
 
 Press `Ctrl+C` in the terminal to stop the server.
@@ -76,6 +83,7 @@ The important server flags are documented in [Server Configuration](/docs/server
 - `--join-existing`
 - `--storage-path`
 - `--wal-path`
+- `--grpc-cleartext-ports`
 - `--https-certificate`
 
 For local single-node development, prefer the standalone Docker or NuGet examples above.

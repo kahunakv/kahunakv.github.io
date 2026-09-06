@@ -248,13 +248,18 @@ Durable mode uses **durable-intent 2PC**:
 2. Initialize the canonical transaction record as `Undecided` and prepare the anchor partition's intents in one ordered Raft proposal when the anchor is also a participant.
 3. Replicate prepared intents for every other modified persistent partition.
 4. Retry prepares that are blocked only by a predecessor's committed-but-unsettled intent.
-5. Validate the read set after the prepare barrier.
-6. Compare-and-set the canonical record to `Commit` or `Abort`.
-7. Resolve every prepared intent from that canonical decision.
+5. Validate staged bases and the read set after the prepare barrier.
+6. Ask replicas for staged-base fence verdicts before committing, so a replica that observed a stale validated base can force a truthful abort.
+7. Compare-and-set the canonical record to `Commit` or `Abort`.
+8. Resolve every prepared intent from that canonical decision.
 
 The canonical record is the point of no return. Once it moves to `Commit`, the system must not report a definite abort. If a participant cannot be resolved immediately, the transaction remains retryable and recovery continues from the canonical record and prepared intents.
 
-By default, durable settlement is deferred. A durable commit can return `Committed` once the canonical decision record is durable. Materializing committed values and settling intents then runs in the background, and recovery finishes it if the background task is lost. Reads, scans, and writes that meet a committed-but-unsettled intent resolve it through the canonical record so they do not serve a stale value. Set `DurableDeferredSettlement` to `false` in embedded/code-level configuration when a deployment needs settlement awaited inline before success is returned.
+By default, durable settlement is deferred. A durable commit can return `Committed` once the canonical decision record is durable. Materializing committed values and settling intents then runs in the background, and recovery finishes it if the background task is lost. Reads, scans, and writes that meet a committed-but-unsettled intent resolve it through the canonical record so they do not serve a stale value. Snapshot reads fail safe and retry when they meet a live foreign intent whose commit timestamp is still unknown instead of guessing around it. Set `DurableDeferredSettlement` to `false` in embedded/code-level configuration when a deployment needs settlement awaited inline before success is returned.
+
+Durable materialization is value-free by default. After a transaction commits, Kahuna replicates a `MaterializeIntent` record that names the prepared intent already present on every replica instead of copying the value through Raft and the WAL a second time. This reduces serialization, network traffic, and write amplification for durable transactions. During a mixed-version rollout from a build that cannot apply `MaterializeIntent`, set `DurableMaterializeByReference` to `false` until every node has been upgraded.
+
+Eligible durable transactions can also use a one-phase fast path. In a single-process embedded node, read-carrying transactions can bundle record initialization, prepare, and commit in one ordered apply. With `OnePhaseApplyTimeValidation` enabled in an upgraded multi-node group, that bundled commit carries same-partition read dependencies and validated bases, and replicas judge them at apply time against the committed-head ledger. Transactions with off-partition read dependencies, prefix locks, or range locks stay on the standard two-phase path.
 
 Only conflict aborts are reported as `Aborted`. Retryable prepare failures, deadline expiry, presumed aborts, and infrastructure failures surface as `MustRetry` so the caller does not mistake transient uncertainty for a business conflict.
 
@@ -345,6 +350,9 @@ Several bounds keep transaction coordination predictable:
 | `DurablePreparedIntentMaxCount` | `500000` | Resident prepared-intent count bound. A non-positive value disables the count bound. |
 | `DurablePreparedIntentMaxBytes` | `1073741824` | Resident prepared-intent value-byte bound. A non-positive value disables the byte bound. |
 | `DurableDeferredSettlement` | `true` | Runs durable materialization and settlement after the decision record is durable and success can be returned. `false` awaits settlement inline. |
+| `DurableMaterializeByReference` | `true` | Uses value-free `MaterializeIntent` records after commit. Set `false` during mixed-version rollouts from builds that cannot apply that record. |
+| `SessionOwnedIntentCeilingMs` | `0` | Ages out orphaned session-owned write intents and no-expiry range locks. `0` derives the ceiling from the transaction timeout, reaper grace, and participant-effect TTL. |
+| `OnePhaseApplyTimeValidation` | `false` | Embedded/code-level option for one-phase apply-time validation in multi-process Raft groups. Enable only after every node supports the committed-head ledger. |
 | `DurableDecisionDeadlineFloorMs` | `5000` | Lower clamp for the durable decision-deadline margin. |
 | `DurableDecisionDeadlineCeilingMs` | `60000` | Upper clamp for the durable decision-deadline margin. |
 | `DurableDecisionDeadlineMultiplier` | `4` | Multiplier applied to observed finalize p99 before clamping the decision-deadline margin. |
@@ -364,7 +372,7 @@ Several bounds keep transaction coordination predictable:
 
 Durable admission is bounded by `DurableDecisionOutstandingMax`, independently of `TransactionOutcomeRetentionMax`. Kahuna rejects a new durable transaction before prepare when the outstanding-record budget is full, and it never evicts recovery state to make room.
 
-`DurableDecisionDeadlineFloorMs`, `DurableDecisionDeadlineCeilingMs`, and `DurableDecisionDeadlineMultiplier` are runtime configuration fields. They are not currently exposed by the server CLI or embedded options surface. Embedded deployments expose `DurableDecisionOutstandingMax`, `DurablePreparedIntentMaxCount`, `DurablePreparedIntentMaxBytes`, `DurableDeferredSettlement`, and the terminal outcome retention settings.
+`DurableDecisionDeadlineFloorMs`, `DurableDecisionDeadlineCeilingMs`, and `DurableDecisionDeadlineMultiplier` are runtime configuration fields. They are not currently exposed by the server CLI or embedded options surface. Embedded deployments expose `DurableDecisionOutstandingMax`, `DurablePreparedIntentMaxCount`, `DurablePreparedIntentMaxBytes`, `DurableDeferredSettlement`, `DurableMaterializeByReference`, `SessionOwnedIntentCeilingMs`, and the terminal outcome retention settings.
 
 ## Key Buckets and Locality
 

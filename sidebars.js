@@ -29,6 +29,7 @@ const sidebars = {
     },
     'getting-started',
     'why-kahuna',
+    'book',
     {
       type: 'category',
       label: 'Distributed Locks',
@@ -98,6 +99,7 @@ const sidebars = {
       items: [
         'server-installation',
         'server-configuration',
+        'status-dashboard',
         'backend-io-scheduler',
         'replica-placement',
         'leader-balancing',
@@ -109,7 +111,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Client',
-      items: ['kahuna-cli', 'dotnet-client'],
+      items: ['kahuna-cli', 'dotnet-client', 'client-routing'],
     },
     {
       type: 'category',
