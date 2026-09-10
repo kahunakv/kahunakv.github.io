@@ -2,11 +2,105 @@
 <feed xmlns="http://www.w3.org/2005/Atom">
     <id>https://kahunakv.github.io/blog/</id>
     <title>Kahuna Blog</title>
-    <updated>2026-08-17T00:00:00.000Z</updated>
+    <updated>2026-09-10T00:00:00.000Z</updated>
     <generator>https://github.com/jpmonette/feed</generator>
     <link rel="alternate" href="https://kahunakv.github.io/blog/"/>
     <subtitle>Kahuna Blog</subtitle>
     <icon>https://kahunakv.github.io/img/favicon.ico</icon>
+    <entry>
+        <title type="html"><![CDATA[Couldn't You Just Use Redis and Postgres?]]></title>
+        <id>https://kahunakv.github.io/blog/redis-postgres-and-kahuna/</id>
+        <link href="https://kahunakv.github.io/blog/redis-postgres-and-kahuna/"/>
+        <updated>2026-09-10T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[Last Sunday, I was having lunch with a friend and talking about Kahuna, CamusDB, and all the time I've been putting into these projects lately. He didn't really understand why I would build Kahuna when most of what it does could probably be achieved with some combination of Redis and Postgres.]]></summary>
+        <content type="html"><![CDATA[<p>Last Sunday, I was having lunch with a friend and talking about Kahuna, CamusDB, and all the time I've been putting into these projects lately. He didn't really understand why I would build Kahuna when most of what it does could probably be achieved with some combination of Redis and Postgres.</p>
+<p>My explanation may not have been very convincing, and I understand why. Every business has a different tolerance for durability, availability, and consistency. Not every business operates 24/7, and not every business suffers significantly if its systems are down for a few minutes or even a few hours. In many operations, problems and mistakes can be fixed manually by people, or sometimes with an apology to the customer.</p>
+<p>My story is very different. For some reason, I've spent almost my entire career working in industries that operate 24/7: airline reservations, hospitality, and video games. There is always a customer or user somewhere interacting with the system, whether it's just a few people or hundreds of thousands at the same time. That changed the way my brain works and the kinds of failure modes I instinctively try to avoid.</p>
+<p>Building systems where performance is high and consistency is non-negotiable gradually became part of my DNA.</p>
+<p>This post is the answer I wish I had given at lunch. It is not an attack on Redis or Postgres. I have used both for many years, I still use both, and I will keep recommending them. This post is about the space between them, and why I built Kahuna to fill it.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="redis-and-postgres-are-great">Redis and Postgres Are Great<a href="https://kahunakv.github.io/blog/redis-postgres-and-kahuna/#redis-and-postgres-are-great" class="hash-link" aria-label="Direct link to Redis and Postgres Are Great" title="Direct link to Redis and Postgres Are Great" translate="no">​</a></h2>
+<p>Let me start with the obvious, because it matters.</p>
+<p>Redis is one of the best pieces of software I have ever worked with. It is fast, simple, and predictable, and its data structures are a pleasure to use. If you need a cache, a rate limiter, a pub/sub channel, or a leaderboard, Redis is the right answer.</p>
+<p>Postgres is the database I trust with real money. It is durable, it is transactional, its query planner is excellent, and it has decades of production experience behind it. If you need relational queries, constraints, and long-lived business data, Postgres is the right answer too.</p>
+<p>So the real question my friend was asking is: with these two tools available, what is missing?</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-space-between-them">The Space Between Them<a href="https://kahunakv.github.io/blog/redis-postgres-and-kahuna/#the-space-between-them" class="hash-link" aria-label="Direct link to The Space Between Them" title="Direct link to The Space Between Them" translate="no">​</a></h2>
+<p>Here is the problem I kept meeting, again and again, in every 24/7 system I worked on.</p>
+<p>There is a type of state that is too important for the cache and too hot for the database. Which worker owns this job right now? Which node is the leader? What is the next reservation number? Is this seat still free? Did we already process this webhook? What is the current value of this feature flag?</p>
+<p>This state is small. It changes all the time. Every service reads it. And a wrong answer is not a small inconvenience. It is a double charge, a double booking, two workers processing the same payment, or a leader that does not know it stopped being the leader.</p>
+<p>The usual solution is to split that state. The hot part goes to Redis, the durable part goes to Postgres, and the application keeps the two copies in agreement. On a whiteboard, that code looks easy:</p>
+<ol>
+<li class="">Write to Postgres.</li>
+<li class="">Update or delete the key in Redis.</li>
+<li class="">Handle the case where step 1 succeeds and step 2 fails.</li>
+<li class="">Handle the case where step 2 succeeds and step 1 rolls back.</li>
+<li class="">Decide which copy is correct when they disagree.</li>
+</ol>
+<p>Steps 3 to 5 are where the late-night alerts come from. Every team writes its own version of this code, and every version has its own bugs.</p>
+<p>Kahuna exists because I wanted one place for that type of state, with the guarantees built in, instead of rebuilt in every service.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="distributed-locks">Distributed Locks<a href="https://kahunakv.github.io/blog/redis-postgres-and-kahuna/#distributed-locks" class="hash-link" aria-label="Direct link to Distributed Locks" title="Direct link to Distributed Locks" translate="no">​</a></h2>
+<p>Let's start with locks, because it is the first example everyone thinks of.</p>
+<p>The classic Redis lock is <code>SET key value NX PX 30000</code>. It works very well, until it doesn't. Redis replication is asynchronous, so a failover can forget a lock that was confirmed a moment ago, and a second client happily takes it. Redlock tries to solve that with several independent Redis servers, but people have debated it for years. The debate always comes back to the same missing piece: when a lock expires while its owner is paused, you have two owners, and Redis cannot tell the protected resource which one is old.</p>
+<p>Postgres advisory locks are stronger in one way, because they live inside a real transactional system. But they belong to a session. If the connection drops, the lock is gone. If the primary fails over, the lock is gone. If the process that holds the lock pauses for a long garbage collection and then wakes up, it still believes it owns the lock, and Postgres has no way to correct it.</p>
+<p>Kahuna locks are designed around the failure cases, not only the normal case:</p>
+<ul>
+<li class="">Lock state is replicated through Raft. A majority of nodes must agree before an acquire succeeds, so a leader change does not forget who owns what.</li>
+<li class="">Every lock is a lease with an expiration, so a crashed owner cannot hold a resource forever.</li>
+<li class="">Every acquisition returns a <strong>fencing token</strong> that only grows. The protected resource, such as a database row, a payment API, or a file, can reject any operation that carries an older token. Two owners after a pause is still possible in any lease-based system. Two owners <em>causing damage</em> is not.</li>
+</ul>
+<p>That last point is the key idea. A lock without a fencing token is a suggestion. A lock with a fencing token is a guarantee that you can enforce downstream. It is also one of the properties that the <a class="" href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/">Jepsen suite</a> checks every night: fencing tokens never move backwards, even during network partitions, process kills, and leader elections.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="keyvalue-store">Key/Value Store<a href="https://kahunakv.github.io/blog/redis-postgres-and-kahuna/#keyvalue-store" class="hash-link" aria-label="Direct link to Key/Value Store" title="Direct link to Key/Value Store" translate="no">​</a></h2>
+<p>The second thing my friend pointed at was the key/value store. "That is just Redis, or a table with two columns."</p>
+<p>It is, until you need several things at the same time.</p>
+<p>You need the write to be durable, so a failover does not lose a value that was already confirmed. Redis gives you speed and asynchronous replication. Postgres gives you durability, but now every hot read goes through a connection pool and a buffer cache to fetch a 40-byte value.</p>
+<p>You need conditional writes, because two services are trying to update the same key and only one of them should win. Redis has <code>WATCH</code> and Lua scripts. Postgres has <code>UPDATE ... WHERE version = ?</code>. Both work, both are per key, and neither one composes well across several keys and several services.</p>
+<p>You need a multi-key update to be atomic, because the seat map, the hold, and the reservation counter must change together or not at all. Postgres does this well inside one transaction, but now that state lives in Postgres, and the reads are back on the slow path. Redis does it in a <code>MULTI</code> block, but only on one node, and only if you never need to roll back based on what you read.</p>
+<p>Kahuna's key/value store brings those properties together, so you don't have to choose:</p>
+<ul>
+<li class="">Persistent keys are replicated through Raft and stored in RocksDB or SQLite. Ephemeral keys skip the disk, which is ideal for sessions and short holds. Same API, different durability, and you decide per key.</li>
+<li class="">Hot state is served from memory on the partition leader, so reads do not pay a database round trip.</li>
+<li class="">Every key has a revision, and every write can depend on it. Compare-and-set is the default tool, not a Lua script that you maintain yourself.</li>
+<li class="">Transactions can cover several keys and several partitions, with snapshot isolation or serializable consistency, and optimistic or pessimistic locking. The <a class="" href="https://kahunakv.github.io/blog/reusable-transaction-coordinator/">transaction coordinator</a> tracks the working set on the server, so a retried request cannot lose a write or apply it twice.</li>
+</ul>
+<p>This is the "cache plus database" problem reduced to one write path. Not for your business data, which still belongs in Postgres. For the shared state that every instance of your service must agree on.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="sequencer">Sequencer<a href="https://kahunakv.github.io/blog/redis-postgres-and-kahuna/#sequencer" class="hash-link" aria-label="Direct link to Sequencer" title="Direct link to Sequencer" translate="no">​</a></h2>
+<p>The third pillar is the one that people underestimate the most.</p>
+<p>Generating a unique number sounds like a solved problem. Postgres has <code>SEQUENCE</code>. Redis has <code>INCR</code>. Both are fast, and both are correct on a healthy network.</p>
+<p>Now imagine a lost response. The client called <code>nextval</code> or <code>INCR</code>, the server allocated 501, and the reply never arrived. What should the client do? If it retries, it receives 502, and 501 is either wasted or, worse, already used by a side effect that did complete. If it does not retry, it has no number at all. Neither Redis nor Postgres can tell the client "you already asked for this one, here it is again", because neither one remembers the request, only the counter.</p>
+<p>Kahuna sequences accept an <strong>idempotency key</strong>. Retry the same request and you receive the same allocation. Sequences are replicated through Raft, so a leader change does not reset or rewind them. Workers that need high volume can reserve a contiguous range in one call and hand out numbers locally. The Jepsen sequencer workload checks that two successful allocations never overlap, and that a retried request returns its original value.</p>
+<p>Invoice numbers, ticket numbers, order IDs, event offsets. These are the places where "unique" is a legal requirement, and "we found the duplicate a week later" is not an acceptable answer.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="where-kahuna-does-not-belong">Where Kahuna Does Not Belong<a href="https://kahunakv.github.io/blog/redis-postgres-and-kahuna/#where-kahuna-does-not-belong" class="hash-link" aria-label="Direct link to Where Kahuna Does Not Belong" title="Direct link to Where Kahuna Does Not Belong" translate="no">​</a></h2>
+<p>I want to be fair to my friend, because he was partly right.</p>
+<p>Kahuna is not a replacement for Postgres as your main database. Relational queries, joins, reports, large rows, and bulk data belong in a system built for them. Kahuna is intentionally focused on small, hot, strongly consistent state.</p>
+<p>Kahuna is not a replacement for Redis as a cache for data you can rebuild. If losing a value only costs you a cache miss, Redis is cheaper and simpler. Consensus is not free. Every persistent write in Kahuna is a round trip to a majority of nodes, and you should only pay that cost for state where a wrong answer is worse than a slow answer.</p>
+<p>The rule I use is simple. If any of these would be a real incident for you, the state belongs in Kahuna:</p>
+<ul>
+<li class="">Two workers owning the same job.</li>
+<li class="">A confirmed write disappearing after a failover.</li>
+<li class="">A retried request allocating a second ID.</li>
+<li class="">A multi-key update becoming half visible.</li>
+</ul>
+<p>If none of them would be an incident, Redis and Postgres are fine, and you should use them.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="where-camusdb-fits">Where CamusDB Fits<a href="https://kahunakv.github.io/blog/redis-postgres-and-kahuna/#where-camusdb-fits" class="hash-link" aria-label="Direct link to Where CamusDB Fits" title="Direct link to Where CamusDB Fits" translate="no">​</a></h2>
+<p>There is one more part of the answer that I did not reach at lunch.</p>
+<p>Kahuna did not start as a standalone product. It started as the piece that <a href="https://github.com/camusdb" target="_blank" rel="noopener noreferrer" class="">CamusDB</a> needed underneath it. CamusDB is a distributed SQL database, and a distributed SQL database needs replication, consensus, multi-key transactions with real isolation, and a reliable place for its metadata. Instead of building all of that inside the SQL engine, I built it as Kahuna, and CamusDB became its first serious user.</p>
+<p>That relationship is still alive, and it is the main reason Kahuna keeps improving. Every CamusDB write is a Kahuna transaction. Every CamusDB replica is a Kahuna partition. When CamusDB needed ordered scans over large key spaces, Kahuna got key-range routing. When it needed stable reads while writes continued, Kahuna got snapshot holds on top of MVCC. When it needed to recover unfinished transactions after a crash, instead of asking the client to retry, Kahuna got durable commit decisions in the coordinator.</p>
+<p>A coordination service that only stores feature flags is never pushed that hard. A storage engine with a SQL database on top of it is pushed every day. That pressure is what turned Kahuna from "locks and a few keys" into something I was comfortable calling <a class="" href="https://kahunakv.github.io/blog/kahuna-1-0-stable/">1.0</a>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-answer-i-should-have-given">The Answer I Should Have Given<a href="https://kahunakv.github.io/blog/redis-postgres-and-kahuna/#the-answer-i-should-have-given" class="hash-link" aria-label="Direct link to The Answer I Should Have Given" title="Direct link to The Answer I Should Have Given" translate="no">​</a></h2>
+<p>So, could you do all of this with Redis and Postgres?</p>
+<p>Most of it, yes. You need to write the glue code carefully, test it under failures, and keep it correct while three different teams change it over five years. I have done that. It works until the one night when it doesn't, and then you spend a week finding out which of the two systems was telling the truth.</p>
+<p>Kahuna is that glue code, written once, replicated, tested with Jepsen, and given a real API: locks with fencing tokens, keys with revisions and transactions, and sequences that survive a lost reply. It is not a bigger Redis or a smaller Postgres. It is the layer in between, the one that every 24/7 system builds sooner or later, whether it admits it or not.</p>
+<p>I still think Redis and Postgres are great. I just don't want to write that glue code again.</p>
+<p>Kahuna is <a href="https://github.com/kahunakv/kahuna" target="_blank" rel="noopener noreferrer" class="">open source</a> under the MIT license. If you have your own version of that glue code somewhere in your codebase, I would love to hear how it broke.</p>]]></content>
+        <author>
+            <name>Andres Gutierrez</name>
+            <uri>https://github.com/andresgutierrez</uri>
+        </author>
+        <category label="kahuna" term="kahuna"/>
+        <category label="camusdb" term="camusdb"/>
+        <category label="redis" term="redis"/>
+        <category label="postgres" term="postgres"/>
+        <category label="distributed-systems" term="distributed-systems"/>
+    </entry>
     <entry>
         <title type="html"><![CDATA[Kahuna 1.0: From Coordination Library to Distributed Database]]></title>
         <id>https://kahunakv.github.io/blog/kahuna-1-0-stable/</id>
