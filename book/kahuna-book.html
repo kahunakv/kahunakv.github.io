@@ -1980,6 +1980,15 @@ with key-value data.</p>
 <p>A Kahuna key is a string. A value is a byte array (or a UTF-8 string,
 which the client converts to bytes). There is no schema, no type
 enforcement, and no size hierarchy. Every key is flat.</p>
+<p>Kahuna distinguishes a <strong>null value</strong> from an
+<strong>empty value</strong>. A null value means the key exists but has
+no payload (the value field is unset in the protobuf). An empty value
+means the key exists with a zero-length byte array. Both gRPC and REST
+transports preserve this distinction. A <code>SetKeyValue</code> call
+with <code>null</code> as the value stores a null payload. A call with
+<code>new byte[0]</code> stores an empty payload. A
+<code>GetKeyValue</code> call returns <code>null</code> or an empty
+array accordingly.</p>
 <p>Keys often follow a convention of prefixed namespaces separated by
 <code>/</code>:</p>
 <pre><code>users/alice
@@ -2394,6 +2403,18 @@ the current effective floor timestamp and the number of live holds.</p>
 and receive incomplete results. The hold keeps the effective snapshot
 floor at or below the held timestamp until the hold is released or its
 lease expires.</p>
+<h4 data-number="4.12.1.1" id="restart-recovery"><span class="header-section-number">4.12.1.1</span> Restart Recovery</h4>
+<p>When a node restarts, snapshot holds that lapsed during the downtime
+are still registered in the durable state. The
+<code>SnapshotHoldStartupGraceWindow</code> (default 5 minutes) protects
+these holds. During the grace window, lapsed-but-registered holds
+continue to pin history. The revision pruner does not delete revisions
+at or after a held timestamp until the grace window expires. This gives
+clients time to renew or release their holds after a server restart.</p>
+<p>Protection ends when the hold is removed through Raft replication,
+not when the lease expires locally. A lease expiry triggers a Raft
+proposal to remove the hold. Until that proposal commits, the hold
+remains active.</p>
 <h2 data-number="4.13" id="the-kahunakeyvalue-object"><span class="header-section-number">4.13</span> The KahunaKeyValue Object</h2>
 <p>Every key-value operation returns a <code>KahunaKeyValue</code>
 object. Here is a summary of its properties and methods:</p>
@@ -8705,9 +8726,39 @@ Each stage is a distinct component with a distinct responsibility.</p>
 <h3 data-number="16.1.1" id="stage-1-client-batching"><span class="header-section-number">16.1.1</span> Stage 1: Client
 Batching</h3>
 <p>The application calls <code>KahunaClient.SetKeyValue</code>. The
-client selects a server URL from its list in round-robin order. It
-creates a <code>GrpcTrySetKeyValueRequest</code> and passes it to the
-<code>GrpcBatcher</code> for the selected URL.</p>
+client selects a server URL through its routing mode. The default mode
+is <code>Auto</code>, which resolves to <code>Learned</code> when the
+client was given more than one endpoint and <code>RoundRobin</code> when
+it was given exactly one.</p>
+<p>Four routing modes are available:</p>
+<ul>
+<li><strong>RoundRobin</strong>: rotate over the configured endpoints.
+Every request lands on an arbitrary node. If that node is not the leader
+for the key’s partition, it forwards the request internally. This was
+the only behavior before client routing existed.</li>
+<li><strong>Learned</strong>: reuse the endpoint that a previous
+response reported for the same resource. The server attaches a routing
+hint to each response. The client stores the hint in a
+<code>RouteCache</code> and sends future requests for the same key
+directly to the hinted node. A cache miss falls back to
+round-robin.</li>
+<li><strong>Metadata</strong>: learned routing plus a one-time
+resolution of routing metadata per key space. The client queries the
+cluster’s routing metadata API, which returns partition assignments and
+the hash placement rule. A key the client has never seen before can go
+to the correct node without a cache-miss forward. The client falls back
+to learned behavior when the metadata is missing or stale.</li>
+<li><strong>Auto</strong> (default): selects <code>Learned</code> for
+multi-endpoint clients and <code>RoundRobin</code> for single-endpoint
+clients.</li>
+</ul>
+<p>The routing mode is set in <code>KahunaOptions.RoutingMode</code>. In
+all modes, correctness is the same: every node accepts every operation
+and forwards it to the owner if necessary. The routing mode changes
+efficiency, not behavior.</p>
+<p>After the client selects a target endpoint, it creates a
+<code>GrpcTrySetKeyValueRequest</code> and passes it to the
+<code>GrpcBatcher</code> for that URL.</p>
 <p>The <code>GrpcBatcher</code> does not send each request individually.
 It uses gRPC bidirectional streaming to multiplex many operations over a
 single long-lived HTTP/2 stream. When a request arrives, the batcher
@@ -8784,6 +8835,13 @@ the request over <code>IInterNodeCommunication</code>:</p>
 plus a <code>routedGeneration</code> that tracks the range map version
 at the coordinating node. The remote node uses this generation to detect
 stale routes.</p>
+<p>Each forwarded request also carries a hop counter
+(<code>ForwardHops</code>). The counter starts at zero on the client’s
+request. Each inter-node forward increments the counter by one. When the
+counter reaches <code>MaxForwardHops</code> (2), the receiver returns
+<code>MustRetry</code> instead of forwarding again. This hop budget
+prevents infinite ping-pong between nodes during range map
+convergence.</p>
 <h3 data-number="16.1.4" id="stage-4-actor-processing"><span class="header-section-number">16.1.4</span> Stage 4: Actor
 Processing</h3>
 <p>When the request is dispatched locally,
@@ -8836,10 +8894,17 @@ aggregator calls <code>Complete</code> on each request, which sends a
 clears the replication intent, applies the committed state to the entry,
 and resolves the response promise. On failure, the actor returns
 <code>MustRetry</code> or <code>Aborted</code>.</p>
-<p>Only one batch per partition is in flight at any time. While a batch
-is in Raft, new proposals accumulate in the buffer behind it. When the
-in-flight batch completes, the aggregator immediately dispatches the
-buffered items as the next batch.</p>
+<p>By default, only one batch per partition is in flight at any time.
+While a batch is in Raft, new proposals accumulate in the buffer behind
+it. When the in-flight batch completes, the aggregator immediately
+dispatches the buffered items as the next batch.</p>
+<p>The <code>--kv-write-max-in-flight-batches</code> flag (default 1)
+allows multiple batches per partition to await Raft concurrently. With a
+value of 2, the aggregator dispatches a second batch while the first is
+still in Raft. FIFO ordering is preserved: batches commit in the order
+they were submitted. Pipelined batching increases throughput on
+partitions with sustained write load by overlapping Raft replication
+rounds.</p>
 <h3 data-number="16.1.6" id="stage-6-replication-and-state-application"><span class="header-section-number">16.1.6</span> Stage 6: Replication and
 State Application</h3>
 <p>After Raft commits the log entry, the <code>KeyValueReplicator</code>
@@ -9171,15 +9236,39 @@ the <code>--initial-cluster-partitions</code> flag (default 3).</p>
   → hash = HashUtils.InversePrefixedHash(&quot;orders/123/status&quot;, &#39;/&#39;, PoolSize)
   → partitionId = hash + FirstUserPartitionId (1)
   → result: partition 2</code></pre>
+<h4 data-number="17.1.1.1" id="placement-groups"><span class="header-section-number">17.1.1.1</span> Placement Groups</h4>
+<p>The hash does not run over the full key-space prefix. It runs over
+the prefix’s <strong>placement group</strong>: the portion before the
+first <code>|</code> character. If the key space has no <code>|</code>,
+the entire key space is its own placement group.</p>
+<p>For example, the key <code>t:r|i:pk/0001</code> has key space
+<code>t:r|i:pk</code> and placement group <code>t:r</code>. The key
+<code>t:r/0001</code> has key space <code>t:r</code> and placement group
+<code>t:r</code> (no <code>|</code>, so the full key space is the
+group). Both keys hash to the same partition because they share the
+placement group <code>t:r</code>.</p>
+<p>This rule lets an application co-locate a table’s rows and its index
+entries on the same partition. Name the row key space
+<code>t:r/rowKey</code> and the index key space
+<code>t:r|i:pk/indexKey</code>. Both key spaces share the placement
+group <code>t:r</code> and hash together. The key spaces remain separate
+for prefix scans and range descriptors.</p>
+<p>The placement function is defined in <code>HashPlacement</code>. Both
+the server’s routers and the client’s local resolver call the same
+function so the two cannot drift. The function identifier
+(<code>kahuna.placement-group-jump-xxh32-v1</code>) is published in
+routing metadata. A client that implements a different function refuses
+to hash locally rather than approximate.</p>
 <p>Hash-based routing has two properties:</p>
 <ol type="1">
 <li><strong>Uniform distribution.</strong> Keys spread evenly across
 partitions. No partition is a hot spot unless the application writes
-heavily to a single prefix.</li>
+heavily to a single placement group.</li>
 <li><strong>No key locality.</strong> Keys with related prefixes (such
 as <code>orders/100</code> and <code>orders/101</code>) may land on
 different partitions. Range scans across prefixes require querying
-multiple partitions.</li>
+multiple partitions. Keys within the same placement group co-locate, but
+placement groups are distributed independently.</li>
 </ol>
 <p>The partition pool is fixed. It does not grow or shrink. Partitions
 created by key-range splits receive higher IDs and are not part of the
@@ -11716,12 +11805,22 @@ unchanged.</li>
 </ul>
 <p>Resolution can be synchronous or deferred (asynchronous), based on
 the <code>DurableDeferredSettlement</code> configuration.</p>
+<p>When <code>DurableByReferenceMaterialization</code> is enabled, the
+resolve step writes a reference to the prepared intent instead of
+copying the full value through the Raft log. Each replica resolves the
+value from its local PreparedIntentStore during apply. This reduces Raft
+log bandwidth for large values.</p>
 <h3 data-number="21.4.7" id="one-phase-fast-path"><span class="header-section-number">21.4.7</span> One-Phase Fast Path</h3>
 <p>For single-partition transactions, the finalizer bundles the record
 initialization, anchor prepare, and commit decision into one atomic Raft
 proposal. This reduces three Raft round trips to one. If the prepare
 fails (a <code>bundledPrepareProbe</code> gate rejects it), the bundle
 is rejected and the transaction falls back to the multi-step path.</p>
+<p>When the anchor partition’s leader is on another node, the
+coordinator forwards the bundle as a single typed inter-node RPC. The
+remote leader submits the bundle atomically. If the remote leader does
+not support the typed operation, the coordinator falls back to the
+normal two-phase flow.</p>
 <p>In a multi-process cluster, a transaction whose validated read set
 extends beyond its written keys is excluded from the one-phase path. The
 read-set validation requires a separate round trip that cannot be
@@ -11731,6 +11830,13 @@ bundled atomically with the prepare.</p>
 Read-carrying transactions remain eligible for the one-phase path
 because the validation, prepare, and commit execute in the same process
 with no replication window between them.</p>
+<p>When <code>OnePhaseApplyTimeValidation</code> is enabled, the
+multi-process exclusion is lifted for read-carrying transactions. The
+bundled commit carries the transaction’s on-partition read dependencies.
+Every replica validates those dependencies at apply time against a
+partition-scoped committed-head ledger. If any dependency is stale, the
+replica rejects the apply. All nodes in the cluster must run a version
+that persists this ledger before the flag can be enabled.</p>
 <h3 data-number="21.4.8" id="anchor-bundling"><span class="header-section-number">21.4.8</span> Anchor Bundling</h3>
 <p>For multi-partition transactions, the finalizer bundles the record
 initialization and the anchor partition’s prepare into one Raft
@@ -11812,7 +11918,17 @@ incomplete (for example, after a leader election) and admitted a prepare
 with a stale base. The veto is best-effort: if the transaction already
 committed at the anchor, the abort request loses the CAS race and the
 commit stands.</p>
-<h3 data-number="21.5.4" id="stale-hydration-refusal"><span class="header-section-number">21.5.4</span> Stale-Hydration Refusal</h3>
+<h3 data-number="21.5.4" id="pre-decision-replica-fence-confirmation"><span class="header-section-number">21.5.4</span> Pre-Decision Replica Fence
+Confirmation</h3>
+<p>The stale-base veto runs after the prepare is replicated. A
+complementary mechanism runs before the decision. Before the coordinator
+executes the CAS decide step, it can query replicas for their
+staged-base fence verdicts on the transaction’s written keys.</p>
+<p>If any replica reports a stale base, the coordinator aborts the
+transaction before committing. This catches conflicts that the leader’s
+fence memory missed after a leader election. The pre-decision
+confirmation is coordinator-driven, not follower-driven.</p>
+<h3 data-number="21.5.5" id="stale-hydration-refusal"><span class="header-section-number">21.5.5</span> Stale-Hydration Refusal</h3>
 <p>When a cache-miss read hydrates a key’s value from the persistent
 store, the loaded row may be stale. This can happen on a newly promoted
 leader whose local persistent state lags behind the committed state.</p>
@@ -11852,7 +11968,10 @@ every key it reads or writes. Other transactions that touch the same
 keys wait (up to the transaction timeout) or abort.</p>
 <p>Lock acquisition happens before the operation, not at commit time.
 Conflicts are detected immediately: if the lock is held by another
-transaction, the operation returns <code>AlreadyLocked</code>.</p>
+transaction, the client retries the acquisition with exponential backoff
+(1 ms to 50 ms cap) up to <code>MaxLockWaitMs</code> (default 3000 ms).
+If the lock is still held after the wait budget, the operation returns
+<code>MustRetry</code>.</p>
 <p>Pessimistic mode eliminates read-set validation overhead. There are
 no concurrent modifications to detect because locks prevent them. The
 trade-off is lower concurrency: transactions wait for each other instead
@@ -13114,6 +13233,23 @@ a base delay of 1000 ms between attempts. If all retries fail, the batch
 is retained in <code>pendingLockItems</code> or
 <code>pendingKeyValuesItems</code> for the next cycle. This retention
 ensures that no committed data is silently dropped.</p>
+<h4 data-number="23.5.2.1" id="storage-engine-recovery"><span class="header-section-number">23.5.2.1</span> Storage Engine
+Recovery</h4>
+<p>RocksDB can latch a background error after a failed WAL append (for
+example, when the disk is full). Once latched, every later write returns
+the cached error without new I/O. The retained-batch retries can never
+succeed, even after an operator frees disk space.</p>
+<p>The <code>BackgroundWriterActor</code> tracks consecutive flush
+cycles in which every store call failed. After
+<code>StoreFailureCyclesBeforeRecovery</code> consecutive failure cycles
+(default 3), the writer calls
+<code>TryRecoverFromStorageFailure()</code> on the persistence backend.
+The RocksDB backend implements this method by closing and reopening the
+database engine. After a successful reopen, retained batches can drain
+without a process restart.</p>
+<p>A single successful store call in any cycle resets the failure
+counter. This prevents a transient write error from triggering an
+unnecessary engine reopen.</p>
 <p>After a successful key-value flush, the writer calls
 <code>flushNotificationSink.NotifyFlushed(key, revision)</code> for each
 item in the batch. This notification routes a <code>FlushAck</code>
@@ -16743,6 +16879,33 @@ proposed</td>
 <td><code>kahuna.durable_tx.redundant_applies_skipped</code></td>
 <td>Durable applies skipped because the entry already ran</td>
 </tr>
+<tr>
+<td>Counter</td>
+<td><code>kahuna.durable_tx.materialization_repair_repromotions</code></td>
+<td>Commit repairs re-promoted from the parked mutation after a durable
+lag</td>
+</tr>
+<tr>
+<td>Counter</td>
+<td><code>kahuna.durable_tx.one_phase_gate_decisions</code></td>
+<td>Gate decisions tagged by outcome: <code>entered</code>,
+<code>disabled</code>, <code>read_set_beyond_writes</code>,
+<code>validated_base</code>, <code>predicate_read</code>,
+<code>off_partition_read</code>, <code>non_persistent_read</code>,
+<code>multi_partition</code>, <code>anchor_off_partition</code></td>
+</tr>
+<tr>
+<td>Histogram</td>
+<td><code>kahuna.durable_tx.one_phase_bundle_ms</code></td>
+<td>One-phase bundled proposal wall time (submission to committed
+acknowledgement)</td>
+</tr>
+<tr>
+<td>Histogram</td>
+<td><code>kahuna.durable_tx.one_phase_pre_bundle_ms</code></td>
+<td>One-phase pre-submission wall time (eligibility, bundle
+construction, anchor routing), tagged by route</td>
+</tr>
 </tbody>
 </table>
 <p><strong>What to watch.</strong> A high <code>outstanding</code> gauge
@@ -20099,6 +20262,12 @@ development</td>
 <td>Cap on buffered outbound bytes per peer; excess AppendLogs entries
 are dropped rather than accumulated; 0 disables the cap</td>
 </tr>
+<tr>
+<td><code>--raft-proposal-timeout</code></td>
+<td><code>10000</code> ms</td>
+<td>How long a write caller waits for a Raft proposal to reach quorum
+before the server returns <code>ProposalTimeout</code></td>
+</tr>
 </tbody>
 </table>
 <h2 data-number="32.11" id="raft-snapshot-transfer"><span class="header-section-number">32.11</span> Raft Snapshot Transfer</h2>
@@ -20713,6 +20882,18 @@ released as MustRetry</td>
 <td>Ordinary-submission inbox bound per aggregator lane; control
 messages are exempt</td>
 </tr>
+<tr>
+<td><code>--kv-write-max-in-flight-batches</code></td>
+<td><code>1</code></td>
+<td>Maximum concurrent Raft proposals per partition; values above 1
+enable pipelined batching (FIFO order preserved)</td>
+</tr>
+<tr>
+<td><code>--kv-write-post-completion-hold-ms</code></td>
+<td><code>0</code></td>
+<td>Delay after a batch completes before the next sub-threshold batch is
+dispatched; full batches flush immediately; 0 = no hold</td>
+</tr>
 </tbody>
 </table>
 <p>Internal write-batching parameters (set in
@@ -21059,6 +21240,12 @@ forever</td>
 <td><code>--persistent-revision-retention-age</code></td>
 <td><code>0</code> s</td>
 <td>Maximum age of persisted revisions; 0 = no age limit</td>
+</tr>
+<tr>
+<td><code>--snapshot-hold-startup-grace-window</code></td>
+<td><code>300</code> s</td>
+<td>After restart, lapsed-but-registered snapshot holds continue to pin
+history for this long; gives clients time to renew or release holds</td>
 </tr>
 <tr>
 <td><code>--persistent-revision-cleanup-interval</code></td>
@@ -23221,6 +23408,11 @@ range map.</p>
 <p><strong>Generation fence.</strong> The mechanism that rejects
 requests routed to a partition with a stale generation number. The fence
 prevents writes from landing on a range that no longer owns the key.</p>
+<p><strong>Hop budget.</strong> A forward-count limit on inter-node
+request forwarding. Each forward increments a hop counter. When the
+counter reaches <code>MaxForwardHops</code> (2), the receiver returns
+<code>MustRetry</code> instead of forwarding again. The hop budget
+prevents infinite routing loops during range map convergence.</p>
 <p><strong>HLC (hybrid logical clock).</strong> A clock that combines a
 physical timestamp (wall-clock time) with a logical counter. HLCs
 provide a total order across events on different nodes without requiring
@@ -23275,6 +23467,14 @@ consistent-hash routing.</p>
 where all writes land on the same partition. The prepare, validate, and
 commit steps collapse into a single Raft round-trip. The transaction
 skips the full two-phase commit protocol.</p>
+<p><strong>Pipelined batching.</strong> A write aggregation mode where
+multiple batches per partition await Raft concurrently. FIFO ordering is
+preserved. Controlled by
+<code>--kv-write-max-in-flight-batches</code>.</p>
+<p><strong>Placement group.</strong> The portion of a key space’s name
+before the first <code>|</code> separator. All key spaces that share the
+same placement group hash to the same partition. If the key space has no
+<code>|</code>, the entire key space is its own placement group.</p>
 <p><strong>Partition.</strong> A subset of the data managed by an
 independent Raft group. Each partition has its own leader, log, and set
 of replicas. Partitions are the unit of scaling: more partitions
@@ -23288,6 +23488,11 @@ nodes. The placement rebalancer distributes replicas to maintain the
 target replication factor, spread replicas across zones, and balance
 replica counts.</p>
 <p><strong>Prepared intent.</strong> See Write intent.</p>
+<p><strong>Pre-decision fence confirmation.</strong> A
+coordinator-driven check that queries replicas for their staged-base
+fence verdicts before the CAS decide step. If any replica reports a
+stale base, the coordinator aborts the transaction before committing.
+Complements the follower-driven stale-base veto.</p>
 <p><strong>Presumed-abort.</strong> A recovery rule for distributed
 transactions. If no committed decision record exists for a transaction,
 the transaction is presumed aborted. This rule allows recovery to clean
@@ -23323,6 +23528,14 @@ read-index requests into a single heartbeat round.</p>
 each partition. A replication factor of 3 means three nodes hold copies
 of each partition. A replication factor of 0 means full replication:
 every node holds every partition.</p>
+<p><strong>Routing mode.</strong> The client-side strategy for selecting
+which server receives an operation. Four modes are available:
+<code>RoundRobin</code> (rotate over configured endpoints),
+<code>Learned</code> (reuse the endpoint a previous response reported),
+<code>Metadata</code> (learned routing plus hash-based partition
+resolution from cluster metadata), and <code>Auto</code> (default,
+selects <code>Learned</code> for multi-endpoint clients and
+<code>RoundRobin</code> for single-endpoint clients).</p>
 <p><strong>Revision.</strong> A version number on a key-value entry. The
 revision increments on every write to that key. Clients use revisions
 for conditional writes (<code>CMPREV</code>) and for reading historical
