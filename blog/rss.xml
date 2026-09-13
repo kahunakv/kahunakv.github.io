@@ -138,7 +138,7 @@
 <li class=""><strong>Backups and point-in-time recovery</strong></li>
 <li class=""><strong>Embedded node</strong> for integration tests and applications that need the transaction engine without the server</li>
 <li class=""><strong>Jepsen-tested</strong> across key/value, lock, transaction, sequencer, and membership workloads</li>
-<li class=""><strong>.NET client</strong>, REST, gRPC, and CLI interfaces</li>
+<li class=""><strong>.NET and TypeScript clients</strong>, REST, gRPC, and CLI interfaces</li>
 <li class=""><strong>MIT license</strong></li>
 </ul>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-comes-next">What Comes Next<a href="https://kahunakv.github.io/blog/kahuna-1-0-stable/#what-comes-next" class="hash-link" aria-label="Direct link to What Comes Next" title="Direct link to What Comes Next" translate="no">​</a></h2>
@@ -311,7 +311,7 @@
 <p>The problem is that some of this logic is too close to the script executor.</p>
 <p>Scripts should handle scripts: parsing, variables, expressions, and script-specific execution.</p>
 <p>The reusable coordinator should handle transactions: identity, lifecycle, working sets, operation registration, finalization, retries, and cleanup.</p>
-<p>Once those responsibilities are separated, the script engine becomes one user of the coordinator. The .NET client becomes another. Future clients can follow the same protocol without copying script-specific behavior.</p>
+<p>Once those responsibilities are separated, the script engine becomes one user of the coordinator. The .NET and TypeScript clients become other users of the same protocol without copying script-specific behavior.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="finalization-is-a-state-machine">Finalization Is a State Machine<a href="https://kahunakv.github.io/blog/reusable-transaction-coordinator/#finalization-is-a-state-machine" class="hash-link" aria-label="Direct link to Finalization Is a State Machine" title="Direct link to Finalization Is a State Machine" translate="no">​</a></h2>
 <p>Commit and rollback are not buttons. They are state transitions under pressure.</p>
 <p>The coordinator has to handle duplicate commits, commit racing rollback, retries arriving late, and automatic cleanup for expired sessions.</p>
