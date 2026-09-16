@@ -6,7 +6,7 @@ Routing is advisory. The server still re-resolves the key, lock, or sequence whe
 
 ## Modes
 
-Set `KahunaOptions.Routing`:
+Set `KahunaOptions.Routing` in .NET or `routing` in TypeScript:
 
 | Mode | Behavior |
 |------|----------|
@@ -30,6 +30,19 @@ var client = new KahunaClient(
         Routing = KahunaRoutingMode.Metadata
     }
 );
+```
+
+```ts
+import { KahunaClient } from "kahuna-client";
+
+const client = new KahunaClient({
+  endpoints: [
+    "https://node1:8082",
+    "https://node2:8084",
+    "https://node3:8086"
+  ],
+  routing: "metadata"
+});
 ```
 
 `Auto` is usually the right starting point. A single-endpoint client stays on `RoundRobin` because it cannot use hints that name other nodes unless those endpoints are also configured or mapped.
@@ -67,6 +80,8 @@ The default derived endpoint is:
 
 Set `--advertised-client-endpoint` explicitly when clients reach a node through a different host or port than the cluster uses internally, such as container port mapping or separate internal and external DNS names.
 
+In `MutualTls` deployments, routing hints must name application listeners, not the mTLS cluster listener. Set `--advertised-client-endpoint` on each node and use `--disable-peer-endpoint-advertisement` unless every peer application URL can be derived safely. A normal client cannot follow a hint that points at a listener requiring node certificates.
+
 ## Endpoint Mapping
 
 A response cannot make the client dial an arbitrary address by default. A hint is accepted only when it resolves to a configured endpoint.
@@ -93,20 +108,38 @@ var client = new KahunaClient(
 );
 ```
 
+```ts
+const client = new KahunaClient({
+  endpoints: [
+    "https://localhost:8082",
+    "https://localhost:8084",
+    "https://localhost:8086"
+  ],
+  routing: "learned",
+  routingEndpointMap: {
+    "https://172.30.0.2:8082": "https://localhost:8082",
+    "https://172.30.0.3:8084": "https://localhost:8084",
+    "https://172.30.0.4:8086": "https://localhost:8086"
+  }
+});
+```
+
 Set `AllowUnlistedRoutingEndpoints = true` only when every advertised node URL is trusted and client-reachable, including nodes added after the client starts.
 
 ## Metadata Mode
 
 `Metadata` mode reads `GET /v1/cluster/routing` or the equivalent gRPC `Cluster.GetRoutingMetadata` call. The map includes:
 
-- hash-routing rules for normal key spaces
+- hash-routing rules for normal key spaces, including placement groups
 - key-range descriptors and generations for range-routed key spaces
 - sequence storage-key routing rules
 - advisory partition leaders
 
+The current hash algorithm identifier is `kahuna.placement-group-jump-xxh32-v1`. It means the client hashes the key space before the last `/`, then reduces that key space to the placement group before the first `|`. Key spaces that share a placement group, such as `orders|rows/...` and `orders|by_customer/...`, route to the same hash partition.
+
 The metadata read is not on the critical path of an operation. If no usable map is available, the operation goes out through learned routing or rotation and the refreshed map helps later operations.
 
-Clients refuse metadata they cannot interpret exactly, including unknown schema versions, unknown hash algorithms, incoherent range snapshots, missing leaders, or key-range gaps. In those cases the client falls back instead of guessing.
+Clients refuse metadata they cannot interpret exactly, including unknown schema versions, unknown hash algorithms or separators, incoherent range snapshots, missing leaders, or key-range gaps. In those cases the client falls back instead of guessing.
 
 ## Cache and Metrics
 

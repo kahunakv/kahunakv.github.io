@@ -9,13 +9,32 @@ See [Backend I/O Scheduler](/docs/backend-io-scheduler/) for how backend read/wr
 | Command Line Option(s) | Description | Default Value |
 |------------------------|-------------|---------------|
 | `-h`, `--host` | Host option accepted by the CLI. The current Kestrel setup listens on all interfaces for configured HTTP/HTTPS ports. | `*` |
-| `-p`, `--http-ports` | One or more HTTP ports for external REST traffic. If omitted, Kahuna listens on HTTP port `2070`. Use `--grpc-cleartext-ports` for cleartext gRPC. | `2070` |
+| `-p`, `--http-ports` | One or more HTTP ports for external REST traffic. If omitted, Kahuna listens on HTTP port `2070`. When `--https-certificate` is configured, cleartext listeners are not bound unless `--allow-plaintext-listener` is set. Use `--grpc-cleartext-ports` for cleartext gRPC. | `2070` |
 | `--https-ports` | One or more HTTPS ports for external REST/gRPC traffic. HTTPS is bound only when `--https-certificate` is configured. Passing HTTPS ports without a certificate is rejected. | none unless a certificate is configured |
-| `--grpc-cleartext-ports` | One or more cleartext HTTP/2 ports for gRPC without TLS. These listeners are gRPC-only and reject HTTP/1.1, so REST clients must use `--http-ports` or `--https-ports`. | none |
+| `--grpc-cleartext-ports` | One or more cleartext HTTP/2 ports for gRPC without TLS. These listeners are gRPC-only and reject HTTP/1.1, so REST clients must use `--http-ports` or `--https-ports`. When `--https-certificate` is configured, cleartext listeners are not bound unless `--allow-plaintext-listener` is set. | none |
 | `--https-certificate` | Path to the HTTPS certificate used by Kestrel and trusted for internal HTTPS communication. | empty |
 | `--https-certificate-password` | Password for the HTTPS certificate. | empty |
+| `--allow-plaintext-listener` | Bind cleartext HTTP and h2c listeners even when an HTTPS certificate is configured. Node-only surfaces still refuse cleartext callers in `MutualTls` mode. | disabled |
 
 Use `--grpc-cleartext-ports` for trusted local or private-network deployments that need h2c gRPC without TLS overhead. Do not expose cleartext gRPC on untrusted networks because client request payloads are unencrypted. If `--raft-grpc-scheme http://` points inter-node traffic at those ports, Raft and leader-forwarding payloads are also unencrypted.
+
+## Node Transport Security
+
+`MutualTls` authenticates node-to-node Raft traffic and Kahuna's internal key/value, lock, sequence, and two-phase commit forwarding calls. `SharedSecret` protects Raft only.
+
+See [Node Transport Security](/docs/node-transport-security/) for certificate layout, routing-hint requirements, listener behavior, and rotation.
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--node-auth-mode` | Node-to-node authentication mode: `Disabled`, `SharedSecret`, or `MutualTls`. | `Disabled` |
+| `--node-shared-secret` | Shared secret for node authentication in `SharedSecret` mode. | empty |
+| `--node-auth-header` | Header or metadata name that carries the node signature in `SharedSecret` mode. Empty keeps Kommander's default. | empty |
+| `--node-require-tls` | Reject node-to-node requests that did not arrive over TLS. | `true` |
+| `--node-auth-clock-skew` | Maximum accepted clock skew for signed node requests, in seconds. Applies to `SharedSecret` mode. | `60` |
+| `--client-certificate` | PKCS#12 certificate this node presents to peers in `MutualTls` mode. Defaults to `--https-certificate`. | empty |
+| `--client-certificate-password` | Password for `--client-certificate`. Defaults to `--https-certificate-password` when `--client-certificate` is not set. | empty |
+| `--trusted-client-cert-thumbprint` | SHA-256 thumbprints of peer certificates this node accepts in `MutualTls` mode. | none |
+| `--trusted-server-cert-thumbprint` | SHA-256 thumbprints of peer server certificates this node pins when dialing peers. | system trust store |
 
 ## Health and Readiness
 
@@ -29,6 +48,7 @@ The JSON response includes:
 | `initialized` | `true` after the node has received and applied the cluster partition map. |
 | `localRole` | Local membership role, such as `Voter`, `Learner`, `Leaving`, or `NotMember`. |
 | `hostedPartitions` | Number of data partitions hosted locally. Informational only; with replica placement a ready node can host zero partitions and still forward requests. |
+| `fatalFault` | Set when the process observed a fatal runtime fault, currently out-of-memory, and was configured not to fail fast. A node with this field set returns `503` for the rest of its process lifetime. |
 
 Use readiness for traffic routing. Membership can be available before the node is initialized, so a node may answer membership queries while still refusing key/value requests.
 
@@ -50,7 +70,7 @@ The dashboard is intentionally read-only. It does not start backups, move replic
 
 ## Client Routing Hints
 
-Kahuna can include advisory route hints in REST and gRPC responses. The .NET client can use those hints to send repeated key/value, lock, and sequence operations directly to the node that currently owns the resource, avoiding an extra inter-node forward.
+Kahuna can include advisory route hints in REST and gRPC responses. The .NET and TypeScript clients can use those hints to send repeated key/value, lock, and sequence operations directly to the node that currently owns the resource, avoiding an extra inter-node forward.
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
@@ -116,11 +136,11 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--locks-workers` | Number of lock actors per durability ring. `0` auto-sizes to `max(32, CPU cores * 4)`. | `0` |
 | `--keyvalue-workers` | Number of key/value actors per durability ring. `0` auto-sizes to `max(32, CPU cores * 4)`. | `0` |
 | `--sequencer-workers` | Number of sequence actors. `0` auto-sizes to `max(8, CPU cores)`. | `0` |
-| `--sequencer-block-size` | Values reserved per sequence compare-and-swap. Larger blocks amortize one Raft commit across more sequence values but can leave larger gaps if a block is abandoned. | `1000` |
+| `--sequencer-block-size` | Values reserved per sequence compare-and-swap for sequences without their own `blockSize`. Larger blocks amortize one Raft commit across more sequence values but can leave larger gaps if a block is abandoned. | `1000` |
 | `--sequencer-idempotency-retention-max` | Maximum idempotency entries retained per sequence record. `0` disables the count cap. | `256` |
 | `--sequencer-idempotency-retention-ttl` | Seconds within which retrying a keyed sequence reservation replays the same allocation. `0` disables age pruning. | `600` |
 | `--sequencer-max-sequences-per-actor` | Maximum resident sequences per actor before least-recently-used sequence state is evicted. `0` is unbounded. | `10000` |
-| `--sequencer-block-lease` | Seconds a reserved sequence block may be served from memory before revalidating against the durable record. `0` disables revalidation. | `5` |
+| `--sequencer-block-lease` | Seconds a reserved sequence block may be served from memory before revalidating against the durable record. Safe sequence updates wait this long and refuse new allocations during the wait. `0` disables revalidation and therefore refuses sequence updates. | `5` |
 | `--background-writer-workers` | Number of background persistence writer workers. Values less than or equal to `0` are normalized to `1`. | `1` |
 | `--backend-read-io-threads` | Dedicated Kahuna backend read pool threads for point gets, existence checks, read-before-write work, and scans. Separate from the Raft WAL read pool. Values less than or equal to `0` auto-size to the processor count. | `8` |
 | `--backend-write-io-threads` | Dedicated Kahuna backend writer pool threads for background batch writes and pruning. Keep this small because backend writes are fsync-heavy. Values less than or equal to `0` auto-size to the processor count. | `1` |
@@ -134,11 +154,16 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--default-admission-wait` | Milliseconds a caller waits for an admission slot when it does not request its own budget. This is separate from transaction lifetime. | `5000` |
 | `--max-admission-wait` | Maximum admission wait in milliseconds. Caller-supplied waits are clamped to this value. | `30000` |
 | `--script-cache-expiration` | Script parser cache expiration in seconds. | `600` |
+| `--max-script-length` | Largest transaction script accepted, in bytes. Oversized scripts are refused before parsing. | `65536` |
+| `--max-script-depth` | Deepest transaction script syntax tree accepted. This bounds parser and evaluator stack use for deeply nested expressions or very long statement lists. | `256` |
+| `--extension-assembly` | Path to an assembly publishing user-defined script functions through `IKahunaFunctionProvider`. Repeatable. Every cluster node that may coordinate scripts should load the same function set. | none |
+| `--function-slow-warn-ms` | Log a warning when a user-defined script function takes longer than this many milliseconds. `0` disables the warning. | `50` |
 | `--revisions-to-cache` | Number of key revisions intended to stay cached in memory. This flag is defined by the server CLI, but the current server startup path does not pass it into `KahunaConfiguration`. | `4` |
 | `--cache-entry-ttl` | Age threshold used by lock cleanup and legacy cleanup paths, in seconds. Key/value LRU eviction is budget-based. | `1800` |
 | `--cache-entries-to-remove` | Maximum entries removed by cleanup paths that use this cap. Values less than or equal to `0` are normalized from the key/value collection batch size. | `100` |
 | `--dirty-objects-writer-delay` | Delay between dirty object writer flush passes, in milliseconds. | `200` |
 | `--checkpoint-interval` | Period, in seconds, at which dirty partitions checkpoint after flushes so the Raft WAL retention floor can advance and old log entries can compact. | `30` |
+| `--fail-fast-on-oom` | Terminate the process on `OutOfMemoryException` so an orchestrator restarts the node with a clean heap. When disabled, Kahuna marks the process unhealthy through `/v1/cluster/health` after the first fatal fault. | enabled |
 
 ## Key/Value Write Coalescing
 
@@ -147,12 +172,17 @@ These options tune persistent partition writes before they are proposed to Raft.
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
 | `--kv-write-linger-ms` | Delay from the oldest queued persistent partition write before its partition batch is proposed. `0` dispatches an idle partition immediately. | `1` |
+| `--kv-write-post-completion-hold-ms` | Optional hold after a partition batch completes before the next sub-threshold batch is dispatched. This can form denser batches under sustained same-partition load. Full batches and queue-age releases are not delayed. | `0` |
 | `--kv-write-max-batch-items` | Maximum log entries selected for one aggregator Raft call. | `512` |
+| `--kv-write-max-in-flight-batches` | Maximum aggregator batches a partition may have awaiting Raft results at once. `1` keeps the serial one-round-at-a-time pipeline. Higher values overlap quorum waits while preserving FIFO dispatch order. | `1` |
 | `--kv-write-max-batch-bytes` | Target serialized bytes selected for one aggregator Raft call. An oversized single item dispatches alone. | `4194304` |
 | `--kv-write-max-queued-items` | Maximum admitted persistent submissions per partition, including writes already in flight. | `8192` |
 | `--kv-write-max-queued-bytes` | Maximum admitted serialized bytes per partition, including writes already in flight. | `33554432` |
 | `--kv-write-max-queue-delay-ms` | Maximum pre-dispatch wait before a queued write is released as `MustRetry`. | `1000` |
 | `--kv-write-aggregator-inbox-size` | Ordinary-submission inbox bound per aggregator lane. Control messages are exempt. Values less than or equal to `0` disable the bound. | `16384` |
+| `--persistence-max-unflushed-items` | Maximum committed key/value writes held in memory awaiting background flush before ordinary writes receive retryable backpressure. `0` disables the item bound. | `1000000` |
+| `--persistence-max-unflushed-bytes` | Maximum value bytes held in memory awaiting background flush before ordinary writes receive retryable backpressure. `0` disables the byte bound. | `536870912` |
+| `--persistence-write-stall-warn-ms` | Milliseconds an in-flight backend store write may remain unacknowledged before Kahuna logs a stall warning. `0` disables the log warning, but the stall metrics are still published. | `500` |
 
 Durable transaction decision, materialization, settlement, recovery, and range-metadata handoff records use terminal scheduler admission with reserved headroom. The terminal reserve and node-global queue settings are `KahunaConfiguration` fields today and are not exposed as server command-line flags.
 
@@ -203,11 +233,24 @@ See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recover
 | `--persistent-revision-retention-count` | Maximum persisted key/value revisions to keep per key. `0` keeps revisions forever. | `0` |
 | `--persistent-revision-retention-age` | Maximum age of persisted key/value revisions in seconds. `0` disables age-based retention. | `0` |
 | `--persistent-revision-cleanup-interval` | Minimum interval between full persistent revision cleanup sweeps, in seconds. | `300` |
-| `--persistent-revision-cleanup-batch-size` | Maximum revision records deleted per cleanup pass. | `1000` |
+| `--persistent-revision-cleanup-batch-size` | Maximum revision records deleted per cleanup pass. | `10000` |
+| `--persistent-revision-cleanup-time-budget` | Wall-clock budget, in milliseconds, for one targeted persistent revision cleanup pass during a flush cycle. Keys not reached stay queued for the next cycle. | `250` |
 | `--persistent-revision-cleanup-on-write` | Keep targeted persistent revision cleanup after writes enabled. This is the default behavior. | enabled |
 | `--disable-persistent-revision-cleanup-on-write` | Disable targeted persistent revision cleanup after writes. | disabled |
 
 Persistent revision cleanup is clamped by live [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/). A held snapshot timestamp keeps the boundary revision needed by that timestamp, and every newer revision, even if the count or age retention settings would otherwise prune them.
+
+## Durable Transaction Retention
+
+These options bound retained durable two-phase-commit metadata. Terminal records and completion receipts are kept long enough for duplicate finalize calls and recovery to produce the correct answer, then reclaimed by age, count, byte budget, or heap-pressure policy.
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--durable-record-retention-max` | Maximum resident terminal durable transaction records retained per node before older records are reclaimed early. `0` disables the count budget. | `200000` |
+| `--durable-record-retention-max-bytes` | Estimated heap-byte budget for resident terminal durable transaction records plus completion receipts. `0` disables the byte budget. | `268435456` |
+| `--durable-record-retention-heap-pressure` | Managed-heap load ratio above which terminal records older than the retention floor are reclaimed aggressively. `0` disables this pressure valve. | `0.85` |
+| `--durable-record-retention-floor` | Minimum age, in seconds, below which a terminal durable record is not reclaimed early by count, byte, or heap-pressure budgets. Kahuna raises it when needed to cover the decision-deadline recovery horizon. | `90` |
+| `--durable-maintenance-interval` | Seconds between durable transaction maintenance ticks, including prepared-intent recovery and terminal record retention sweeps. `0` uses the collection interval. | `5` |
 
 ## Raft Communication
 
@@ -225,6 +268,7 @@ Persistent revision cleanup is clamped by live [snapshot holds](/docs/distribute
 | `--raft-grpc-channels-per-node` | Pooled gRPC channels opened per peer. Values are clamped between `1` and `64`; each channel holds a connection and handler for the process lifetime. | `4` |
 | `--raft-grpc-enable-multiple-http2-connections` | Allow each pooled gRPC channel to open multiple HTTP/2 connections for additional concurrent streams. | disabled |
 | `--raft-grpc-enable-snapshot-compression` | Compress Raft snapshot transfers sent over gRPC. | disabled |
+| `--raft-grpc-max-message-bytes` | Largest gRPC message this node accepts from or sends to a peer. Raise on every receiver before increasing outbound or backfill batch byte caps beyond it. | `16777216` |
 | `--raft-snapshot-receive-session-ttl` | Idle snapshot-receive session lifetime in milliseconds before the receiver drops buffered bytes. | `30000` |
 | `--raft-snapshot-max-pending-sessions` | Maximum concurrent snapshot-receive sessions across all partitions. Older inactive sessions can be evicted after the cap. | `8` |
 | `--raft-snapshot-max-pending-bytes` | Maximum buffered bytes across in-progress snapshot-receive sessions. | `536870912` |
@@ -236,10 +280,13 @@ Persistent revision cleanup is clamped by live [snapshot holds](/docs/distribute
 | `--raft-allow-insecure-certificate-validation` | Skip TLS certificate validation for inter-node Raft gRPC traffic. Use only in development or test environments. | disabled |
 | `--raft-max-pre-auth-request-body-bytes` | Maximum Raft REST request body buffered before authentication, in bytes. Bounds unauthenticated memory use independently of host limits. | `33554432` |
 | `--raft-max-outbound-queue-bytes-per-peer` | Maximum buffered outbound bytes queued per peer before excess AppendLogs entries are dropped and later resent by heartbeat or backfill retry. `0` disables the cap. | `67108864` |
+| `--raft-max-outbound-batch-bytes` | Maximum log payload bytes packed into one peer batch request. Also bounds an AppendLogs coalescing frame. Must stay below `--raft-grpc-max-message-bytes`. Values less than or equal to `0` disable the byte cap. | `4194304` |
+| `--raft-max-backfill-bytes-per-round` | Maximum payload bytes sent in one backfill round, in addition to the entry-count cap. Keeps large-value catch-up batches bounded. | `4194304` |
 | `--raft-snapshot-rescue-max-consecutive-cycles` | Consecutive snapshot-rescue cycles that can still leave a follower below the compaction floor before the convergence breaker pauses that peer. Values less than or equal to `0` disable the breaker. | `3` |
 | `--raft-snapshot-rescue-probe-interval` | Probe interval, in milliseconds, while the snapshot-rescue breaker is open. A probe lets a recovered follower be reseeded eventually. Values less than or equal to `0` disable probing. | `300000` |
 | `--raft-snapshot-export-retry-cache-max-bytes` | Maximum bytes cached for one produced snapshot export on the leader so retries can resend the same export instead of rebuilding it. Values less than or equal to `0` disable the cache. | `67108864` |
 | `--raft-compaction-live-replica-lag-budget` | Entry-count lag budget that protects a live follower after snapshot rescue so normal compaction does not immediately put it below the floor again. Values less than or equal to `0` disable the hold. | `100000` |
+| `--raft-compaction-durability-clamp-report-interval` | Interval in milliseconds for repeated warnings when Raft compaction is held by the application-durability floor. Values less than or equal to `0` keep only start and end logs. | `60000` |
 
 ## Raft Timing
 
@@ -250,6 +297,7 @@ Persistent revision cleanup is clamped by live [snapshot holds](/docs/distribute
 | `--raft-voting-timeout` | Vote wait timeout in milliseconds. | `1500` |
 | `--raft-leadership-barrier-timeout` | Milliseconds a newly elected leader waits for its promotion barrier entry to commit before stepping down. Raising it tolerates a slower quorum at the cost of failover latency. | `10000` |
 | `--raft-leadership-confirmation-timeout` | Maximum milliseconds a read-index leadership confirmation may wait for quorum acknowledgement and applied-frontier catch-up. | `2000` |
+| `--raft-proposal-timeout` | Maximum milliseconds a write caller waits for a Raft proposal to reach quorum before the call returns `ProposalTimeout`. | `10000` |
 | `--raft-enable-check-quorum` | Make a leader step down when it has not heard same-term acknowledgement from a majority for the check-quorum window. | disabled |
 | `--raft-check-quorum-interval-multiplier` | Heartbeat intervals without majority acknowledgement before check-quorum steps down a leader. | `8` |
 | `--raft-self-repair-peer-down-grace` | How long promotion-gate self-repair waits while a voter peer is not alive before gap-skipping committed drain or orphaned-tail truncation proceeds, in milliseconds. `0` disables the grace. | `30000` |
@@ -273,6 +321,14 @@ Persistent revision cleanup is clamped by live [snapshot holds](/docs/distribute
 | `--raft-max-wal-group-batch-partitions` | Maximum partitions coalesced into one cross-partition WAL group-commit batch. | `64` |
 | `--raft-wal-group-commit-linger-ms` | Optional group-commit linger window in milliseconds. `0` disables linger. | `0` |
 | `--raft-wal-single-fsync-commit` | Enable the single-fsync fast path that acknowledges after propose-quorum durability and writes the commit marker lazily. | enabled |
+| `--raft-wal-shard-write-buffer-size-mb` | RocksDB Raft WAL shard memtable size in MiB. `0` keeps Kommander's default. Applies only when `--wal-storage rocksdb`. | `0` |
+| `--raft-wal-shard-min-write-buffer-number-to-merge` | Immutable memtables merged into one RocksDB WAL shard flush. `0` keeps Kommander's default. | `0` |
+| `--raft-wal-shard-max-write-buffer-number` | Maximum mutable plus immutable memtables per RocksDB WAL shard. `0` keeps Kommander's default. | `0` |
+| `--raft-wal-shard-level0-file-num-compaction-trigger` | Level-0 file count that triggers compaction for RocksDB WAL shard column families. `0` keeps Kommander's default. | `0` |
+| `--raft-wal-shard-level0-slowdown-writes-trigger` | Level-0 file count at which RocksDB starts slowing WAL writers. `0` keeps Kommander's default. | `0` |
+| `--raft-wal-shard-level0-stop-writes-trigger` | Level-0 file count at which RocksDB stops WAL writers. `0` keeps Kommander's default. | `0` |
+| `--raft-wal-shard-max-bytes-for-level-base-mb` | RocksDB `max_bytes_for_level_base` for WAL shard column families, in MiB. `0` keeps RocksDB or Kommander defaults. | `0` |
+| `--raft-wal-shard-universal-compaction` | Use universal compaction instead of leveled compaction for RocksDB WAL shard column families. | disabled |
 | `--raft-sqlite-wal-shard-count` | SQLite WAL shard databases used to distribute partitions. `0` resolves to the processor count when storage is first initialized. | `0` |
 | `--raft-max-drain-quantum-control` | Maximum control-plane operations drained per executor wake cycle. | `8` |
 | `--raft-max-drain-quantum-replication` | Maximum replication operations drained per executor wake cycle. | `4` |
@@ -350,5 +406,6 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 
 - `--wal-storage` and `--storage` configure different layers. WAL storage persists Raft logs; materialized storage persists Kahuna object state after committed operations are applied.
 - Use stable `--storage-revision` and `--wal-revision` values for existing data directories. Changing revisions points the server at different local storage files.
-- The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, durable-decision deadline/admission knobs, durable deferred-settlement and prepared-intent bounds, terminal write-aggregator reserve knobs, and some advanced range-split policy internals remain code-level or embedded-node configuration today. Transaction priority admission and the primary key-range split/merge knobs are exposed as server flags.
+- RocksDB WAL shard tuning flags apply only when `--wal-storage rocksdb`. Numeric `0` values leave Kommander's shipped defaults in force; invalid combinations are still rejected at startup so a bad tuning value is not hidden by a backend switch.
+- The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, durable-decision deadline knobs, durable deferred-settlement and prepared-intent bounds, terminal write-aggregator reserve knobs, and some advanced range-split policy internals remain code-level or embedded-node configuration today. Transaction priority admission, durable record-retention budgets, and the primary key-range split/merge knobs are exposed as server flags.
 - The embedded node exposes the broader runtime surface, including collector and persistent-revision settings. See [Embedded Kahuna Node](/docs/embedded-kahuna-node/) for the full embedded configuration options.

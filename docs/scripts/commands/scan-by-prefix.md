@@ -16,7 +16,7 @@ r0 services/auth/instance-2 node2
 
 ## Assigning Results
 
-Inside a script, assign the command to a variable with `let`. The variable receives an array of the returned values.
+Inside a top-level script, assign the command to a variable with `let`. The variable receives an array of the returned values.
 
 ```kahuna
 let instances = scan by prefix `services/auth`
@@ -35,10 +35,16 @@ This returns only the keys that were visible under that prefix at the requested 
 
 If a key already existed at that time and was updated or deleted later, the snapshot still returns the older visible value from the requested time. Keys created after that time are not returned.
 
+Without `as of`, `scan by prefix` reads the current committed view for each page instead of pinning a historical read timestamp.
+
+## Transactions
+
+`scan by prefix` is not allowed inside `begin ... end`. It scans across the cluster and does not carry a transaction identity or prefix lock. For transactional prefix reads, use [`get by bucket`](get-by-bucket.md) so Kahuna can route the read to one partition, include the transaction's own writes, and record the read set.
+
 ## Notes
 
 `scan by prefix` visits nodes and workers to find matching keys. It is broader and slower than `get by bucket`, and it is not the preferred command for transactional logic. Use `get by bucket` when the keys share a bucket and you need a consistent, partition-local read.
 
-The command returns the matching set in one response and is capped at `4096` entries. Use paginated range reads from the .NET client for large or unbounded ordered scans.
+The command returns the matching set in one response and is capped at `4096` entries. Use paginated range reads from the .NET or TypeScript client for large or unbounded ordered scans.
 
 Range-backed scans are internally paged. If one page keeps returning retryable state because a range is moving, leadership is changing, or an undecided transaction intent blocks the page, Kahuna bounds the retry loop and returns a retryable server error instead of scanning forever. Retry the command after a short backoff.

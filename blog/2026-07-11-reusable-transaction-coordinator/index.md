@@ -81,7 +81,7 @@ Scripts should handle scripts: parsing, variables, expressions, and script-speci
 
 The reusable coordinator should handle transactions: identity, lifecycle, working sets, operation registration, finalization, retries, and cleanup.
 
-Once those responsibilities are separated, the script engine becomes one user of the coordinator. The .NET client becomes another. Future clients can follow the same protocol without copying script-specific behavior.
+Once those responsibilities are separated, the script engine becomes one user of the coordinator. The .NET and TypeScript clients become other users of the same protocol without copying script-specific behavior.
 
 ## Finalization Is a State Machine
 

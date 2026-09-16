@@ -186,7 +186,7 @@ By default, durable commits can return success once the canonical decision recor
 
 You can specify **transaction options** to fine-tune how the transaction is executed. These options provide greater flexibility and control over **performance**, **consistency**, and **responsiveness**:
 
-Kahuna Script `begin (...)` options are listed below. .NET interactive sessions expose additional options in `KahunaTransactionOptions`.
+Kahuna Script `begin (...)` options are listed below. .NET interactive sessions expose additional options in `KahunaTransactionOptions`, and TypeScript sessions expose the same concepts through `TransactionOptions`.
 
 ### Timeout
 
@@ -328,21 +328,21 @@ begin (autoCommit=false)
 end
 ```
 
-### .NET Interactive Session Options
+### Client Interactive Session Options
 
-The .NET client exposes these options on `KahunaTransactionOptions`:
+The .NET client exposes these options on `KahunaTransactionOptions`. The TypeScript client exposes the same options using camel-case names on `TransactionOptions`.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `Locking` | `Pessimistic` | Chooses pessimistic or optimistic concurrency behavior. |
-| `Timeout` | server default when `0` | Maximum transaction duration in milliseconds. |
-| `AsyncRelease` | `false` | Allows eligible post-commit cleanup to continue in the background. |
-| `AutoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit `Commit`. Disposal of a pending session rolls back. |
-| `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. |
-| `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction point, bucket, range, and paginated-range reads. Do not combine it with `ReadValidation.TrackAndValidate`. |
-| `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
-| `Priority` | `Normal` | Admission priority used when `MaxConcurrentSessions` is enabled on the receiving node. |
-| `AdmissionWaitMs` | server default when `0` | Maximum time to wait for an admission slot before the transaction starts. The server clamps it to `MaxAdmissionWaitMs`. |
+| .NET option | TypeScript option | Default | Description |
+|-------------|-------------------|---------|-------------|
+| `Locking` | `locking` | `Pessimistic` / `"pessimistic"` | Chooses pessimistic or optimistic concurrency behavior. |
+| `Timeout` | `timeout` | server default when `0` | Maximum transaction duration in milliseconds. |
+| `AsyncRelease` | `asyncRelease` | `false` | Allows eligible post-commit cleanup to continue in the background. |
+| `AutoCommit` | `autoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit commit. Disposal of a pending session rolls back. |
+| `ReadValidation` | `readValidation` | `None` / `"none"` | Set to `TrackAndValidate` or `"trackAndValidate"` to record latest reads and validate them against revision or write-intent changes at commit. |
+| `ReadTimestamp` | `readTimestamp` | zero HLC | Uses a fixed historical HLC timestamp for transaction point, bucket, range, and paginated-range reads. Do not combine it with read validation. |
+| `DecisionDurability` | `decisionDurability` | `BestEffort` / `"bestEffort"` | Use durable mode when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
+| `Priority` | `priority` | `Normal` / `"normal"` | Admission priority used when `MaxConcurrentSessions` is enabled on the receiving node. |
+| `AdmissionWaitMs` | `admissionWaitMs` | server default when `0` | Maximum time to wait for an admission slot before the transaction starts. The server clamps it to `MaxAdmissionWaitMs`. |
 
 ## Interactive Transactions
 
@@ -447,6 +447,71 @@ if (!committed)
 ```
 
 `Commit(...)` and `Rollback(...)` return `true` when the requested terminal outcome is reached. A `false` result means the outcome is not known yet and the same finalization action should be retried with the same session handle. After commit or rollback starts, do not add new operations to the session.
+
+</TabItem>
+<TabItem value="TypeScript">
+
+The TypeScript client exposes interactive transactions through `beginTransaction(...)` and `withTransaction(...)`.
+
+```ts
+await using session = await client.beginTransaction({
+  locking: "optimistic",
+  timeout: 5000
+});
+
+const balance1 = await session.get(userA);
+const balance2 = await session.get(userB);
+
+if (balance1.valueAsNumber() >= 50) {
+  await session.set(userA, String(balance1.valueAsNumber() - 50));
+  await session.set(userB, String(balance2.valueAsNumber() + 50));
+}
+
+await session.commit();
+```
+
+Disposing a still-pending session rolls it back. In runtimes without `await using`, call `await session.rollback()` or `await session[Symbol.asyncDispose]()` when abandoning the session.
+
+Use `withTransaction(...)` when retryable conflicts should start a fresh attempt automatically:
+
+```ts
+await client.withTransaction(
+  {
+    locking: "pessimistic",
+    timeout: 5000
+  },
+  async (session) => {
+    const balance1 = await session.get(userA);
+    const balance2 = await session.get(userB);
+
+    if (balance1.valueAsNumber() >= 50) {
+      await session.set(userA, String(balance1.valueAsNumber() - 50));
+      await session.set(userB, String(balance2.valueAsNumber() + 50));
+    }
+
+    await session.commit();
+  }
+);
+```
+
+Durable commit decisions can be requested when every modified key is persistent:
+
+```ts
+await using session = await client.beginTransaction({
+  locking: "pessimistic",
+  timeout: 10_000,
+  readValidation: "trackAndValidate",
+  decisionDurability: "durable"
+});
+
+await session.set("accounts/alice", "90", { durability: "persistent" });
+await session.set("accounts/bob", "110", { durability: "persistent" });
+
+const committed = await session.commit();
+if (!committed) {
+  throw new Error("Commit must be retried");
+}
+```
 
 </TabItem>
 </Tabs>

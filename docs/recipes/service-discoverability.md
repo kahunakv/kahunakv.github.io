@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Service Discovery
 
 Kahuna can store service instance metadata so clients and workers can discover healthy endpoints without running a separate registry.
@@ -24,7 +27,10 @@ Use an expiration so the instance disappears if the process dies or stops refres
 set `services/payments/node-a` '{"host":"10.0.1.15","port":8080,"version":"1.2.3","zone":"us-east-1a"}' ex 30000 norev
 ```
 
-From the .NET client:
+From a client:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 await client.SetKeyValue(
@@ -36,9 +42,29 @@ await client.SetKeyValue(
 );
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+await client.setNoRevision(
+  "services/payments/node-a",
+  '{"host":"10.0.1.15","port":8080,"version":"1.2.3","zone":"us-east-1a"}',
+  {
+    expiry: 30_000,
+    durability: "persistent"
+  }
+);
+```
+
+</TabItem>
+</Tabs>
+
 ## Refresh the Heartbeat
 
 Refresh the key periodically before the expiration passes:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 await client.ExtendKeyValue(
@@ -48,7 +74,22 @@ await client.ExtendKeyValue(
 );
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+await client.extend("services/payments/node-a", 30_000, {
+  durability: "persistent"
+});
+```
+
+</TabItem>
+</Tabs>
+
 If instance metadata can change on heartbeat, write the full value again with the same expiration:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 await client.SetKeyValue(
@@ -60,6 +101,19 @@ await client.SetKeyValue(
 );
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+await client.setNoRevision("services/payments/node-a", currentMetadataJson, {
+  expiry: 30_000,
+  durability: "persistent"
+});
+```
+
+</TabItem>
+</Tabs>
+
 ## Discover Instances
 
 Read all instances in the service bucket:
@@ -68,7 +122,10 @@ Read all instances in the service bucket:
 get by bucket `services/payments`
 ```
 
-From the .NET client:
+From a client:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 List<KahunaKeyValue> instances = await client.GetByBucket(
@@ -80,6 +137,22 @@ foreach (KahunaKeyValue instance in instances)
     Console.WriteLine($"{instance.Key}: {instance.ValueAsString()}");
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const instances = await client.getByBucket("services/payments", {
+  durability: "persistent"
+});
+
+for (const instance of instances) {
+  console.log(`${instance.key}: ${instance.valueAsString()}`);
+}
+```
+
+</TabItem>
+</Tabs>
+
 ## Audit Historical Membership
 
 If you need to inspect which instances were visible at a previous point in time, use an `AS OF` read:
@@ -88,7 +161,10 @@ If you need to inspect which instances were visible at a previous point in time,
 get by bucket `services/payments` as of 1718392012345
 ```
 
-Or use the .NET client snapshot parameter:
+Or use a client snapshot parameter:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 List<KahunaKeyValue> previous = await client.GetByBucket(
@@ -97,6 +173,19 @@ List<KahunaKeyValue> previous = await client.GetByBucket(
     snapshotMs: 1718392012345
 );
 ```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const previous = await client.getByBucket("services/payments", {
+  durability: "persistent",
+  snapshotMs: 1718392012345
+});
+```
+
+</TabItem>
+</Tabs>
 
 Do not use `NOREV` for registrations when historical membership is required. No-revision writes keep only the latest value and skip the archived revision records needed by historical reads.
 

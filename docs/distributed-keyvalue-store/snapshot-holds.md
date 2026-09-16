@@ -6,7 +6,7 @@ Use them for long-lived historical views such as database branches, audit sessio
 
 ## Why Holds Exist
 
-Kahuna supports historical reads with `AS OF <timestamp>` and the .NET `snapshotMs` parameter. Those reads return the newest revision whose commit timestamp is at or before the requested time.
+Kahuna supports historical reads with `AS OF <timestamp>` and the `snapshotMs` parameter in the .NET and TypeScript clients. Those reads return the newest revision whose commit timestamp is at or before the requested time.
 
 Without a hold, old revisions are still subject to memory trimming and persistent revision retention. A snapshot hold pins the required history so cleanup does not remove the revision needed by the held timestamp.
 
@@ -22,6 +22,8 @@ A hold has:
 The effective snapshot floor is the lowest timestamp among all live holds. While the floor is active, Kahuna preserves the revision at or before that floor, and every newer revision, even if persistent revision retention would otherwise prune it.
 
 Holds are replicated cluster state. You can contact any node; Kahuna routes acquire, renew, and release operations to the system-partition leader.
+
+Durable holds are also recovered after restart. On startup, Kahuna gives restored holds a short grace window before treating leases that expired during downtime as purge-eligible. The default internal grace is five minutes. Renew the hold during that window to keep the protected timestamp active; otherwise the reaper can advance the snapshot floor after the grace expires.
 
 ## .NET Client
 
@@ -88,6 +90,51 @@ Inspect the current floor:
 
 `AcquireSnapshotHold(holderId, timestamp, leaseMs)` is idempotent for the same `(holderId, timestamp)` pair. Calling it again returns the same hold id and renews the lease.
 
+## TypeScript Client
+
+Acquire a hold before starting a long-lived historical view:
+
+```ts
+import { KahunaClient, snapshotAt } from "kahuna-client";
+
+const client = new KahunaClient({
+  endpoints: ["https://node1:2071"]
+});
+
+const branchTimestampMs = Date.now();
+const timestamp = snapshotAt(branchTimestampMs);
+
+const hold = await client.acquireSnapshotHold(
+  "branch/customer-analytics",
+  timestamp,
+  300_000
+);
+```
+
+Use the same timestamp for historical reads:
+
+```ts
+const value = await client.get("config/prod/search/enable-new-ranking", {
+  durability: "persistent",
+  snapshotMs: branchTimestampMs
+});
+
+const services = await client.getByBucket("services/payments", {
+  durability: "persistent",
+  snapshotMs: branchTimestampMs
+});
+```
+
+Renew or release the hold by `holdId`:
+
+```ts
+await client.renewSnapshotHold(hold.holdId, 300_000);
+await client.releaseSnapshotHold(hold.holdId);
+
+const floor = await client.getSnapshotFloor();
+console.log(floor.effectiveFloor.physical, floor.liveHolds);
+```
+
 ## REST Endpoints
 
 Kahuna also exposes the hold API over REST:
@@ -104,6 +151,7 @@ Kahuna also exposes the hold API over REST:
 ## Operational Notes
 
 - Renew well before the lease expires. If the holder crashes or stops renewing, the hold expires and no longer protects history.
+- After a full-cluster restart, renew important holds promptly so they survive the startup grace window.
 - Choose lease durations that are coarse enough to avoid making renewals a hot path.
 - Snapshot holds protect persistent historical revisions. Memory-only keys that have no durable history can still lose deep history outside the in-memory revision window.
 - Holds protect history from cleanup; they do not freeze writes or make the rest of the cluster read-only.

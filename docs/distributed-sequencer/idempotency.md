@@ -35,6 +35,12 @@ Gaps can still happen when:
 
 - A request commits and the caller retries without the same idempotency key.
 - A caller reserves a range and does not consume every value.
+- A sequence owner abandons the unused part of an in-memory block after restart, eviction, or ownership change.
 - A sequence is deleted and recreated with new parameters.
+- A sequence is updated, which starts a new incarnation and clears old idempotency records.
 
 If a domain requires strict auditability, store the allocated value together with the business operation that consumed it.
+
+## Updates and Incarnations
+
+Idempotency records belong to the sequence incarnation that created them. When `update` changes a sequence, Kahuna increments `Incarnation` and clears the idempotency map. Retrying an old idempotency key after the update allocates from the new incarnation instead of replaying an allocation from the old one.

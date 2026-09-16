@@ -1,9 +1,9 @@
-import Kahuna6 from './assets/kahuna6.png';
+import SequencerImage from './assets/sequencer-opt-transparent.png';
 
 # Distributed Sequencer
 
 <div style={{textAlign: 'center'}}>
-<img src={Kahuna6} height="350" />
+<img src={SequencerImage} alt="Distributed sequencer" style={{maxWidth: '100%', height: 'auto'}} />
 </div>
 
 Kahuna's distributed sequencer provides named, monotonically increasing integer sequences backed by the same Raft coordination model used by locks and key/value operations. It is useful when multiple processes need one authoritative source for IDs, version numbers, ordering tokens, or contiguous batches of numbers.
@@ -14,6 +14,7 @@ Kahuna's distributed sequencer provides named, monotonically increasing integer 
 - **Uniqueness**: committed allocations for the same sequence are never duplicated.
 - **Range reservations**: callers can reserve contiguous batches such as `101..200`.
 - **Idempotent retries**: allocation requests can include an idempotency key so retried requests return the original allocation.
+- **Safe updates**: callers can change the current value, increment, max value, or per-sequence block size without racing stale sequence owners.
 - **Persistent durability**: sequence state is replicated through Raft and survives leader changes.
 
 Kahuna does not provide a single global order across all sequence names. Ordering is scoped to each sequence.
@@ -31,6 +32,7 @@ Kahuna does not provide a single global order across all sequence names. Orderin
 - Use one sequence per ordering domain, such as `orders`, `tenant-a/orders`, or `tenant-a/invoices`.
 - Use idempotency keys for retried allocation requests.
 - Reserve ranges for high-throughput workers that can consume a local block of IDs.
+- Use a per-sequence `blockSize` of `1` only for numbering domains that need one durable commit per value.
 - Set `MaxValue` only when the domain has a real upper bound.
 - Do not depend on gapless behavior unless every allocated value is consumed and every retried request uses the same idempotency key.
 
@@ -38,5 +40,5 @@ Kahuna does not provide a single global order across all sequence names. Orderin
 
 - [Sequence model and allocation](distributed-sequencer/model.md)
 - [Idempotent retries](distributed-sequencer/idempotency.md)
-- [CLI and .NET client](distributed-sequencer/clients.md)
+- [CLI, .NET client, and TypeScript client](distributed-sequencer/clients.md)
 - [REST and gRPC API](distributed-sequencer/api.md)

@@ -4,7 +4,7 @@ Kahuna's backup design combines storage-engine checkpoints with the committed Ra
 
 :::caution Restore scope
 
-Kahuna Server exposes backup and restore through REST, gRPC, `Kahuna.Client`, and `kahuna-cli`. Restore is offline: it writes a new storage directory and never replaces the live state of the node handling the request.
+Kahuna Server exposes backup and restore through REST, gRPC, `Kahuna.Client`, the TypeScript client, and `kahuna-cli`. Restore is offline: it writes a new storage directory and never replaces the live state of the node handling the request.
 
 PITR restore reconstructs committed key/value state. Locks are runtime coordination leases and are not part of the restored PITR image. Range metadata is managed by the cluster and should be rebuilt or caught up through normal membership and Raft recovery. Plan recovery procedures around the data types used by the application and test them before relying on a runbook.
 
@@ -66,7 +66,7 @@ Raft compaction must not remove entries at or above this floor. The extra snapsh
 
 :::note
 
-`--base-snapshot-interval` participates in retention calculations. It does not schedule backups automatically. Trigger backups through the CLI, .NET client, REST, or gRPC API.
+`--base-snapshot-interval` participates in retention calculations. It does not schedule backups automatically. Trigger backups through the CLI, .NET client, TypeScript client, REST, or gRPC API.
 
 :::
 
@@ -139,6 +139,26 @@ KahunaBackupGcResult preview =
 
 The client supports full, incremental, coordinated backups, catalog inspection, offline restore, and backup garbage collection over REST or gRPC communication.
 
+### TypeScript Client
+
+```ts
+import { KahunaClient } from "kahuna-client";
+
+const client = new KahunaClient({
+  endpoints: ["https://kahuna-1:8082"]
+});
+
+const full = await client.takeCoordinatedBackup();
+const incremental = await client.takeIncrementalBackup(full.backupId);
+
+const backups = await client.listBackups();
+const chain = await client.getBackupChain(incremental.backupId);
+
+const preview = await client.collectBackupGarbage({ dryRun: true });
+```
+
+The TypeScript client supports the same backup catalog, full backup, incremental backup, coordinated backup, restore, and backup garbage-collection operations.
+
 ## Restore to a New Directory
 
 `RestoreAsync` and `--restore` copy the chain's full checkpoint into a target directory and replay incremental entries. A target time of `0` restores through the natural end of the selected chain. A positive target is the HLC physical component expressed as Unix epoch milliseconds.
@@ -175,6 +195,16 @@ KahunaRestoreResponse restored = await client.RestoreAsync(
     leafBackupId: incremental.BackupId,
     targetDir: "/var/lib/kahuna/restored",
     targetTimeMs: 0
+);
+```
+
+The equivalent TypeScript call is:
+
+```ts
+const restored = await client.restore(
+  incremental.backupId,
+  "/var/lib/kahuna/restored",
+  { targetTimeMs: 0 }
 );
 ```
 

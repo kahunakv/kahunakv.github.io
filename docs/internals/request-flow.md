@@ -41,6 +41,8 @@ Routing decides which partition and actor own the operation.
 - Live transaction sessions route by coordinator key.
 - Durable transaction decisions route by record anchor key.
 
+Bucket, prefix-lock, and range-lock prefixes are normalized before routing. A bare key-space name and the same name with one trailing slash resolve to the same actor and partition.
+
 Routing has two layers:
 
 1. **Partition routing** finds the Raft partition leader that is allowed to commit the operation.
@@ -96,6 +98,8 @@ Historical reads use this order:
 1. Try the in-memory revision archive.
 2. If the required persistent revision is older than the in-memory window, fall back to persisted revision history.
 3. Return only keys visible at the requested HLC timestamp.
+
+Snapshot range scans can continue from persisted revision history off the hot actor path when the needed revision is no longer cached. That keeps large historical scans from forcing old keys back into the actor's current working set.
 
 Snapshot holds can pin a timestamp so cleanup does not remove the persistent revisions needed by a long-lived historical view.
 

@@ -105,6 +105,8 @@ end
 
 `priority` controls where the transaction waits in the admission queue. `admissionWait` controls how long it waits, in milliseconds, before Kahuna returns `AdmissionRefused`.
 
+All options in the list apply. Repeating the same option is a script error. `timeout` must be greater than zero. An explicit `admissionWait=0` means the script starts only if a slot is available immediately; otherwise Kahuna returns `AdmissionRefused` without starting the transaction.
+
 See [Transaction Priority Admission](../distributed-keyvalue-store/transaction-priority-admission.md) for the queueing behavior and tuning options.
 
 ## Let

@@ -2,6 +2,8 @@
 sidebar_position: 3
 ---
 
+import StatusDashboardImage from './assets/status-dashboard.png';
+
 # Status Dashboard
 
 Kahuna serves a read-only operator dashboard at the HTTP root by default:
@@ -11,7 +13,11 @@ http://127.0.0.1:8081/
 https://127.0.0.1:8082/
 ```
 
-Use it for a quick view of one node: readiness, local role, hosted partitions, total partitions, replication factor, storage backend, WAL backend, backup status, process version, uptime, heap size, thread count, and selected engine metrics.
+Use it for a quick view of one node: readiness, local role, hosted partitions, total partitions, replication factor, storage backend, WAL backend, backup status, process version, uptime, heap size, thread count, persistence backlog, and selected engine metrics.
+
+<div style={{textAlign: 'center', margin: '2rem 0'}}>
+  <img src={StatusDashboardImage} alt="Kahuna status dashboard" style={{maxWidth: '100%', height: 'auto'}} />
+</div>
 
 The dashboard is safe to leave enabled on a trusted operator network because it does not mutate cluster state. It never starts backups, restores data, changes placement, moves leaders, splits ranges, or opens transactions. Protect the HTTP/HTTPS ports with your normal network controls.
 
@@ -39,4 +45,4 @@ curl http://127.0.0.1:8081/v1/dashboard/metrics
 
 `/v1/dashboard/summary` reports node identity, readiness, role, partition counts, membership version, replication factor, storage paths, backup status, version, uptime, heap bytes, thread count, and refresh interval.
 
-`/v1/dashboard/metrics` reports a curated subset of Kahuna and Kommander metrics for browser display. For full production telemetry, export the `Kahuna` and `Kommander` meters through your observability stack.
+`/v1/dashboard/metrics` reports a curated subset of Kahuna and Kommander metrics for browser display, including the persistence backlog gauges used by the write backpressure gate. For full production telemetry, export the `Kahuna` and `Kommander` meters through your observability stack.

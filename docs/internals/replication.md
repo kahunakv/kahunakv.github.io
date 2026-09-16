@@ -59,6 +59,8 @@ Clients may contact any node. If the receiving node is not the leader for a reso
 
 The production implementation uses gRPC and shared batchers. This lets Kahuna combine related inter-node requests and reduce per-operation network overhead.
 
+The gRPC batchers can coalesce independent server-to-server envelopes onto one stream message while keeping each inner request's own ID, type, hop count, and response. Order-sensitive maintenance and placement operations are serialized per stream so a later maintenance request cannot overtake an earlier one from the same peer.
+
 Forwarded key/value and lock requests include a hop count. If leadership or placement metadata is briefly inconsistent, the hop budget turns a potential forwarding loop into `MustRetry`, letting the client retry after the cluster view converges.
 
 With [replica placement](/docs/replica-placement/), the receiving node may also be a non-host for the target partition. It still accepts the client request, resolves the partition's hosting replicas, and forwards to a node that can serve the partition. Hosting changes can race with requests, so callers may see retryable responses while a partition is moving.

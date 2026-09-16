@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Rate Limiting
 
 Rate limiting protects shared resources by rejecting or delaying work once a caller crosses an allowed request budget. Kahuna is useful here because the counter update can run atomically near the data instead of requiring several client round-trips.
@@ -39,7 +42,10 @@ eset @counter_key count + 1 ex @expires_ms
 return 1
 ```
 
-Run it from the .NET client with parameters:
+Run it from a client with parameters:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -76,6 +82,49 @@ KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransaction
 
 bool allowed = result.FirstValueAsString == "1";
 ```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const nowMs = Date.now();
+const windowMs = 60_000;
+const windowStartMs = nowMs - (nowMs % windowMs);
+const windowEndMs = windowStartMs + windowMs;
+const expiresMs = Math.max(1, windowEndMs - nowMs + 1000);
+
+const script = client.loadScript(`
+let current = eget @counter_key
+
+if not current then
+  eset @counter_key 1 ex @expires_ms
+  return 1
+end
+
+let count = to_int(current)
+
+if count >= @limit then
+  return 0
+end
+
+eset @counter_key count + 1 ex @expires_ms
+return 1
+`);
+
+const result = await script.run({
+  parameters: [
+    { key: "@counter_key", value: `rate-limit/login/203.0.113.10/${windowStartMs}` },
+    { key: "@limit", value: "10" },
+    { key: "@expires_ms", value: String(expiresMs) }
+  ]
+});
+
+const firstValue = result.values[0]?.value;
+const allowed = firstValue ? new TextDecoder().decode(firstValue) === "1" : false;
+```
+
+</TabItem>
+</Tabs>
 
 ## Sliding Expiration Counter
 

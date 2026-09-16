@@ -32,7 +32,7 @@ For configuration and operator-facing behavior, see [Backups and Point-in-Time R
 | `RestoreEngine` | Replays incremental key/value mutations through a selected timestamp. |
 | `IPersistenceBackend.CreateCheckpoint` | Produces the storage-specific base image. |
 
-`BackupService` owns these internal components and exposes them through `IKahuna`. Kahuna Server maps that surface to REST and gRPC, while `Kahuna.Client` and `kahuna-cli` provide public client operations.
+`BackupService` owns these internal components and exposes them through `IKahuna`. Kahuna Server maps that surface to REST and gRPC, while `Kahuna.Client`, the TypeScript client, and `kahuna-cli` provide public client operations.
 
 ## Full Backup Invariant
 

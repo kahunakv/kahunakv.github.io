@@ -52,6 +52,8 @@ When a write uses `SET ... NOREV` or `KeyValueFlags.SetNoRevision`, Kahuna updat
 
 Locks follow the same pattern, with `resource~CURRENT` and `resource~fencingToken` records in the lock column family. Prefix scans use RocksDB's sorted keyspace directly: the adapter seeks to the requested prefix, iterates until the prefix range ends, and returns only records ending in `~CURRENT`.
 
+RocksDB scans skip long runs of historical `key~revision` records once the visible current row or requested snapshot row is known. This keeps scans over revision-heavy stores closer to the number of logical keys than to the number of archived revisions. Kahuna also tracks keys that contain `~` so the optimization stays correct for escaped or unusual key names; older stores without that registry still read correctly, using the slower step-over path where needed.
+
 ### Where RocksDB Shines
 
 RocksDB is the best default for production Kahuna nodes with sustained persistent traffic.
@@ -142,6 +144,23 @@ When enabled, RocksDB records internal counters such as block-cache activity, co
 |---------|---------|----------|-----------|
 | `--disable-rocksdb-direct-reads` | disabled | You want buffered reads through the OS page cache instead of direct I/O. | Can reintroduce double caching and less predictable read-memory accounting. |
 | `--rocksdb-statistics` | disabled | You are investigating block-cache efficiency, compaction behavior, write stalls, or file-level state. | Adds per-operation overhead and more LOG output. |
+
+### RocksDB WAL Tuning
+
+When `--wal-storage rocksdb` is used, Kahuna exposes Kommander's RocksDB WAL shard tuning knobs. These affect the Raft log layout, not the materialized key/value backend. Leave them at `0` unless you are measuring WAL compaction, write amplification, or write stalls under production-like load.
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `--raft-wal-shard-write-buffer-size-mb` | `0` | Keep Kommander's default memtable size, currently 64 MiB. |
+| `--raft-wal-shard-min-write-buffer-number-to-merge` | `0` | Keep Kommander's default immutable memtables merged per flush, currently `2`. |
+| `--raft-wal-shard-max-write-buffer-number` | `0` | Keep Kommander's default maximum memtables per shard, currently `4`. |
+| `--raft-wal-shard-level0-file-num-compaction-trigger` | `0` | Keep Kommander's default level-0 compaction trigger, currently `8` files. |
+| `--raft-wal-shard-level0-slowdown-writes-trigger` | `0` | Keep Kommander's default level-0 slowdown trigger, currently `28` files. |
+| `--raft-wal-shard-level0-stop-writes-trigger` | `0` | Keep Kommander's default level-0 stop trigger, currently `44` files. |
+| `--raft-wal-shard-max-bytes-for-level-base-mb` | `0` | Keep RocksDB's level-base sizing, currently 256 MiB unless overridden by Kommander. |
+| `--raft-wal-shard-universal-compaction` | disabled | Use universal compaction for WAL shard column families instead of leveled compaction. |
+
+Larger flush units can let a log row and the range tombstone that later removes it meet earlier, reducing WAL rewrite work. The trade-off is memory use and restart replay size. Universal compaction can reduce leveled compaction churn for log-shaped data, but it should be enabled only after benchmarking your workload.
 
 ## SQLite in Kahuna
 

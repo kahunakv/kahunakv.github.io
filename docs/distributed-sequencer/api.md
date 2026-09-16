@@ -9,6 +9,7 @@ All sequence REST APIs use `POST`.
 | Endpoint | Purpose |
 |----------|---------|
 | `/v1/sequences/create` | Create a persistent sequence. |
+| `/v1/sequences/update` | Rewrite sequence parameters and start a new incarnation. |
 | `/v1/sequences/get` | Read sequence metadata. |
 | `/v1/sequences/next` | Allocate one value. |
 | `/v1/sequences/reserve` | Allocate a contiguous range. |
@@ -24,9 +25,26 @@ curl -X POST https://localhost:8082/v1/sequences/create \
     "initialValue": 0,
     "increment": 1,
     "maxValue": null,
+    "blockSize": null,
     "durability": "Persistent"
   }'
 ```
+
+### Update
+
+```bash
+curl -X POST https://localhost:8082/v1/sequences/update \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "orders",
+    "currentValue": 5000,
+    "increment": 1,
+    "blockSize": 100,
+    "durability": "Persistent"
+  }'
+```
+
+Use `removeMaxValue: true` or `removeBlockSize: true` to clear those optional settings. Omitting a field leaves the existing value unchanged.
 
 ### Get
 
@@ -98,6 +116,7 @@ The gRPC service is named `Sequencer`:
 ```protobuf
 service Sequencer {
   rpc CreateSequence (GrpcCreateSequenceRequest) returns (GrpcSequenceResponse);
+  rpc UpdateSequence (GrpcUpdateSequenceRequest) returns (GrpcSequenceResponse);
   rpc GetSequence (GrpcGetSequenceRequest) returns (GrpcSequenceResponse);
   rpc NextSequenceValue (GrpcNextSequenceRequest) returns (GrpcSequenceAllocationResponse);
   rpc ReserveSequenceRange (GrpcReserveSequenceRangeRequest) returns (GrpcSequenceAllocationResponse);
@@ -114,6 +133,6 @@ service Sequencer {
 | `AlreadyExists` | Create was called for an existing sequence. |
 | `InvalidInput` | The name or request parameters were invalid. |
 | `MaxValueExceeded` | The requested allocation would exceed `MaxValue`. |
-| `MustRetry` | The operation should be retried. |
+| `MustRetry` | The operation should be retried. Allocations also return this while a sequence update is waiting out the block lease. |
 | `Aborted` | The operation was aborted. |
 | `Error` | An unexpected error occurred. |

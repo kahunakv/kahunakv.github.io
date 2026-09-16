@@ -169,4 +169,10 @@ Historical reads first try the in-memory archive. If the requested timestamp is 
 
 When a snapshot floor pins a boundary revision, the in-memory archive can become the pinned boundary plus the newest retained revisions. If the revisions between them have been trimmed from memory, Kahuna treats a boundary hit inside that gap as a cache miss and falls back to persisted revision history. This prevents a held floor from returning an older value when a newer disk-only revision is actually visible at the requested timestamp.
 
+Large snapshot scans can continue through backend revision history without loading every scanned key back into the hot actor cache. This keeps historical analytics and recovery-style reads from displacing current working-set entries just because old revisions live on disk.
+
+Persistent cleanup is budgeted. A targeted cleanup pass deletes at most `PersistentRevisionCleanupBatchSize` records and stops when `PersistentRevisionCleanupTimeBudget` expires, leaving remaining keys queued for later. This keeps revision pruning from monopolizing the persistence writer when a small set of keys has very deep history.
+
+After restart, durable snapshot holds are loaded with a startup grace window before expired leases are purged. That grace keeps a timestamp protected long enough for a holder to renew after full-cluster downtime, provided the underlying historical revisions are still present.
+
 The hold API is described in [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/).

@@ -49,13 +49,21 @@ r14 my-value 18ms
 
 ## Interactive Mode
 
-If no command-line parameters are provided, kahuna-cli enters interactive mode, allowing you to execute commands and view their results in real time.
-
 If no command-line parameters are provided, `kahuna-cli` enters **interactive mode**, allowing you to execute commands and view their results in real time.
 
 ## Connection String
 
-By default, `kahuna-cli` attempts to connect to a cluster running on localhost on ports **8082, 8084, and 8086**.  
+By default, `kahuna-cli` connects to the local cleartext gRPC endpoint:
+
+```bash
+kahuna-cli
+```
+
+That is equivalent to:
+
+```bash
+kahuna-cli -c "http://127.0.0.1:8083"
+```
 
 If you want to change this, you can specify the servers explicitly using the `-c` flag:
 
@@ -65,16 +73,16 @@ $ kahuna-cli -c "https://kahuna-dev.company.internal:8082,https://kahuna-dev.com
 
 This tells the CLI to connect to the specified Kahuna nodes, enabling interaction with a custom or remote environment.
 
-For the local Docker standalone server, connect to the HTTPS endpoint and allow the local development certificate:
+For the local Docker standalone server, the default command uses the cleartext gRPC endpoint exposed on `8083`:
+
+```bash
+kahuna-cli
+```
+
+You can also connect to the HTTPS endpoint and allow the local development certificate:
 
 ```bash
 kahuna-cli -c "https://127.0.0.1:8082" --insecure
-```
-
-The Docker and NuGet standalone examples from [Server Installation](/docs/server-installation/) also expose cleartext gRPC on `8083`:
-
-```bash
-kahuna-cli -c "http://127.0.0.1:8083"
 ```
 
 For a three-node cluster, pass every reachable endpoint in one comma-separated connection string:

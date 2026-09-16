@@ -261,7 +261,11 @@ Durable materialization is value-free by default. After a transaction commits, K
 
 Eligible durable transactions can also use a one-phase fast path. In a single-process embedded node, read-carrying transactions can bundle record initialization, prepare, and commit in one ordered apply. With `OnePhaseApplyTimeValidation` enabled in an upgraded multi-node group, that bundled commit carries same-partition read dependencies and validated bases, and replicas judge them at apply time against the committed-head ledger. Transactions with off-partition read dependencies, prefix locks, or range locks stay on the standard two-phase path.
 
+One-phase bundles can also be forwarded to a remote anchor leader as a typed durable operation. The remote leader either applies the whole bundle under Raft ordering or the coordinator falls back to two-phase commit. For hash-routed schemas, placement groups such as `orders|rows/...` and `orders|by_customer/...` help keep row and index dependencies on the same partition so more transactions remain eligible for this path.
+
 Only conflict aborts are reported as `Aborted`. Retryable prepare failures, deadline expiry, presumed aborts, and infrastructure failures surface as `MustRetry` so the caller does not mistake transient uncertainty for a business conflict.
+
+If one replica is slow to apply prepared intents, Kahuna does not let that replica turn a healthy quorum into ambiguous transaction outcomes. The pre-decision replica fence still honors any stale-base verdict the replica can prove, but after repeated non-attesting answers it treats that endpoint as lagging and stops waiting for its apply path on every commit. Full-wait probes bring the replica back into the normal fence after sustained recovery.
 
 ### Decision Deadlines
 
@@ -347,6 +351,11 @@ Several bounds keep transaction coordination predictable:
 |---|---:|---|
 | `TransactionOutcomeRetentionMax` | `10000` | Maximum retained terminal outcomes. A non-positive value disables best-effort outcome retention. |
 | `DurableDecisionOutstandingMax` | `100000` | Maximum outstanding undecided canonical transaction records admitted by this node. Completed records do not count against this budget. |
+| `DurableRecordRetentionMax` | `200000` | Maximum resident terminal durable records retained per node before older records are reclaimed early. `0` disables the count budget. |
+| `DurableRecordRetentionMaxBytes` | `268435456` | Estimated heap-byte budget for retained durable records plus completion receipts. `0` disables the byte budget. |
+| `DurableRecordRetentionHeapPressure` | `0.85` | Managed-heap pressure threshold that triggers aggressive reclamation of terminal records older than the retention floor. `0` disables it. |
+| `DurableRecordRetentionFloor` | `90 seconds` | Minimum age below which terminal durable records are not reclaimed early by count, byte, or heap-pressure budgets. |
+| `DurableMaintenanceInterval` | `5 seconds` | Tick interval for prepared-intent recovery and durable record retention sweeps. |
 | `DurablePreparedIntentMaxCount` | `500000` | Resident prepared-intent count bound. A non-positive value disables the count bound. |
 | `DurablePreparedIntentMaxBytes` | `1073741824` | Resident prepared-intent value-byte bound. A non-positive value disables the byte bound. |
 | `DurableDeferredSettlement` | `true` | Runs durable materialization and settlement after the decision record is durable and success can be returned. `false` awaits settlement inline. |
@@ -372,7 +381,7 @@ Several bounds keep transaction coordination predictable:
 
 Durable admission is bounded by `DurableDecisionOutstandingMax`, independently of `TransactionOutcomeRetentionMax`. Kahuna rejects a new durable transaction before prepare when the outstanding-record budget is full, and it never evicts recovery state to make room.
 
-`DurableDecisionDeadlineFloorMs`, `DurableDecisionDeadlineCeilingMs`, and `DurableDecisionDeadlineMultiplier` are runtime configuration fields. They are not currently exposed by the server CLI or embedded options surface. Embedded deployments expose `DurableDecisionOutstandingMax`, `DurablePreparedIntentMaxCount`, `DurablePreparedIntentMaxBytes`, `DurableDeferredSettlement`, `DurableMaterializeByReference`, `SessionOwnedIntentCeilingMs`, and the terminal outcome retention settings.
+`DurableDecisionDeadlineFloorMs` and `DurableDecisionDeadlineCeilingMs` are embedded/runtime options. The server CLI exposes durable record-retention budgets and the durable maintenance interval, while `DurableDecisionDeadlineMultiplier` remains a code-level configuration field.
 
 ## Key Buckets and Locality
 

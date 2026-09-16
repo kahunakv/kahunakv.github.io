@@ -188,6 +188,24 @@ result = await client.SetKeyValue(
 ```
 
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const result = await client.set("my-config", "some-value", {
+  expiry: 10_000,
+  durability: "persistent"
+});
+
+if (result.success) {
+  console.log(`Key/value updated with revision ${result.revision}`);
+}
+
+await client.set("my-config", "some-value", { mode: "ifNotExists" });
+await client.set("my-config", "some-value", { mode: "ifExists" });
+await client.set("my-config", "some-value", { durability: "ephemeral" });
+```
+
+</TabItem>
 </Tabs>
 
 ---
@@ -236,6 +254,21 @@ r3 not set 12ms
 ```
 
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const result = await client.compareValueAndSet(
+  "my-config",
+  "my-value",
+  "current-value"
+);
+
+if (!result.success) {
+  console.log("Current value did not match");
+}
+```
+
+</TabItem>
 </Tabs>
 
 ---
@@ -281,6 +314,21 @@ r5 set 11ms
 
 kahuna-cli> set `my-config` "other-value" cmprev 4
 r5 not set 10ms
+```
+
+</TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const result = await client.compareRevisionAndSet(
+  "my-config",
+  "my-value",
+  4
+);
+
+if (!result.success) {
+  console.log("Revision changed before this write");
+}
 ```
 
 </TabItem>
@@ -346,6 +394,22 @@ if (result.Success)
 ```
 
 </TabItem>
+<TabItem value="TypeScript">
+
+Gets key/value pair:
+
+```ts
+const result = await client.get("my-config", {
+  durability: "persistent"
+});
+
+if (result.success) {
+  console.log(`Value: ${result.valueAsString()}`);
+  console.log(`Revision: ${result.revision}`);
+}
+```
+
+</TabItem>
 </Tabs>
 
 ---
@@ -397,9 +461,22 @@ r0 my-value-1 13ms
 ```
 
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const result = await client.getRevision("my-config", 1, {
+  durability: "persistent"
+});
+
+if (result.success) {
+  console.log(result.valueAsString());
+}
+```
+
+</TabItem>
 </Tabs>
 
-For **timestamp-based** historical reads, Kahuna Script supports `GET key AS OF <hlc-timestamp>`, `EXISTS ... AS OF`, `GET BY BUCKET ... AS OF`, and `SCAN BY PREFIX ... AS OF`. The .NET client also supports snapshot reads directly through `snapshotMs` on `GetKeyValue(...)`, `ExistsKeyValue(...)`, `GetByBucket(...)`, `ScanAllByPrefix(...)`, `GetByRange(...)`, and `ScanByRange(...)`. Use `AT <revision>` or `GetKeyValueRevision(...)` when you know the exact revision number; use `AS OF` or `snapshotMs` when you want the value that was visible at a specific snapshot time.
+For **timestamp-based** historical reads, Kahuna Script supports `GET key AS OF <hlc-timestamp>`, `EXISTS ... AS OF`, `GET BY BUCKET ... AS OF`, and `SCAN BY PREFIX ... AS OF`. The .NET and TypeScript clients also support snapshot reads directly through `snapshotMs` on point, bucket, prefix, and range reads. Use `AT <revision>` or a client revision-read method when you know the exact revision number; use `AS OF` or `snapshotMs` when you want the value that was visible at a specific snapshot time. Prefix and range scans without an explicit timestamp read the current committed view page by page.
 
 ---
 
@@ -448,6 +525,19 @@ r0 services/auth/instance-2 node2
 ```
 
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const instances = await client.getByBucket("services/auth", {
+  durability: "persistent"
+});
+
+for (const instance of instances) {
+  console.log(`${instance.key}: ${instance.valueAsString()}`);
+}
+```
+
+</TabItem>
 </Tabs>
 
 Use `get by bucket` for grouped prefixes that are intentionally single-partition. For large ordered key spaces that may split over time, see [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/).
@@ -486,9 +576,30 @@ Task<List<KahunaKeyValue>> GetByRange(
 - **`List<KahunaKeyValue>`**: Ordered keys in the requested interval.
 
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const users = await client.getByRange(
+  {
+    prefix: "users",
+    startKey: "users/000100",
+    startInclusive: true,
+    endKey: "users/000200",
+    endInclusive: false
+  },
+  {
+    limit: 100,
+    durability: "persistent"
+  }
+);
+```
+
+</TabItem>
 </Tabs>
 
-The top-level client also exposes `ScanByRange(...)` as an async sequence when you want paged streaming over the latest state or over one stable historical snapshot.
+The top-level clients also expose streaming range scans when you want paged traversal over the latest state or over one stable historical snapshot. In TypeScript, use `scanByRange(...)` as an async iterable.
+
+Range-backed reads are internally paged. If a page repeatedly hits retryable state because a range is moving, leadership is changing, restore is in progress, or an undecided transaction intent blocks visibility, Kahuna returns a retryable error instead of scanning forever. Retry the range read after a short backoff.
 
 In interactive transactions, `GetByRange(...)` is especially useful for ordered key spaces. Under pessimistic locking it can also protect the requested interval with a range lock, preventing phantom inserts and conflicting writes inside that range until the transaction completes.
 
@@ -523,6 +634,16 @@ Task<List<KahunaKeyValue>> ScanAllByPrefix(
  - **Expires:** The unix timestamp in milliseconds when the key will expire.
 
  </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const rows = await client.scanAllByPrefix("services/auth", {
+  durability: "persistent",
+  snapshotMs: 1718392012345
+});
+```
+
+</TabItem>
 </Tabs>
 
 ---
@@ -547,6 +668,17 @@ Task<KahunaKeyValue> DeleteKeyValue(
 **Returns:**
 - **Success:** `true` if the key/value pair was deleted.
 - **Revision:** The tombstone revision created by the delete. For example, deleting a key at revision `0` returns revision `1`, and the next successful set returns revision `2`.
+
+</TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const deleted = await client.delete("my-config", {
+  durability: "persistent"
+});
+
+console.log(deleted.success, deleted.revision);
+```
 
 </TabItem>
 </Tabs>
@@ -590,6 +722,17 @@ r0 exteded 13ms
 ```
 
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const extended = await client.extend("my-config", 30_000, {
+  durability: "persistent"
+});
+
+console.log(extended.success, extended.revision);
+```
+
+</TabItem>
 </Tabs>
 
 ---
@@ -629,6 +772,17 @@ r0 set 11ms
 
 kahuna-cli> exists `my-config`
 r0 exists 13ms
+```
+
+</TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const exists = await client.exists("my-config", {
+  durability: "persistent"
+});
+
+console.log(exists.success, exists.revision);
 ```
 
 </TabItem>

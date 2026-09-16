@@ -26,6 +26,8 @@ tenant-a/config/api   -> bucket "tenant-a/config"
 
 In the default hash-routed model, Kahuna hashes that bucket boundary so every key in the same bucket goes to the same partition.
 
+Bucket prefixes are normalized for routing and locking. `services` and `services/` name the same bucket, so scans, prefix locks, range locks, deletes, and writes do not accidentally split across different actors because of a trailing slash.
+
 ## Why Buckets Are Useful
 
 Buckets are a good fit when you want:

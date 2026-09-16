@@ -73,7 +73,9 @@ const sidebars = {
         'scripts/basic-syntax',
         'scripts/types',
         'scripts/expressions',
+        'scripts/semantics',
         'scripts/control-structures',
+        'scripts/user-defined-functions',
         'scripts/commands/set',
         'scripts/commands/eset',
         'scripts/commands/get',
@@ -90,6 +92,7 @@ const sidebars = {
         'scripts/commands/eexists',
         'scripts/functions/math',
         'scripts/functions/string',
+        'scripts/functions/time',
         'scripts/functions/type',
       ],
     },
@@ -99,6 +102,7 @@ const sidebars = {
       items: [
         'server-installation',
         'server-configuration',
+        'node-transport-security',
         'status-dashboard',
         'backend-io-scheduler',
         'replica-placement',
@@ -111,7 +115,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Client',
-      items: ['kahuna-cli', 'dotnet-client', 'client-routing'],
+      items: ['kahuna-cli', 'dotnet-client', 'typescript-client', 'client-routing'],
     },
     {
       type: 'category',
@@ -154,6 +158,7 @@ const sidebars = {
         'recipes/service-discoverability',
         'recipes/leader-election',
         'recipes/idempotent-jobs',
+        'recipes/distributed-circuit-breaker',
         'recipes/feature-flags',
         'recipes/ordered-ids',
         'recipes/inventory-reservation'

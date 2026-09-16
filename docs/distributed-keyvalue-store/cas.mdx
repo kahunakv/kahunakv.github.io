@@ -91,6 +91,38 @@ public async Task HandleTask(KahunaClient client, string taskId)
 ```
 
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+async function handleTask(client, taskId, machineName) {
+  const keyName = "locks/task/" + taskId;
+
+  const acquired = await client.set(keyName, machineName, {
+    expiry: 10_000,
+    mode: "ifNotExists"
+  });
+
+  if (!acquired.success) {
+    console.log("Other node acquired the task");
+    return;
+  }
+
+  // Process the task here
+  // ...
+
+  const completed = await client.compareValueAndSet(
+    keyName,
+    "completed",
+    machineName
+  );
+
+  if (completed.success) {
+    console.log("Marked as completed successfully");
+  }
+}
+```
+
+</TabItem>
 </Tabs>
 
 ### Feature Flag Update Control
@@ -144,6 +176,29 @@ public async Task CheckFeatureFlag(KahunaClient client, string featureName)
         Console.WriteLine("No one else changed the flag between our read and write.");
         return;
     }
+}
+```
+
+</TabItem>
+<TabItem value="TypeScript">
+
+```ts
+async function checkFeatureFlag(client, featureName) {
+  const featureKey = "feature/" + featureName;
+
+  const current = await client.get(featureKey);
+
+  // ...
+
+  const updated = await client.compareRevisionAndSet(
+    featureKey,
+    "enabled",
+    current.revision
+  );
+
+  if (updated.success) {
+    console.log("No one else changed the flag between our read and write.");
+  }
 }
 ```
 

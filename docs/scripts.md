@@ -12,6 +12,7 @@ The main advantage of Kahuna Script is that a multi-step workflow can run as a s
 - **Multi-Key Operations**: Scripts can read and modify key/value pairs across partitions without exposing routing details to the caller.
 - **Performance**: Multiple operations run from one request, reducing client/server round trips.
 - **Custom Logic on the Key/Value Store**: Scripts embed decision logic directly on the server side.
+- **User-Defined Functions**: Deployments can add trusted C# functions and call them from scripts like built-ins.
 - **Safe Error Handling**: If a script throws or fails validation, the transaction rolls back instead of leaving a partial update.
 - **Historical Snapshot Reads**: Scripts can read keys, buckets, and prefix scans **as of a past HLC timestamp**, which is useful for audits, debugging, and incident reconstruction.
 
@@ -32,7 +33,7 @@ See [Transactions](/docs/distributed-keyvalue-store/transactions/) for the full 
 
 ## Script Results
 
-Script execution returns a result type plus the values produced by the script. Each returned value includes the key, value bytes, revision, expiration, and last-modified timestamp. The .NET client exposes these through `KahunaKeyValueTransactionResult.Values`, plus `FirstValue`, `FirstValueAsString`, and `FirstRevision` helpers for scripts that return one value.
+Script execution returns a result type plus the values produced by the script. Each returned value includes the key, value bytes, revision, expiration, and last-modified timestamp. The .NET client exposes these through `KahunaKeyValueTransactionResult.Values`, plus `FirstValue`, `FirstValueAsString`, and `FirstRevision` helpers for scripts that return one value. The TypeScript client returns the same shape as `result.values`; decode `values[0].value` when a script returns one value.
 
 REST and gRPC expose the same per-value result shape, so scripts return the same revision and timestamp metadata regardless of transport.
 

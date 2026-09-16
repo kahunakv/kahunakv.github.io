@@ -1,4 +1,6 @@
 import Kahuna2 from '../assets/kahuna2.png';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # Tutorial: Distributing Locking
 
@@ -15,6 +17,9 @@ The **distributed locks** system can be used for **leader election, safe deploym
 The general idea of a distributed lock is that only one process can acquire the lock at a time, while other processes that attempt to acquire it concurrently must either retry or give up. This condition where only one process can hold the lock at a time is what ensures the safety of executing certain critical operations without risking double processing or data duplication.
 
 In this example, the lock key is set with a **[lease](/docs/distributed-locks/leases/)**. If the process crashes or fails to delete the lock key, the lock will automatically expire and be cleaned up after the lease time ends (e.g., 60 seconds). This helps ensure that locks are not left dangling if something goes wrong.
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 // Create a Kahuna client (it can be a global instance)
@@ -50,6 +55,33 @@ catch (Exception ex)
 }
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+import { KahunaClient } from "kahuna-client";
+
+const client = new KahunaClient({
+  endpoints: ["https://127.0.0.1:8082"],
+  allowInsecureCertificateValidation: true
+});
+
+const paymentLockKey = "payment_lock_" + paymentId;
+
+await using paymentLease = await client.acquireLock(paymentLockKey, {
+  expiry: 20_000
+});
+
+if (paymentLease.acquired) {
+  await processPayment(paymentId);
+} else {
+  console.log("Payment is already being processed. Please try again later.");
+}
+```
+
+</TabItem>
+</Tabs>
+
 If multiple services or workers are trying to process the same payment concurrently, Kahuna’s distributed locks will serialize access to the paymentLockKey, ensuring that only one worker can process the payment at a time, preventing double payments.
 
 Even with the distributed lock in place, we might want to make the payment process idempotent. This can be done by storing the transaction status in a database and ensuring that any re-attempt to process the same payment is recognized as already completed, regardless of whether the lock was acquired.
@@ -61,6 +93,9 @@ This combination of a distributed lock with a lease mechanism in Kahuna and idem
 Now let’s imagine the following scenario, where it’s necessary to retry acquiring a lock in case it’s already held. A distributed job scheduler is running across several servers. Every time a new job enters a processing queue, one of the scheduler instances must acquire the lock to pick up and process the job.
 
 Why Frequent Retries? The tasks are small and executed quickly, so the lock is held only for a very short window. However, because jobs are coming in rapidly, multiple scheduler instances constantly attempt to acquire the lock as soon as it becomes available. This often results in one process grabbing the lock, completing its task, releasing it almost immediately, and then another process, which might have been waiting, seizing the opportunity.
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 // Create a Kahuna client (it can be a global instance)
@@ -102,11 +137,35 @@ catch (Exception ex)
 }
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+while (true) {
+  await using queueLock = await client.acquireLock("job-queue-lock", {
+    expiry: 10_000,
+    wait: 8000,
+    retry: 250
+  });
+
+  if (queueLock.acquired) {
+    await fetchFromQueueAndProcess();
+    break;
+  }
+
+  console.log("Lock was busy for 8 seconds, retry later...");
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+}
+```
+
+</TabItem>
+</Tabs>
+
 This scenario is common in systems that use distributed task queues (e.g., using RabbitMQ, Kafka, or Redis) in combination with Kahuna to ensure that only one instance processes a job at a time while maintaining high throughput.
 
 ### Prevent double backup process
 
-While the locking system can generally be used from an application via a **[Kahuna client](/docs/dotnet-client/)** for a specific programming language, it can also be used from the command line with **[kahuna-cli](/docs/kahuna-cli/)** to assist with DevOps scripts. In the following example, we’ll use a distributed lock to prevent two processes on different nodes from attempting to back up a PostgreSQL database at the same time:
+While the locking system can generally be used from an application via a Kahuna client for [.NET](/docs/dotnet-client/) or [TypeScript/Node.js](/docs/typescript-client/), it can also be used from the command line with **[kahuna-cli](/docs/kahuna-cli/)** to assist with DevOps scripts. In the following example, we’ll use a distributed lock to prevent two processes on different nodes from attempting to back up a PostgreSQL database at the same time:
 
 ```bash
 #!/bin/bash
@@ -131,4 +190,4 @@ kahuna-cli --unlock backup-lock --owner $LOCK_OWNER --format json
 
 ```
 
-Distributed locks have many more practical use cases in real-world applications. You can find more examples in the **[distributed locks](/docs/distributed-locks)** documentation and in the **[Kahuna Client](/docs/dotnet-client)** page. In the next section, we’ll learn how to use the distributed sequencer.
+Distributed locks have many more practical use cases in real-world applications. You can find more examples in the **[distributed locks](/docs/distributed-locks)** documentation and in the [.NET](/docs/dotnet-client/) and [TypeScript/Node.js](/docs/typescript-client/) client pages. In the next section, we’ll learn how to use the distributed sequencer.

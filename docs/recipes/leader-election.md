@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Leader Election
 
 Use Kahuna distributed locks when one process should own a role at a time. Common examples include schedulers, background workers, compactors, importers, and cluster-wide maintenance jobs.
@@ -5,6 +8,9 @@ Use Kahuna distributed locks when one process should own a role at a time. Commo
 The lock lease prevents permanent ownership if the leader crashes. The fencing token protects downstream systems from stale leaders.
 
 ## Acquire Leadership
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 await using KahunaLock leadership = await client.GetOrCreateLock(
@@ -23,9 +29,35 @@ long fencingToken = leadership.FencingToken;
 await RunScheduler(fencingToken);
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+await using leadership = await client.acquireLock("leaders/billing-scheduler", {
+  expiry: 15_000,
+  wait: 3000,
+  retry: 200,
+  durability: "persistent"
+});
+
+if (!leadership.acquired) {
+  return;
+}
+
+const fencingToken = leadership.fencingToken;
+
+await runScheduler(fencingToken);
+```
+
+</TabItem>
+</Tabs>
+
 ## Renew While Healthy
 
 Long-running leaders should extend the lease periodically:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 while (!stoppingToken.IsCancellationRequested)
@@ -40,9 +72,31 @@ while (!stoppingToken.IsCancellationRequested)
 }
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+while (!stoppingSignal.aborted) {
+  const extended = await leadership.extend(15_000);
+
+  if (!extended.extended || extended.fencingToken !== fencingToken) {
+    break;
+  }
+
+  await doLeaderWork(stoppingSignal);
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+}
+```
+
+</TabItem>
+</Tabs>
+
 ## Use Fencing Tokens
 
 Every external write made by the leader should carry the fencing token. The downstream system should reject writes with an older token than the latest committed token for that resource.
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 await db.SaveCheckpoint(
@@ -51,6 +105,20 @@ await db.SaveCheckpoint(
     fencingToken: leadership.FencingToken
 );
 ```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+await db.saveCheckpoint({
+  jobName: "billing-scheduler",
+  checkpoint: checkpointValue,
+  fencingToken: leadership.fencingToken
+});
+```
+
+</TabItem>
+</Tabs>
 
 This matters when a leader pauses, loses the lease, and later resumes believing it still owns the role.
 

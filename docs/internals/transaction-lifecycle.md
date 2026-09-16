@@ -2,7 +2,7 @@
 
 This page explains how a Kahuna key/value transaction executes inside the system. It follows the path from API entry point, through routing and MVCC staging, into durable-intent two-phase commit, through Raft and the WAL, and finally into background settlement and recovery.
 
-For user-facing API examples, see [Distributed Transactions](/docs/architecture/distributed-transactions/) and [Kahuna .NET Client](/docs/dotnet-client/).
+For user-facing API examples, see [Distributed Transactions](/docs/architecture/distributed-transactions/), [Kahuna .NET Client](/docs/dotnet-client/), and [Kahuna TypeScript Client](/docs/typescript-client/).
 
 ## Transaction Shapes
 
@@ -154,6 +154,8 @@ The decision record is the point of no return. Once it commits as `Commit`, Kahu
 
 Validated-base writes get a second lost-update fence after prepare. The leader checks the current committed base before prepare, each replica remembers the committed head it saw while applying the prepare, and the finalizer asks replicas for those verdicts before writing `Commit`. A `StaleBase` verdict aborts the transaction as a conflict. Missing or unreachable verdicts are counted as unattested and do not by themselves block commit; the canonical decision still follows the ordered record path.
 
+The replica fence has a per-endpoint lag breaker. If a replica repeatedly cannot attest within the apply wait, for example during a disk pause, WAL saturation, or snapshot install, Kahuna keeps asking it for instant verdicts but stops waiting for its apply path on every commit. Periodic full-wait probes restore the replica only after consecutive attesting answers, so an intermittently stalled node does not make every finalization pay the full wait. Operators can watch `kahuna.durable_tx.replica_fence_lag_transitions`, `kahuna.durable_tx.replica_fence_lagging_replicas`, `kahuna.durable_tx.replica_fence_lagging_asks`, `kahuna.durable_tx.replica_fence_unattested`, and `kahuna.durable_tx.finalize_replica_fence_ms`.
+
 ## Decision Deadlines
 
 Each durable finalize freezes a decision deadline:
@@ -178,6 +180,27 @@ Aggregator submissions have an admission class:
 | Terminal | Decision, materialize, settle, recovery, metadata handoff | Reserved headroom so ordinary-write bursts cannot starve already-prepared transactions |
 
 The anchor partition can submit `[TransactionRecord init, PreparedIntent prepare]` as one ordered bundle. A batch can mix direct key/value records and durable transaction records, but every submission keeps its own apply-on-commit callback and completion path.
+
+## One-Phase Durable Fast Path
+
+When a durable transaction's full participant set is the anchor partition, Kahuna can collapse record initialization, prepare, read validation, and commit decision into one Raft proposal. That removes the usual two durable barriers for single-partition transactions while keeping the decision replicated.
+
+If another node leads the anchor partition, the coordinator forwards the whole one-phase bundle as a typed durable operation. The receiving leader submits the record, prepared intent, and decision entries as one atomic scheduler submission under the original range fence. If the remote leader is too old to understand that typed operation, the coordinator falls back to the standard two-phase flow instead of approximating the result.
+
+With `OnePhaseApplyTimeValidation` enabled, replicas also check same-partition point-read dependencies and validated write bases at apply time against the committed-head ledger. That keeps read-modify-write transactions eligible for the fast path in a multi-node group. Predicate dependencies, such as prefix or range locks, and off-partition read dependencies still use two-phase commit.
+
+The main metric is `kahuna.durable_tx.one_phase_gate{outcome}`:
+
+| Outcome | Meaning |
+|---------|---------|
+| `entered` | The transaction was eligible for a one-phase attempt. |
+| `read_set_beyond_writes` or `validated_base` | Apply-time validation is off, so the bundle cannot safely carry that dependency in a multi-process group. |
+| `predicate_read` | A prefix or range dependency requires the two-phase path. |
+| `off_partition_read` | A read dependency routes to a different partition than the anchor. Co-locate related hash key spaces with a placement group when the workload should stay single-partition. |
+| `non_persistent_read` | The dependency has no persistent committed-head ledger entry. |
+| `multi_partition` or `anchor_off_partition` | The write set cannot be represented by one anchor-partition bundle. |
+
+Related counters and histograms include `kahuna.durable_tx.one_phase_commits`, `kahuna.durable_tx.one_phase_fallbacks`, `kahuna.durable_tx.one_phase_bundle_ms`, and `kahuna.durable_tx.one_phase_pre_bundle_ms`. Use them together: a high gate-entered count with low commits means the workload looks eligible at first but is falling back before the bundle commits.
 
 ## Deferred Settlement
 
@@ -270,6 +293,11 @@ Important transaction bounds:
 | Setting or limit | Purpose |
 |---|---|
 | `DurableDecisionOutstandingMax` | Hard cap on outstanding undecided canonical records admitted by a node |
+| `DurableRecordRetentionMax` | Count budget for retained terminal durable records |
+| `DurableRecordRetentionMaxBytes` | Estimated heap-byte budget for terminal durable records plus completion receipts |
+| `DurableRecordRetentionHeapPressure` | Last-resort heap pressure threshold for reclaiming old terminal records |
+| `DurableRecordRetentionFloor` | Minimum terminal-record age protected from early budget reclamation |
+| `DurableMaintenanceInterval` | Tick interval for prepared-intent recovery and durable retention sweeps |
 | `DurablePreparedIntentMaxCount` | Resident prepared-intent count bound |
 | `DurablePreparedIntentMaxBytes` | Resident prepared-intent value-byte bound |
 | `DurableMaterializeByReference` | Enables value-free committed-intent materialization |

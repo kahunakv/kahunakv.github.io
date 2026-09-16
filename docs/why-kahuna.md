@@ -56,7 +56,7 @@ These features share the same replication, persistence, routing, and client mode
 |------------------|-------------------|
 | First-class locks, key/value state, and sequences | Use documented operations instead of application-specific recipes. |
 | Distributed transactions and scripts | Several keys can change together or roll back together. |
-| Native .NET client | Async APIs, cancellation, transactions, and multiple endpoints fit normal .NET services. |
+| Native .NET and TypeScript clients | Async APIs, cancellation, transactions, and multiple endpoints fit normal .NET and Node.js services. |
 | REST, gRPC, CLI, and scripts | Applications and operators can choose the appropriate interface. |
 | Hash and key-range routing | Support both general coordination keys and ordered, scan-heavy key spaces. |
 | Jepsen-tested correctness | Public Jepsen workloads exercise key/value registers, locks, interactive transactions, sequences, and membership churn under faults. |

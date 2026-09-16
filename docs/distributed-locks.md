@@ -15,7 +15,9 @@ By partitioning locks among nodes controlled by Raft Groups, Kahuna offers:
 - **Reliability:** Raft consensus ensures that partition data remains consistent even in the face of network failures.
 - **Simplicity:** A straightforward API based on leases makes it easy to integrate distributed locking into your applications.
 
-## Use Cases 
+Persistent lock acquire, extend, and release operations are batched per partition before Raft proposal. Bursty workloads that touch locks on the same partition can therefore share fewer WAL appends and quorum round trips while keeping the same fencing-token and lease semantics.
+
+## Use Cases
 
 - **Leader Election**: Elect a single leader in a cluster of services. Only one node should act as the leader at any time (e.g., for scheduling, replication). A distributed lock ensures only one process "wins" and holds the leadership.
 - **Preventing Double Execution of Scheduled Jobs**: Ensure a cron job or background worker is executed only once across multiple nodes. In a horizontally scaled system, multiple nodes might try to run the same job. A distributed lock prevents multiple executions of the same scheduled task.
@@ -30,7 +32,7 @@ By partitioning locks among nodes controlled by Raft Groups, Kahuna offers:
 
 Kahuna exposes a simple API for acquiring, releasing and extending locks. The main functions are:
 
-#### Lock
+### Lock
 
 <Tabs>
 <TabItem value="API">
@@ -86,6 +88,22 @@ if (myLock.IsAcquired)
 }
 ```
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const lock = await client.acquireLock("balance-" + userId, {
+  expiry: 5000,
+  durability: "persistent"
+});
+
+if (lock.acquired) {
+  console.log("Lock acquired");
+
+  // implement exclusive logic here
+}
+```
+
+</TabItem>
 
 <TabItem value="Rest">
 
@@ -109,7 +127,7 @@ Response:
 
 ---
 
-#### Unlock
+### Unlock
 
 <Tabs>
 <TabItem value="API">
@@ -174,6 +192,23 @@ if (myLock.IsAcquired)
 await myLock.DisposeAsync();
 ```
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+const lock = await client.acquireLock("balance-" + userId, {
+  expiry: 5000
+});
+
+if (lock.acquired) {
+  console.log("Lock acquired");
+
+  // implement exclusive logic here
+}
+
+await lock.release();
+```
+
+</TabItem>
 <TabItem value="Rest">
 
 ```bash
@@ -193,7 +228,7 @@ Response:
 
 ---
 
-#### Extend
+### Extend
 
 <Tabs>
 <TabItem value="API">
@@ -261,6 +296,20 @@ if (myLock.IsAcquired)
 
 ```
 </TabItem>
+<TabItem value="TypeScript">
+
+```ts
+await using lock = await client.acquireLock("balance-" + userId, {
+  expiry: 5000
+});
+
+if (lock.acquired) {
+  // implement exclusive logic here
+  await lock.extend(60_000);
+}
+```
+
+</TabItem>
 <TabItem value="Rest">
 
 ```bash
@@ -281,7 +330,7 @@ Response:
 
 ---
 
-#### Get
+### Get
 
 <Tabs>
 <TabItem value="API">
@@ -344,6 +393,22 @@ if (!myLock.IsAcquired)
 }
 
 ```
+</TabItem>
+<TabItem value="TypeScript">
+
+```ts
+await using lock = await client.acquireLock("group-leader-" + groupId, {
+  expiry: 5000
+});
+
+if (!lock.acquired) {
+  const lockInfo = await client.getLockInfo("group-leader-" + groupId);
+
+  console.log(`Lock owner: ${lockInfo?.owner}`);
+  console.log(`Expires: ${lockInfo?.expires}`);
+}
+```
+
 </TabItem>
 <TabItem value="Rest">
 

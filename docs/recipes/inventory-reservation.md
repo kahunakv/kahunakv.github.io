@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Inventory Reservation
 
 Use Kahuna transactions when multiple workers need to reserve limited inventory without overselling.
@@ -32,7 +35,10 @@ set @reservation_key @requested
 return "reserved"
 ```
 
-Run it from the .NET client:
+Run it from a client:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransactionScript(
@@ -62,6 +68,44 @@ KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransaction
     ]
 );
 ```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const script = client.loadScript(`
+let available = get @available_key
+
+if not available then
+  throw "inventory key does not exist"
+end
+
+let current = to_int(available)
+let requested = to_int(@requested)
+
+if current < requested then
+  return "insufficient"
+end
+
+set @available_key current - requested
+set @reservation_key @requested
+return "reserved"
+`);
+
+const result = await script.run({
+  parameters: [
+    { key: "@available_key", value: "inventory/sku-123/available" },
+    { key: "@reservation_key", value: "inventory/sku-123/reservations/order-456" },
+    { key: "@requested", value: "2" }
+  ]
+});
+
+const firstValue = result.values[0]?.value;
+const status = firstValue ? new TextDecoder().decode(firstValue) : null;
+```
+
+</TabItem>
+</Tabs>
 
 ## Release a Reservation
 

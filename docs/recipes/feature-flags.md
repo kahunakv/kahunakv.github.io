@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Feature Flags and Configuration
 
 Kahuna can store feature flags and runtime configuration with strong consistency, revisions, compare-and-set updates, and historical snapshot reads.
@@ -17,6 +20,9 @@ config/prod/search/enable-new-ranking
 
 ## Read a Flag
 
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
+
 ```csharp
 KahunaKeyValue flag = await client.GetKeyValue(
     "config/prod/search/enable-new-ranking",
@@ -26,9 +32,26 @@ KahunaKeyValue flag = await client.GetKeyValue(
 bool enabled = flag.Success && flag.ValueAsString() == "true";
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const flag = await client.get("config/prod/search/enable-new-ranking", {
+  durability: "persistent"
+});
+
+const enabled = flag.success && flag.valueAsString() === "true";
+```
+
+</TabItem>
+</Tabs>
+
 ## Update Safely With Compare Revision
 
 Read the current revision, then update only if nobody changed it first:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 KahunaKeyValue current = await client.GetKeyValue(
@@ -47,9 +70,35 @@ if (!updated.Success)
     Console.WriteLine("Flag changed before this update was applied.");
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const current = await client.get("config/prod/search/enable-new-ranking", {
+  durability: "persistent"
+});
+
+const updated = await client.compareRevisionAndSet(
+  "config/prod/search/enable-new-ranking",
+  "true",
+  current.revision,
+  { durability: "persistent" }
+);
+
+if (!updated.success) {
+  console.log("Flag changed before this update was applied.");
+}
+```
+
+</TabItem>
+</Tabs>
+
 ## Read Historical Configuration
 
 Use `LastModified` from one read as a snapshot anchor:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 KahunaKeyValue anchor = await client.GetKeyValue(
@@ -64,6 +113,23 @@ List<KahunaKeyValue> configAtAnchor = await client.ScanAllByPrefix(
 );
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const anchor = await client.get("config/prod/search/enable-new-ranking", {
+  durability: "persistent"
+});
+
+const configAtAnchor = await client.scanAllByPrefix("config/prod/search", {
+  durability: "persistent",
+  snapshotMs: anchor.lastModified
+});
+```
+
+</TabItem>
+</Tabs>
+
 This is useful during incident review when you need to know which flags and settings were visible at one point in time.
 
 ## Group Related Settings
@@ -74,7 +140,10 @@ For settings that should be read together, use one bucket:
 get by bucket `config/prod/search`
 ```
 
-From the .NET client:
+From a client:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 List<KahunaKeyValue> settings = await client.GetByBucket(
@@ -82,6 +151,18 @@ List<KahunaKeyValue> settings = await client.GetByBucket(
     KeyValueDurability.Persistent
 );
 ```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const settings = await client.getByBucket("config/prod/search", {
+  durability: "persistent"
+});
+```
+
+</TabItem>
+</Tabs>
 
 ## Operational Notes
 

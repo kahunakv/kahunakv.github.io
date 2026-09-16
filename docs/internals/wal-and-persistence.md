@@ -52,6 +52,8 @@ Persistent lock and key/value actors keep hot state in memory. Dirty entries are
 
 `BackgroundWriterActor` batches writes with limits on item count and packet size. It retries failed backend writes with jittered backoff. If a storage write still fails, the dequeued batch is retained in memory and retried on the next flush cycle instead of being dropped. The partition remains unflushed, so checkpoints and WAL compaction cannot advance past data whose only durable copy is still the Raft log.
 
+Kahuna also bounds this unflushed backlog. `PersistenceMaxUnflushedItems` and `PersistenceMaxUnflushedBytes` cap committed key/value state that is waiting for the background writer. When either bound is exceeded, ordinary persistent writes receive retryable backpressure while terminal durable transaction work keeps reserved headroom to finish recovery-sensitive decisions and settlement.
+
 The flush path is:
 
 1. A committed mutation changes actor state.
@@ -74,6 +76,10 @@ Durable transaction recovery metadata participates in this ordering. Transaction
 Point-in-time recovery intentionally keeps committed WAL entries beyond the latest materialized-state checkpoint. Kahuna derives a protected log position from `PitrWindow` and `BaseSnapshotInterval`, approximately corresponding to `now - PitrWindow - BaseSnapshotInterval`, and prevents normal compaction from crossing that position.
 
 Full backups wait for the apply barrier, flush pending materialized writes, create a backend checkpoint, and verify artifact sizes and checksums before publishing the manifest. Incremental backups then preserve committed WAL slices after that base image. Restore opens the checkpoint, verifies artifacts at point of use, and replays key/value mutations whose transaction commit HLC is at or before the selected timestamp. See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for the operational model, API surface, and restore constraints.
+
+## Revision Cleanup
+
+Persistent revision cleanup removes historical `key~revision` rows only when count, age, and live snapshot-hold rules allow it. Cleanup after writes is targeted by key and bounded by both `PersistentRevisionCleanupBatchSize` and `PersistentRevisionCleanupTimeBudget`, so a revision-heavy key cannot starve the background flush path. Keys not reached within the time budget stay queued for the next cycle.
 
 ## Persistent vs Ephemeral
 

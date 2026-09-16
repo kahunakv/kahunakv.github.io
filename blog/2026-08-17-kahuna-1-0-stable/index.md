@@ -82,7 +82,7 @@ This release is the line where Kahuna moves from "interesting project" to "you c
 - **Backups and point-in-time recovery**
 - **Embedded node** for integration tests and applications that need the transaction engine without the server
 - **Jepsen-tested** across key/value, lock, transaction, sequencer, and membership workloads
-- **.NET client**, REST, gRPC, and CLI interfaces
+- **.NET and TypeScript clients**, REST, gRPC, and CLI interfaces
 - **MIT license**
 
 ## What Comes Next

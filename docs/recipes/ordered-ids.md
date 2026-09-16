@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Ordered IDs
 
 Use Kahuna sequences when several services need to allocate unique, ordered values without racing.
@@ -11,6 +14,9 @@ Good fits include:
 
 ## Create a Sequence
 
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
+
 ```csharp
 KahunaSequence sequence = await client.CreateSequence(
     name: "invoices",
@@ -19,7 +25,23 @@ KahunaSequence sequence = await client.CreateSequence(
 );
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+await client.createSequence("invoices", {
+  initialValue: 1000,
+  increment: 1
+});
+```
+
+</TabItem>
+</Tabs>
+
 ## Allocate One Value
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 long invoiceNumber = await client.NextSequenceValue(
@@ -28,11 +50,26 @@ long invoiceNumber = await client.NextSequenceValue(
 );
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const invoiceNumber = await client.nextSequenceValue("invoices", {
+  idempotencyKey: "invoice-request-9f8c"
+});
+```
+
+</TabItem>
+</Tabs>
+
 Use an idempotency key when the caller may retry after a timeout. The same request can be retried without accidentally consuming another value.
 
 ## Reserve a Range
 
 For batch work, reserve several values in one call:
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 KahunaSequenceRange range = await client.ReserveSequenceRange(
@@ -44,6 +81,22 @@ KahunaSequenceRange range = await client.ReserveSequenceRange(
 for (long value = range.Start; value <= range.End; value++)
     Console.WriteLine(value);
 ```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const range = await client.reserveSequenceRange("invoices", 100, {
+  idempotencyKey: "invoice-import-2026-06-15"
+});
+
+for (let value = range.start; value <= range.end; value += 1) {
+  console.log(value);
+}
+```
+
+</TabItem>
+</Tabs>
 
 Range reservation reduces coordination overhead when a worker needs many IDs.
 

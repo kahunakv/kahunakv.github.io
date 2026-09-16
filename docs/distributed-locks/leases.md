@@ -1,10 +1,10 @@
 
-import Kahuna7 from '../assets/kahuna7.png';
+import LeasesImage from '../assets/leases-opt-transparent.png';
 
 # Leases
 
 <div style={{textAlign: 'center'}}>
-<img src={Kahuna7} height="350" />
+<img src={LeasesImage} alt="What are leases?" style={{maxWidth: '100%', maxHeight: 520, height: 'auto'}} />
 </div>
 
 

@@ -14,13 +14,15 @@ This lets sequences reuse the existing routing, Raft replication, compare-and-se
 
 ## State Format
 
-`SequencerManager` serializes sequence state as JSON. The state includes:
+`SequencerManager` serializes sequence state in Kahuna's binary sequence format. Older JSON and earlier binary records are still readable and migrate forward on the next write. The state includes:
 
 - Sequence name
 - Current value
 - Initial value
 - Increment
 - Optional max value
+- Optional per-sequence block size
+- Incarnation
 - Created and updated timestamps
 - Idempotency records
 
@@ -33,12 +35,22 @@ For `next` and `reserve`:
 1. Validate the sequence name and durability.
 2. Load the sequence state from the reserved key.
 3. Check the idempotency map if an idempotency key is provided.
-4. Calculate the next value or range.
-5. Validate against `MaxValue`.
-6. Write the updated state with compare-revision semantics.
+4. Serve the allocation from the actor's resident block when one is available.
+5. Reserve a new block by compare-and-swapping the durable high-water mark when the resident block is empty.
+6. Validate the allocation against `MaxValue`.
 7. Retry if a concurrent update changed the source revision.
 
 The compare-revision write is what prevents overlapping allocations when multiple clients target the same sequence.
+
+`CurrentValue` is the durable high-water mark reserved by the owner. With the default block size of `1000`, a sequence created at `0` can report `CurrentValue = 1000` after the first allocation because the actor reserved a full block and then handed out one value.
+
+## Block Lease and Updates
+
+`SequencerBlockLease` bounds how long an actor may serve a reserved block without revalidating the durable record. This limits the stale-owner window after a leadership change.
+
+`UpdateSequence` rewrites sequence parameters, increments `Incarnation`, clears idempotency records, and waits one block lease before reporting success. During that same window, allocations for the updated sequence return `MustRetry`. This keeps old and new incarnations from issuing values at the same time after the update is reported complete.
+
+A node configured with `SequencerBlockLease = 0` refuses sequence updates because stale blocks would never be forced to revalidate.
 
 ## Per-Sequence Local Lock
 

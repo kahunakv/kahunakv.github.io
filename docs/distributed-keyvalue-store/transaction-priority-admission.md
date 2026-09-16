@@ -51,6 +51,14 @@ await using KahunaTransactionSession session =
     });
 ```
 
+```ts
+await using session = await client.beginTransaction({
+  priority: "high",
+  timeout: 30_000,
+  admissionWaitMs: 2000
+});
+```
+
 ### Script Execution
 
 ```csharp
@@ -63,6 +71,13 @@ KahunaKeyValueTransactionResult result =
     );
 ```
 
+```ts
+const result = await client.executeScript(script, {
+  priority: "background",
+  parameters
+});
+```
+
 Compiled scripts expose the same control:
 
 ```csharp
@@ -70,6 +85,15 @@ KahunaTransactionScript compiled = client.LoadTransactionScript(script);
 
 KahunaKeyValueTransactionResult result =
     await compiled.Run(TransactionPriority.High, parameters);
+```
+
+```ts
+const compiled = client.loadScript(script);
+
+const result = await compiled.run({
+  priority: "high",
+  parameters
+});
 ```
 
 ### Inline Script Option
@@ -145,6 +169,8 @@ Admission wait is budgeted separately from transaction lifetime:
 - `AdmissionWaitMs` on `KahunaTransactionOptions` controls how long an interactive session waits to start.
 - `admissionWait` in a script `begin (...)` block controls how long that script waits to start.
 - `timeout` still controls the admitted transaction lifetime or script execution time.
+
+An explicit `admissionWait=0` means "start only if a slot is free right now". Omitting the option uses the server default, and negative values are refused as script errors.
 
 If the caller's admission budget expires before a slot opens, Kahuna returns `AdmissionRefused`.
 

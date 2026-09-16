@@ -36,6 +36,8 @@ let result = (10 + 5) * 2  # result is 30
 
 These operators can be used with numeric values and expressions within your script logic.
 
+Division by zero is a script error. Numeric equality is exact; use [`nearly_equals`](functions/math.md) when a floating-point calculation should compare with a tolerance.
+
 ### Logical Operators
 
 These apply boolean logic to expressions within a script:
@@ -53,6 +55,12 @@ let is_guest = !is_registered
 ```
 
 Logical operators are essential for building conditions, control flows, and validations in Kahuna Scripts.
+
+Logical operators require boolean operands and short-circuit when the left side determines the result. This makes guard expressions safe:
+
+```kahuna
+let safe = divisor != 0 && total / divisor > 10
+```
 
 ### Comparison Operators
 
@@ -90,6 +98,10 @@ This creates an array:
 ```
 
 You can use ranges for iteration, indexing, slicing, or generating value sets dynamically in Kahuna Scripts.
+
+Ranges include both bounds. A range with a start greater than its end is empty, and a single evaluated range is capped at `100000` elements.
+
+For detailed edge-case behavior, see [Script Semantics](semantics.md).
 
 ## Function Calls
 

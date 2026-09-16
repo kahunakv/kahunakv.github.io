@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Idempotent Jobs
 
 Use Kahuna when a distributed worker pool must process each logical job once, or at least prevent duplicate side effects from concurrent workers.
@@ -23,6 +26,9 @@ jobs/invoice-2048/status
 ```
 
 ## Claim and Complete
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 string jobId = "invoice-2048";
@@ -57,6 +63,43 @@ await client.SetKeyValue(
 );
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const jobId = "invoice-2048";
+const statusKey = `jobs/${jobId}/status`;
+
+let existing = await client.get(statusKey);
+if (existing.success && existing.valueAsString() === "completed") {
+  return;
+}
+
+await using jobLock = await client.acquireLock(`jobs/${jobId}/lock`, {
+  expiry: 30_000,
+  wait: 5000,
+  retry: 200
+});
+
+if (!jobLock.acquired) {
+  return;
+}
+
+existing = await client.get(statusKey);
+if (existing.success && existing.valueAsString() === "completed") {
+  return;
+}
+
+await processInvoice(jobId, jobLock.fencingToken);
+
+await client.setNoRevision(statusKey, "completed", {
+  durability: "persistent"
+});
+```
+
+</TabItem>
+</Tabs>
+
 ## Scripted Status Transition
 
 For state transitions that should happen atomically on the server, use a script:
@@ -74,6 +117,9 @@ return "completed"
 
 Run it with parameters:
 
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
+
 ```csharp
 KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransactionScript(
     """
@@ -89,6 +135,32 @@ KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransaction
     parameters: [new() { Key = "@status_key", Value = statusKey }]
 );
 ```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```ts
+const script = client.loadScript(`
+let status = get @status_key
+
+if status == "completed" then
+  return "already-completed"
+end
+
+set @status_key "completed" norev
+return "completed"
+`);
+
+const result = await script.run({
+  parameters: [{ key: "@status_key", value: statusKey }]
+});
+
+const firstValue = result.values[0]?.value;
+const status = firstValue ? new TextDecoder().decode(firstValue) : null;
+```
+
+</TabItem>
+</Tabs>
 
 ## Operational Notes
 

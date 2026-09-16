@@ -3,6 +3,8 @@
 
 Kahuna provides a .NET client for distributed key/value operations, locks, sequencers, transactions, backups, and point-in-time restore. The client hides most routing and coordination details while still exposing the controls needed for consistency, durability, and retry behavior. Documentation and samples for the client can be found in the `docs/` folder or on our [GitHub repository](https://github.com/kahunakv/kahuna).
 
+For Node.js and TypeScript applications, see [Client for TypeScript and Node.js](/docs/typescript-client/).
+
 ## Client Installation
 
 Kahuna Client for .NET is available as a NuGet package. You can install it via the .NET CLI:
@@ -566,6 +568,8 @@ await foreach (KahunaKeyValue item in client.ScanByRange(
 
 This keeps fetching server-side pages behind the async sequence while preserving one historical snapshot when `snapshotMs` is non-zero. Large range scans can read keys that currently live only on disk without forcing every scanned key back into the in-memory cache.
 
+If one server-side page keeps returning retryable state because a range is moving, leadership is changing, restore is in progress, or an undecided transaction intent blocks visibility, Kahuna fails the page with a retryable error instead of scanning forever. Back off briefly and retry the scan.
+
 ## Batch Key/Value Operations
 
 The client also exposes batch methods for common key/value work:
@@ -733,7 +737,13 @@ KahunaSequence sequence = await client.CreateSequence(
     initialValue: 0,
     increment: 1,
     maxValue: null,
+    blockSize: null,
     durability: SequenceDurability.Persistent
+);
+
+KahunaSequence updated = await client.UpdateSequence(
+    "orders",
+    new SequenceUpdate(CurrentValue: 5000, BlockSize: 100)
 );
 
 long orderId = await client.NextSequenceValue(
@@ -752,6 +762,8 @@ bool deleted = await client.DeleteSequence("orders");
 ```
 
 Use idempotency keys when retrying allocation requests after a timeout. If the original request was committed, retrying with the same idempotency key returns the original allocation instead of consuming a new value.
+
+`UpdateSequence` changes the reserved high-water mark, increment, initial value, max value, or per-sequence block size. It starts a new incarnation and waits about one server `SequencerBlockLease` before returning so stale owners cannot keep issuing from an old block after the update is reported as complete.
 
 ## Key/Values: Usage & Examples
 

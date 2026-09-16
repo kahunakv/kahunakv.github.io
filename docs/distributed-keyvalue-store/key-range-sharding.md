@@ -32,6 +32,20 @@ That works well for:
 
 In hash mode, all keys in the same key space route to the same partition because Kahuna hashes the key space boundary, not the full leaf key. That is what makes `get by bucket` possible for prefixes such as `services/`.
 
+### Placement Groups
+
+Hash routing can also co-locate related key spaces with a placement group. The group is the part of a key space before the first `|`.
+
+| Key | Key space | Placement group |
+|-----|-----------|-----------------|
+| `orders|rows/1001` | `orders|rows` | `orders` |
+| `orders|by_customer/customer-7/1001` | `orders|by_customer/customer-7` | `orders` |
+| `sessions/user-42` | `sessions` | `sessions` |
+
+Keys in `orders|rows/...` and `orders|by_customer/...` remain separate key spaces for bucket reads, prefix locks, and range registration, but hash routing places both under the `orders` group. This is useful when an application keeps rows and secondary indexes in separate prefixes but wants most transactions over them to stay single-partition.
+
+Add the group marker when the key space is created. Changing it later changes placement for new requests, while existing keys remain stored under their old names.
+
 ## Key-Range Routing
 
 Key-range routing is for key spaces where **adjacent keys should stay adjacent**.
@@ -160,6 +174,10 @@ GET /v1/ranges?keySpace=users
 
 The response includes `initialized`, the answering node's `localEndpoint`, and one entry per key space. Each key-space entry includes its node-local `routingMode` plus ordered descriptors with `startKey`, `endKey`, `partitionId`, and `generation`.
 
+For metadata-mode clients, `GET /v1/cluster/routing` also publishes the hash placement rule: algorithm `kahuna.placement-group-jump-xxh32-v1`, key-space separator `/`, placement-group separator `|`, hash pool size, and partition offset. Clients that do not understand the exact rule fall back instead of guessing.
+
+Range scan page failures are visible through `kahuna.kv.scan_page_retry_budget_exhausted` and `kahuna.kv.scan_page_failed`. A non-zero rate means callers are receiving retryable or loud scan failures instead of silently truncated results.
+
 Force a split at an exact key:
 
 ```bash
@@ -206,4 +224,4 @@ POST /v1/ranges/merge
 
 Merge scans every key-range space and folds adjacent ranges that are below the configured minimum. There is no per-key-space merge API and no request-level size override. A non-leader returns `NotLeader` instead of reporting `0` merges, so `0` means a leader actually ran the pass and found nothing eligible.
 
-Range admin is also available through gRPC and `Kahuna.Client`.
+Range admin is also available through gRPC, `Kahuna.Client`, and the TypeScript client.

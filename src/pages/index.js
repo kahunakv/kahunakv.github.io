@@ -4,51 +4,56 @@ import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import CodeBlock from '@theme/CodeBlock';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import InternalsExplorer from '../components/InternalsExplorer';
 import styles from './index.module.css';
 
 const proofPoints = [
-  {icon: 'shield', label: 'Locks with fencing tokens'},
-  {icon: 'database', label: 'Persistent and ephemeral state'},
-  {icon: 'hash', label: 'Distributed sequence allocation'},
-  {icon: 'check', label: 'Jepsen-tested correctness'},
+  {icon: 'shield', label: 'Fenced locks & ordered IDs'},
+  {icon: 'database', label: 'Durable & temporary state'},
+  {icon: 'code', label: 'Custom C# functions'},
+  {icon: 'check', label: 'Jepsen-tested'},
 ];
 
 const advantageCards = [
   {
     icon: 'shield',
-    title: 'Stop double processing',
+    title: 'One worker per job',
     description:
-      'Use leases and fencing tokens when only one worker may own a job, tenant, or background task.',
+      'Use leases and fencing tokens to give one worker ownership of a job or tenant.',
   },
   {
     icon: 'database',
-    title: 'Keep shared state consistent',
+    title: 'Consistent shared state',
     description:
-      'Store revisions, compare values, and read the latest state without building your own replication layer.',
+      'Read current revisions and use transactional compare-and-set for workflows like rate limiting.',
   },
   {
     icon: 'hash',
-    title: 'Allocate ordered IDs safely',
+    title: 'Safe, ordered IDs',
     description:
-      'Generate invoice numbers, tickets, offsets, or reservation ranges without races across nodes.',
+      'Allocate numbers and ranges across nodes without races, with idempotent retries.',
+  },
+  {
+    icon: 'code',
+    title: 'Custom C# logic',
+    description:
+      'Run trusted C# functions inside Kahuna Script transactions for validation and business rules.',
   },
   {
     icon: 'cpu',
-    title: 'Connect to a replicated cluster',
+    title: 'Faster reads, safe failover',
     description:
-      'Point clients at one or more Kahuna endpoints and let the cluster handle replication, leader election, and failover.',
+      'Over 116k read requests per second on a local three-node cluster with in-memory storage, plus built-in replication and failover.',
+    link: '/docs/client-routing#measured-effect',
+    linkLabel: 'See benchmark details →',
   },
   {
     icon: 'layers',
-    title: 'Pick the storage path',
+    title: 'Your choice of storage',
     description:
-      'RocksDB fits write-heavy clusters. SQLite fits smaller persistent deployments. Memory fits tests and temporary state.',
-  },
-  {
-    icon: 'spark',
-    title: 'Build workflows, not glue code',
-    description:
-      'Rate limiting, leader-owned jobs, idempotent allocation, and transactional compare-and-set sit on top of the same model.',
+      'RocksDB for heavy writes, SQLite for smaller deployments, or memory for tests and temporary state.',
   },
 ];
 
@@ -60,6 +65,7 @@ const fitCards = [
       'Distributed locking for critical sections',
       'Reliable shared configuration and metadata',
       'Ordered ID allocation across nodes',
+      'Custom C# functions inside transactions',
       'Multi-step workflows with compare-and-set',
       'Services that need quorum-backed coordination',
       'MIT-licensed Kahuna with no proprietary runtime fees',
@@ -77,7 +83,7 @@ const fitCards = [
   },
 ];
 
-const exampleCode = `using Kahuna.Client;
+const dotnetExampleCode = `using Kahuna.Client;
 
 var client = new KahunaClient(new[]
 {
@@ -95,6 +101,27 @@ await using KahunaLock jobLock = await client.GetOrCreateLock(
 
 if (jobLock.IsAcquired)
     await ProcessInvoice(2048);
+`;
+
+const typescriptExampleCode = `import { KahunaClient } from "kahuna-client";
+
+await using client = new KahunaClient({
+  endpoints: [
+    "https://kahuna-1.internal:8082",
+    "https://kahuna-2.internal:8082",
+    "https://kahuna-3.internal:8082"
+  ]
+});
+
+await using jobLock = await client.acquireLock("jobs/invoice-2048", {
+  expiry: 30_000,
+  wait: 5000,
+  retry: 200
+});
+
+if (jobLock.acquired) {
+  await processInvoice(2048);
+}
 `;
 
 function Icon({name}) {
@@ -139,6 +166,13 @@ function Icon({name}) {
       </>
     ),
     spark: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />,
+    code: (
+      <>
+        <path d="M8 9l-4 3 4 3" />
+        <path d="M16 9l4 3-4 3" />
+        <path d="M13 5l-2 14" />
+      </>
+    ),
     x: (
       <>
         <path d="M18 6L6 18" />
@@ -173,11 +207,10 @@ function HomepageHeader() {
             The distributed coordination layer for .NET
           </Heading>
           <p className={styles.heroSubtitle}>
-            Kahuna is a self-hosted server cluster that gives your services distributed{' '}
-            <strong>locks</strong>, a consistent <strong>key/value store</strong>, and
-            ordered <strong>ID sequences</strong>, like etcd or ZooKeeper, but built for
-            .NET. One node owns the work, writes stay ordered, and another node takes over
-            safely on failure.
+            Like etcd or ZooKeeper, built for .NET: distributed <strong>locks</strong>, a consistent{' '}
+            <strong>key/value store</strong>, and ordered <strong>ID sequences</strong>.
+            Self-hosted, with safe failover and trusted C# functions inside Kahuna Script
+            transactions.
           </p>
           <div className={styles.buttons}>
             <Link className="button button--primary button--lg" to="/docs/getting-started">
@@ -187,7 +220,10 @@ function HomepageHeader() {
               Tutorial
             </Link>
             <Link className="button button--secondary button--lg" to="/docs/book">
-              Read the book
+              Book
+            </Link>
+            <Link className="button button--secondary button--lg" to="#inside-kahuna">
+              How it works ↓
             </Link>
           </div>
           <div className={styles.proofGrid}>
@@ -218,15 +254,16 @@ export default function Home() {
   return (
     <Layout
       title={`${siteConfig.title} documentation`}
-      description="Documentation for Kahuna, a distributed locking, key/value, and sequencing platform for .NET">
+      description="Documentation for Kahuna, a distributed locking, key/value, and sequencing platform for .NET and TypeScript">
       <HomepageHeader />
       <main>
+        <InternalsExplorer />
         <section className={styles.primarySection}>
           <div className="container">
             <SectionHeading
               eyebrow="Why Kahuna"
-              title="Solve coordination problems directly"
-              subtitle="Use it when the application needs one owner, consistent shared state, or safe ordered allocation"
+              title="Simplify coordination"
+              subtitle="One owner, consistent state, and ordered IDs for your distributed workflows."
             />
             <div className={styles.cardGrid}>
               {advantageCards.map((card) => (
@@ -240,6 +277,7 @@ export default function Home() {
                     </Heading>
                   </div>
                   <p className={styles.cardDescription}>{card.description}</p>
+                  {card.link ? <Link to={card.link}>{card.linkLabel}</Link> : null}
                 </div>
               ))}
             </div>
@@ -292,9 +330,18 @@ export default function Home() {
                     Cluster client
                   </Heading>
                 </div>
-                <CodeBlock language="csharp" className={styles.codeBlock}>
-                  {exampleCode}
-                </CodeBlock>
+                <Tabs groupId="front-page-client" className={styles.clientTabs}>
+                  <TabItem value="dotnet" label=".NET">
+                    <CodeBlock language="csharp" className={styles.codeBlock}>
+                      {dotnetExampleCode}
+                    </CodeBlock>
+                  </TabItem>
+                  <TabItem value="typescript" label="TypeScript">
+                    <CodeBlock language="typescript" className={styles.codeBlock}>
+                      {typescriptExampleCode}
+                    </CodeBlock>
+                  </TabItem>
+                </Tabs>
               </div>
               <div className={styles.calloutCard}>
                 <div className={styles.cardHeader}>
@@ -321,6 +368,12 @@ export default function Home() {
               </Link>
               <Link className="button button--secondary button--lg" to="/docs/dotnet-client">
                 Explore the .NET client
+              </Link>
+              <Link className="button button--secondary button--lg" to="/docs/typescript-client">
+                Explore the TypeScript client
+              </Link>
+              <Link className="button button--secondary button--lg" to="/docs/scripts/user-defined-functions">
+                Explore user-defined functions
               </Link>
             </div>
           </div>
