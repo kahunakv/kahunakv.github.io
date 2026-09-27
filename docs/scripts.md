@@ -11,6 +11,7 @@ The main advantage of Kahuna Script is that a multi-step workflow can run as a s
 - **Server-Owned Coordination**: The transaction coordinator records confirmed reads, writes, locks, and cleanup state while the script runs.
 - **Multi-Key Operations**: Scripts can read and modify key/value pairs across partitions without exposing routing details to the caller.
 - **Performance**: Multiple operations run from one request, reducing client/server round trips.
+- **Single-Key Fast Path**: Short auto-commit scripts over one ephemeral key can run in one actor turn, making counters, rate limiters, and flags much cheaper.
 - **Custom Logic on the Key/Value Store**: Scripts embed decision logic directly on the server side.
 - **User-Defined Functions**: Deployments can add trusted C# functions and call them from scripts like built-ins.
 - **Safe Error Handling**: If a script throws or fails validation, the transaction rolls back instead of leaving a partial update.
@@ -28,8 +29,11 @@ For a script author, the important behavior is:
 - `rollback` cancels the transaction and releases transactional state.
 - `throw` aborts the script and rolls back the transaction.
 - Snapshot scripts created with `begin (snapshot=...)` are read-only historical views.
+- Retryable statement failures keep their original outcome, so clients can distinguish a conflict from `MustRetry` instead of receiving one generic abort.
 
 See [Transactions](/docs/distributed-keyvalue-store/transactions/) for the full transaction lifecycle and option reference.
+
+For hot counters and temporary coordination state, see [Single-Key Script Fast Path](/docs/scripts/single-key-fast-path/) for the exact script shapes Kahuna optimizes automatically.
 
 ## Script Results
 

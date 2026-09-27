@@ -7,6 +7,8 @@ Rate limiting protects shared resources by rejecting or delaying work once a cal
 
 This recipe uses an **ephemeral** key because rate-limit counters are temporary state. The key expires automatically when the window ends.
 
+The examples below match Kahuna's [single-key script fast path](/docs/scripts/single-key-fast-path/): one auto-commit script, one ephemeral key, no blocking statements. That keeps rate-limit checks atomic without paying the full multi-key transaction cost.
+
 ## Fixed Window Counter
 
 Use one key per subject and time window:

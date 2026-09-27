@@ -81,6 +81,8 @@ Replica changes are committed through the meta partition before data movement pr
 
 Catch-up is bounded on both the streaming and buffering paths. Leaders cap outbound bytes per peer, cap backfill by entry count and bytes, and retry lagging followers through heartbeat/backfill. Snapshot rescue has a convergence breaker: if repeated rescue cycles still leave a follower below the compaction floor, the leader pauses aggressive rescue for that peer while allowing periodic probes so a recovered follower can be seeded later. Small snapshot exports can be cached for retry so a failed transfer does not immediately rebuild the same snapshot.
 
+Compaction also accounts for peers that go silent. A live follower that recently needed snapshot rescue can hold the compaction floor within a configured lag budget so normal compaction does not immediately put it below the floor again. A peer that stops answering holds compaction only for the silent-peer retention window; after that, it no longer prevents compaction and must restart from a snapshot when it comes back.
+
 The placement controller runs on the partition `0` leader. It repairs under-replicated partitions first, then removes extra replicas, then balances replica counts across nodes. Per-partition overrides change the target; the controller performs the actual movement on later passes.
 
 Useful placement metrics include:
@@ -102,7 +104,29 @@ Raft handles leader election per partition. When a leader changes:
 - Followers catch up from the leader's log
 - Committed entries remain ordered
 - Uncommitted proposals may need to be retried
+- Staged transactional writes, write intents, and exclusive prefix or range locks from the old leadership term are discarded on the node that lost leadership
 
 Clients can see retry or abort responses when leadership changes race with an operation.
 
 For durable transaction decisions, the node that becomes leader for the anchor partition is responsible for continuing recovery of any outstanding decision records it now owns.
+
+## Apply Fingerprints
+
+Each node keeps a small apply fingerprint per partition:
+
+| Field | Meaning |
+|-------|---------|
+| Applied key/value log id | Highest key/value Raft log id applied on this node for the partition. |
+| Committed-head ledger entries | Number of committed key heads tracked for transactional read validation on this partition. |
+| Live intents | Prepared intents currently held by the node. |
+
+At leadership changes, Kahuna logs the local fingerprint. It also exposes gauges tagged by `partition`:
+
+| Metric | Meaning |
+|--------|---------|
+| `kahuna.keyvalues.applied_log_id` | Highest key/value log id applied on this node for the partition. |
+| `kahuna.durable_tx.committed_head_ledger_entries` | Committed-head ledger entries held on this node for the partition. |
+
+When a node becomes leader, it probes other replicas for their fingerprints. A peer with the same applied log id but a different committed-head count indicates apply drift: one replica's materialized transactional state no longer matches the log-derived ledger. Kahuna logs this at error level and increments `kahuna.keyvalues.apply_divergence_detected`.
+
+Range splitting performs the same check before copying from the source partition. If another replica has more committed heads than the source leader at the same applied log id, the split is refused with `SourceStateIncomplete` and `kahuna.range.split.incomplete_source_refusals` increments. The trigger can retry on a later pass after leadership or replica state converges.

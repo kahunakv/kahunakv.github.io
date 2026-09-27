@@ -52,6 +52,83 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 }
 ```
 
+## In-Memory Embedded Cluster
+
+`EmbeddedKahunaCluster` starts several full Kahuna nodes in one process. Each member has its own storage, Raft log, actors, and partition leadership. The members communicate through in-memory Kahuna and Raft transports, so no socket is opened, but replication, elections, failover, and catch-up still run.
+
+Use it for integration tests, demos, and deterministic failure scenarios:
+
+```csharp
+await using EmbeddedKahunaCluster cluster =
+    await EmbeddedKahunaCluster.CreateInMemoryAsync(
+        3,
+        new EmbeddedKahunaOptions
+        {
+            NodeName = "demo",
+            Storage = "memory",
+            WalStorage = "memory",
+            InitialPartitions = 2
+        },
+        loggerFactory,
+        cancellationToken
+    );
+
+EmbeddedKahunaNode node = cluster.GetNode(1);
+
+int leader = await cluster.GetLeaderIndexAsync(0, cancellationToken);
+await cluster.StopNodeAsync(leader);
+await cluster.RestartNodeAsync(leader, cancellationToken);
+```
+
+`CreateInMemoryAsync` copies the base options for each member, assigns node ids `1..N`, names them `{NodeName}-{id}`, and assigns ports from `Port + index` or `7000 + index` when `Port` is `0`. Storage and WAL must both be `memory`, because a restarted member starts empty and catches up from the others.
+
+Useful cluster operations:
+
+| API | Purpose |
+|-----|---------|
+| `GetNode(index)` | Return a running embedded node. |
+| `GetLeaderIndexAsync(partitionId)` | Poll until a running member believes it leads the partition. Treat the result as a routing hint during failover. |
+| `StopNodeAsync(index)` | Stop a member as if its host crashed. Other members elect new leaders. |
+| `RestartNodeAsync(index)` | Recreate a stopped member under the same endpoint and let it catch up. |
+| `BlockLink(from, to)` / `BlockLinkBothWays(a, b)` | Drop in-memory traffic between members for partition tests. |
+| `IsolateNode(index)` | Cut one member off from every other member while it keeps running. |
+| `UnblockLink`, `UnblockLinkBothWays`, `UnblockAllLinks` | Restore blocked in-memory links. |
+
+During failover, forwarded calls can fail with `KahunaServerException` or return `MustRetry` until a new leader is elected. Retry through the normal client or test harness path.
+
+## Thread-Free Browser/WASM Mode
+
+Kahuna also ships a thread-free embedded build for hosts that cannot create threads, especially `browser-wasm` with `WasmEnableThreads` disabled. Target `net10.0-browser` to select that build:
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0-browser</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <WasmEnableThreads>false</WasmEnableThreads>
+  </PropertyGroup>
+</Project>
+```
+
+Thread-free mode uses Kommander's host-pumped scheduler and only supports in-memory storage and WAL. It does not include the ASP.NET Core server surface, external gRPC/REST listeners, RocksDB, SQLite, or socket-based inter-node communication. Use `EmbeddedKahunaNode` or `EmbeddedKahunaCluster` with `Storage = "memory"` and `WalStorage = "memory"`.
+
+```csharp
+await using EmbeddedKahunaNode node = new(new EmbeddedKahunaOptions
+{
+    Storage = "memory",
+    WalStorage = "memory",
+    InitialPartitions = 1
+}, loggerFactory);
+
+await node.StartAsync(cancellationToken);
+```
+
+Keep host code fully asynchronous. Blocking waits such as `.Result`, `.Wait()`, or `GetAwaiter().GetResult()` can stall a single-threaded WebAssembly runtime. Avoid console loggers that start their own background thread.
+
+In a browser cluster, every node and timer shares one event loop, so keep the embedded Raft timing defaults unless you have measured the heartbeat gaps. Set `MetricsSupport = true` when you want metrics under WebAssembly, since `System.Diagnostics.Metrics` is commonly disabled by default there.
+
+Kahuna's REST and persistence JSON paths use source-generated metadata, so trimming and reflection-disabled WebAssembly builds do not need reflection-based JSON serialization for Kahuna payloads.
+
 ## Options
 
 | Option | Default | Description |
@@ -107,6 +184,8 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `DefaultAdmissionWaitMs` | `5000` | Admission wait used when the caller does not specify one. |
 | `MaxAdmissionWaitMs` | `30000` | Maximum admission wait allowed by the embedded node. Caller-supplied waits are clamped to this value. |
 | `StagedWriteIntentLeaseMs` | `15000` | Lease for transactional staged writes before other transactions may treat them as abandoned and write past them. |
+| `ScriptActorTurns` | `true` | Let eligible auto-commit scripts over one ephemeral key run inside one actor turn. |
+| `FusedEphemeralFinalize` | `true` | Let a transaction whose whole write set is one ephemeral key finalize in one actor turn. |
 | `ScriptCacheExpiration` | `1 minute` | How long parsed scripts stay cached. |
 | `MaxScriptLength` | `65536` | Largest transaction script accepted, in bytes. Oversized scripts are refused before parsing. |
 | `MaxScriptDepth` | `256` | Deepest transaction script syntax tree accepted. This bounds parser and evaluator stack use. |
@@ -213,6 +292,8 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 | `HeartbeatInterval` | `100 ms` | Leader heartbeat interval. |
 | `RecentHeartbeat` | `HeartbeatInterval / 4` | Recent-heartbeat de-duplication window. Leave unset to track the heartbeat cadence safely; set explicitly only when it remains below `HeartbeatInterval`. |
 | `VotingTimeout` | `1500 ms` | Vote wait timeout. |
+| `EnableCheckQuorum` | `true` | Make an isolated leader step down after it stops hearing same-term acknowledgement from a majority of voters. Keep enabled for clustered embedded deployments. |
+| `CheckQuorumIntervalMultiplier` | `0` | Heartbeat intervals without majority acknowledgement before check-quorum steps down a leader. `0` derives the window from `StartElectionTimeout`. |
 | `CheckLeaderInterval` | `250 ms` | Leader check interval. |
 | `TimerInitialDelay` | `2500 ms` | Initial delay before Raft timers start. |
 | `UpdateNodesInterval` | `5000 ms` | Node registry update interval. |
@@ -279,4 +360,5 @@ Some `KahunaConfiguration` options are not currently exposed by either `Kahuna.S
 - Set `BackupDir` to enable backup, catalog, and offline restore methods through `node.Kahuna`. See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/).
 - Load-based splitting requires a multi-node embedded deployment, key-range-routed spaces, and `EnableLeaderBalancer = true`. See [Load-Based Range Splitting](/docs/distributed-keyvalue-store/load-based-range-splitting/).
 - Positive `ReplicationFactor` values are intended for multi-node embedded deployments. `0` keeps the single-node/full-replication default. See [Replication Factor and Replica Placement](/docs/replica-placement/).
+- Use `EmbeddedKahunaCluster.CreateInMemoryAsync` when tests need leader election, failover, restart, or network-partition behavior without Docker or sockets.
 - Always dispose the node with `await using` or `DisposeAsync` so Raft leaves the cluster and file-backed resources are released.

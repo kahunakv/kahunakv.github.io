@@ -20,6 +20,8 @@ The aggregator keeps a queue per partition. Instead of proposing each record imm
 
 The scheduler is shared across compatible persistent log types for the same partition. A batch may contain direct key/value records plus durable transaction-record or prepared-intent entries from concurrent durable transactions. Each queued item keeps its own completion path, so a mixed batch can still resolve each caller or transaction finalizer independently.
 
+Durable transaction records have one live writer: the ordered apply stream driven by Raft. A finalizer that submitted a durable record waits for that ordered apply result instead of applying the record from the proposal completion callback. This keeps the proposing leader's transaction stores in the same log order as followers, including during leadership changes and bundled commits.
+
 Some transaction work intentionally stays outside this scheduler. Ephemeral transaction staging and the ephemeral subset of a mixed transaction still use the legacy in-memory prepare/commit/rollback path. The persistent durable subset enters the scheduler only when finalization writes canonical records, prepared intents, materialization records, or settlement deltas. Current servers materialize committed durable values by reference to prepared intents by default, avoiding a second value copy through Raft.
 
 Kahuna still preserves normal consistency:
@@ -112,6 +114,9 @@ Write-coalescing metrics are published on the `Kahuna` meter:
 | `kahuna.kv.write.queued_items` | Gauge | Admitted writes not yet completed. |
 | `kahuna.kv.write.queued_bytes` | Gauge | Serialized bytes admitted but not yet completed. |
 | `kahuna.kv.write.in_flight_partitions` | Gauge | Partitions with a batch awaiting a Raft result. |
+| `kahuna.durable_tx.ordered_apply_waits_released_on_leadership_loss` | Counter | Durable completions released retryably because this node stopped leading before its ordered apply result arrived. |
+| `kahuna.durable_tx.ordered_apply_wait_timeouts` | Counter | Durable completions that did not observe ordered apply within the proposal timeout. |
+| `kahuna.durable_tx.redundant_applies_skipped` | Counter | Durable completions that reused the ordered apply result instead of applying state a second time. |
 | `kahuna.persistence.unflushed_items` | Gauge | Committed key/value writes still resident because the background writer has not flushed them. |
 | `kahuna.persistence.unflushed_bytes` | Gauge | Approximate value bytes still waiting for background flush. |
 | `kahuna.persistence.writer_inbox_items` | Gauge | Pending messages in the background writer inbox. |

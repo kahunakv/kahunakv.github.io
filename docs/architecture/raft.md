@@ -37,6 +37,18 @@ Leadership transitions occur through a voting mechanism triggered when the curre
 
 In multi-partition clusters, independent elections can leave one node leading more partitions or more high-traffic partitions than its peers. Kahuna's optional [leader balancer](/docs/leader-balancing/) monitors leader count and partition load, then suggests normal Raft leadership handoffs. It changes leadership placement without moving partition data. Replica placement is a separate feature that changes which nodes store and vote for a partition.
 
+## Stale Leader Fencing
+
+A node can briefly believe it is still leader after it has been cut off from the voters that elect a replacement. Kahuna fences that window at multiple layers:
+
+- Replicated writes and durable transaction phases still require a Raft quorum, so a cut-off leader returns a retryable result instead of committing data
+- Authoritative reads confirm leadership through a quorum before serving from the leader
+- Actor-only state changes, including interactive transaction staging and point, prefix, or range locks, also confirm leadership before changing local memory
+- Proposals carry the term observed when they were admitted. If the node lost leadership and regained it in a newer term before appending the proposal, the proposal is rejected as stale and the caller retries
+- When a node loses leadership for a partition, Kahuna drops belief-only state for that partition: staged transactional writes, write intents, and exclusive prefix or range locks
+
+Check-quorum step-down is enabled by default. A leader that stops hearing same-term acknowledgement from a majority steps down, bounding the stale-leader window. See [Server Configuration](/docs/server-configuration/#raft-timing) for `--raft-enable-check-quorum` and `--raft-check-quorum-interval-multiplier`.
+
 ## Transaction Support
 
 Raft plays a crucial role in Kahuna's transaction processing by ensuring changes to individual partitions are durably replicated before confirming transaction commitment. This integration helps the transaction layer maintain atomicity guarantees even when operations span multiple nodes or partitions.

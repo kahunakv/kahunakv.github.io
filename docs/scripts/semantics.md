@@ -94,9 +94,11 @@ begin (locking="optimistic", priority="high", admissionWait=2000, timeout=10000)
 end
 ```
 
-Repeating an option is a script error. `timeout` must be greater than zero.
+Unknown option names, unknown values, and repeated options are script errors. `timeout` must be greater than zero and is clamped by the server's maximum transaction timeout.
 
 `admissionWait` is separate from transaction lifetime. It controls how long a script waits for a transaction admission slot before it starts. `admissionWait=0` means "start only if a slot is free right now"; otherwise Kahuna returns `AdmissionRefused`.
+
+`readValidation=trackAndValidate` tracks latest reads and validates them at commit. Optimistic locking does this automatically. `decisionDurability=durable` uses the durable transaction decision path for all-persistent write sets. `snapshot` cannot be combined with read validation because a historical view cannot validate against later writes.
 
 ## Array Indexing
 

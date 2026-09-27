@@ -49,6 +49,7 @@ const sidebars = {
         'distributed-keyvalue-store/cas',
         'distributed-keyvalue-store/revisions',
         'distributed-keyvalue-store/transactions',
+        'distributed-keyvalue-store/yielding-transactions',
         'distributed-keyvalue-store/transaction-priority-admission',
         'distributed-keyvalue-store/buckets',
         'distributed-keyvalue-store/snapshot-holds'
@@ -74,6 +75,7 @@ const sidebars = {
         'scripts/types',
         'scripts/expressions',
         'scripts/semantics',
+        'scripts/single-key-fast-path',
         'scripts/control-structures',
         'scripts/user-defined-functions',
         'scripts/commands/set',

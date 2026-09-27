@@ -154,7 +154,7 @@ The decision record is the point of no return. Once it commits as `Commit`, Kahu
 
 Validated-base writes get a second lost-update fence after prepare. The leader checks the current committed base before prepare, each replica remembers the committed head it saw while applying the prepare, and the finalizer asks replicas for those verdicts before writing `Commit`. A `StaleBase` verdict aborts the transaction as a conflict. Missing or unreachable verdicts are counted as unattested and do not by themselves block commit; the canonical decision still follows the ordered record path.
 
-The replica fence has a per-endpoint lag breaker. If a replica repeatedly cannot attest within the apply wait, for example during a disk pause, WAL saturation, or snapshot install, Kahuna keeps asking it for instant verdicts but stops waiting for its apply path on every commit. Periodic full-wait probes restore the replica only after consecutive attesting answers, so an intermittently stalled node does not make every finalization pay the full wait. Operators can watch `kahuna.durable_tx.replica_fence_lag_transitions`, `kahuna.durable_tx.replica_fence_lagging_replicas`, `kahuna.durable_tx.replica_fence_lagging_asks`, `kahuna.durable_tx.replica_fence_unattested`, and `kahuna.durable_tx.finalize_replica_fence_ms`.
+The replica fence has a per-endpoint lag breaker. If a replica repeatedly cannot attest within the apply wait, for example during a disk pause, WAL saturation, or snapshot install, Kahuna keeps asking it for instant verdicts but stops waiting for its apply path on every commit. When this node leads the participant partition, the breaker also reads Raft follower progress: a replica whose durable frontier is too far behind, or whose WAL is stalled, is treated as lagging immediately and is not restored until it both attests and its frontier is back within the bound. Operators can watch `kahuna.durable_tx.replica_fence_lag_transitions{state,reason}`, `kahuna.durable_tx.replica_fence_lagging_replicas`, `kahuna.durable_tx.replica_fence_lagging_asks{kind}`, `kahuna.durable_tx.replica_fence_unattested`, and `kahuna.durable_tx.finalize_replica_fence_ms`.
 
 ## Decision Deadlines
 
@@ -179,7 +179,9 @@ Aggregator submissions have an admission class:
 | Ordinary | Direct persistent writes, record init, prepare | Normal partition write admission |
 | Terminal | Decision, materialize, settle, recovery, metadata handoff | Reserved headroom so ordinary-write bursts cannot starve already-prepared transactions |
 
-The anchor partition can submit `[TransactionRecord init, PreparedIntent prepare]` as one ordered bundle. A batch can mix direct key/value records and durable transaction records, but every submission keeps its own apply-on-commit callback and completion path.
+The anchor partition can submit `[TransactionRecord init, PreparedIntent prepare]` as one ordered bundle. A batch can mix direct key/value records and durable transaction records, but every submission keeps its own completion path.
+
+Durable transaction stores are written only by the ordered Raft apply stream. Proposal completion waits for the ordered apply result for its log index, then resolves the finalizer. If this node loses leadership before that local apply result arrives, or the wait exceeds the proposal timeout, the completion is released as unobserved and the coordinator retries through the current leader. The relevant counters are `kahuna.durable_tx.ordered_apply_waits_released_on_leadership_loss`, `kahuna.durable_tx.ordered_apply_wait_timeouts`, and `kahuna.durable_tx.redundant_applies_skipped`.
 
 ## One-Phase Durable Fast Path
 

@@ -179,6 +179,7 @@ By default, durable commits can return success once the canonical decision recor
 - Consider **pessimistic locking** for highly contended keys to avoid retries.
 - Use **durable decisions** only when all modified keys are persistent and recovering durable finalization matters.
 - Use **transaction priority** to keep latency-critical transactions from waiting behind bulk work when admission ceilings are enabled.
+- Use **yielding transactions** for background maintenance that should lose to foreground writers instead of making them fail.
 - Retry `MustRetry` with the same transaction/session handle and do not add new operations after finalization starts.
 - Monitor retries to detect **hotspots** in your workload.
 
@@ -328,6 +329,36 @@ begin (autoCommit=false)
 end
 ```
 
+### Read Validation
+
+`readValidation="trackAndValidate"` records latest reads and validates them when the transaction commits. If another transaction changes a key that was read, the transaction aborts instead of committing against a stale read set.
+
+Optimistic locking validates reads automatically. This option adds the same read-set validation to pessimistic script transactions.
+
+```kahuna
+begin (locking="pessimistic", readValidation="trackAndValidate")
+  let current = get `inventory/item-42`
+  set `inventory/item-42` current - 1
+  commit
+end
+```
+
+Do not combine read validation with `snapshot`. A historical snapshot is intentionally pinned to the past, so it cannot validate against writes that happen later.
+
+### Decision Durability
+
+`decisionDurability="durable"` asks Kahuna to finalize an all-persistent write set through the durable transaction decision path. Kahuna records a canonical transaction decision and prepared intents so recovery can finish materialization and settlement if the live coordinator disappears after durable finalization starts.
+
+```kahuna
+begin (decisionDurability="durable")
+  set `accounts/alice` "90"
+  set `accounts/bob` "110"
+  commit
+end
+```
+
+A durable script transaction cannot commit ephemeral modifications. An `eset`, `edelete`, or `eextend` inside a durable transaction aborts the transaction.
+
 ### Client Interactive Session Options
 
 The .NET client exposes these options on `KahunaTransactionOptions`. The TypeScript client exposes the same options using camel-case names on `TransactionOptions`.
@@ -343,6 +374,7 @@ The .NET client exposes these options on `KahunaTransactionOptions`. The TypeScr
 | `DecisionDurability` | `decisionDurability` | `BestEffort` / `"bestEffort"` | Use durable mode when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
 | `Priority` | `priority` | `Normal` / `"normal"` | Admission priority used when `MaxConcurrentSessions` is enabled on the receiving node. |
 | `AdmissionWaitMs` | `admissionWaitMs` | server default when `0` | Maximum time to wait for an admission slot before the transaction starts. The server clamps it to `MaxAdmissionWaitMs`. |
+| `ConflictPolicy` | not yet exposed | `Normal` | Set to `Yield` in the .NET client when retryable maintenance work should yield point-key intents to foreground writers. See [Yielding Transactions](/docs/distributed-keyvalue-store/yielding-transactions/). |
 
 ## Interactive Transactions
 

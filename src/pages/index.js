@@ -43,10 +43,10 @@ const advantageCards = [
   },
   {
     icon: 'cpu',
-    title: 'Faster reads, safe failover',
+    title: 'Fast enough for hot paths',
     description:
-      'Over 116k read requests per second on a local three-node cluster with in-memory storage, plus built-in replication and failover.',
-    link: '/docs/client-routing#measured-effect',
+      'Single-node can reach 290k req/s for ephemeral workloads',
+    link: '/docs/benchmarking#recent-local-results',
     linkLabel: 'See benchmark details →',
   },
   {

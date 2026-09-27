@@ -156,6 +156,8 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--script-cache-expiration` | Script parser cache expiration in seconds. | `600` |
 | `--max-script-length` | Largest transaction script accepted, in bytes. Oversized scripts are refused before parsing. | `65536` |
 | `--max-script-depth` | Deepest transaction script syntax tree accepted. This bounds parser and evaluator stack use for deeply nested expressions or very long statement lists. | `256` |
+| `--disable-script-actor-turns` | Run every script on the general transaction path. By default, eligible auto-commit scripts over one ephemeral key run inside one actor turn. | disabled |
+| `--disable-fused-ephemeral-finalize` | Finalize every ephemeral transaction with separate prepare, range-lock probe, and commit messages. By default, a transaction whose whole write set is one ephemeral key can finalize in one actor turn. | disabled |
 | `--extension-assembly` | Path to an assembly publishing user-defined script functions through `IKahunaFunctionProvider`. Repeatable. Every cluster node that may coordinate scripts should load the same function set. | none |
 | `--function-slow-warn-ms` | Log a warning when a user-defined script function takes longer than this many milliseconds. `0` disables the warning. | `50` |
 | `--revisions-to-cache` | Number of key revisions intended to stay cached in memory. This flag is defined by the server CLI, but the current server startup path does not pass it into `KahunaConfiguration`. | `4` |
@@ -274,6 +276,7 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 | `--raft-snapshot-max-pending-bytes` | Maximum buffered bytes across in-progress snapshot-receive sessions. | `536870912` |
 | `--raft-allow-legacy-snapshot-senders` | Accept snapshot chunks from older senders that omit session metadata. Use only for temporary mixed-version upgrades. | disabled |
 | `--raft-snapshot-transfer-step-timeout` | Maximum time, in milliseconds, allowed for one outbound snapshot-transfer step to stall before failing that transfer. A step that makes progress resets the clock. | `120000` |
+| `--raft-snapshot-chunk-ack-timeout` | Maximum time, in milliseconds, allowed for one snapshot chunk acknowledgement. A stuck receiver install path fails the transfer after this bound instead of holding it open for the full step timeout. The effective bound is the smaller of this option and `--raft-snapshot-transfer-step-timeout`. | `15000` |
 | `--raft-grpc-enable-append-logs-coalescing` | Coalesce multiple AppendLogs calls into one gRPC frame per write cycle for write-heavy multi-partition workloads. | disabled |
 | `--raft-grpc-append-logs-max-coalesce-batch` | Maximum AppendLogs items drained into one coalesced gRPC frame when coalescing is enabled. | `256` |
 | `--raft-transport-security` | Structured transport security JSON accepted by the CLI. The current server startup path does not parse or apply this field yet. | empty |
@@ -285,7 +288,8 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 | `--raft-snapshot-rescue-max-consecutive-cycles` | Consecutive snapshot-rescue cycles that can still leave a follower below the compaction floor before the convergence breaker pauses that peer. Values less than or equal to `0` disable the breaker. | `3` |
 | `--raft-snapshot-rescue-probe-interval` | Probe interval, in milliseconds, while the snapshot-rescue breaker is open. A probe lets a recovered follower be reseeded eventually. Values less than or equal to `0` disable probing. | `300000` |
 | `--raft-snapshot-export-retry-cache-max-bytes` | Maximum bytes cached for one produced snapshot export on the leader so retries can resend the same export instead of rebuilding it. Values less than or equal to `0` disable the cache. | `67108864` |
-| `--raft-compaction-live-replica-lag-budget` | Entry-count lag budget that protects a live follower after snapshot rescue so normal compaction does not immediately put it below the floor again. Values less than or equal to `0` disable the hold. | `100000` |
+| `--raft-compaction-live-replica-lag-budget` | Entry-count lag budget that protects a live follower after snapshot rescue so normal compaction does not immediately put it below the floor again. Values less than or equal to `0` disable the hold. | `1000000` |
+| `--raft-compaction-silent-peer-retention-window` | Milliseconds a leader keeps holding WAL compaction for a peer that stopped answering. After the window, the silent peer no longer holds compaction and a restart is seeded by snapshot. `0` disables the hold. | `120000` |
 | `--raft-compaction-durability-clamp-report-interval` | Interval in milliseconds for repeated warnings when Raft compaction is held by the application-durability floor. Values less than or equal to `0` keep only start and end logs. | `60000` |
 
 ## Raft Timing
@@ -298,8 +302,10 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 | `--raft-leadership-barrier-timeout` | Milliseconds a newly elected leader waits for its promotion barrier entry to commit before stepping down. Raising it tolerates a slower quorum at the cost of failover latency. | `10000` |
 | `--raft-leadership-confirmation-timeout` | Maximum milliseconds a read-index leadership confirmation may wait for quorum acknowledgement and applied-frontier catch-up. | `2000` |
 | `--raft-proposal-timeout` | Maximum milliseconds a write caller waits for a Raft proposal to reach quorum before the call returns `ProposalTimeout`. | `10000` |
-| `--raft-enable-check-quorum` | Make a leader step down when it has not heard same-term acknowledgement from a majority for the check-quorum window. | disabled |
-| `--raft-check-quorum-interval-multiplier` | Heartbeat intervals without majority acknowledgement before check-quorum steps down a leader. | `8` |
+| `--raft-wal-stall-step-down-timeout` | Maximum milliseconds a leader's own WAL write may stay unanswered before it steps down in the same term. Values less than or equal to `0` disable the watchdog and candidacy gate. | `3000` |
+| `--raft-wal-stall-warn-threshold` | Age in milliseconds after which a pending local WAL write is logged as a stall. Peers also use this signal to avoid entry-carrying backfill and snapshot transfers to a stalled node. Values less than or equal to `0` disable local log lines only. | `500` |
+| `--raft-enable-check-quorum` | Keep the Raft check-quorum step-down enabled. A leader that has not heard same-term acknowledgement from a majority for the check-quorum window steps down instead of serving from stale leadership. The server switch is on by default; set `KAHUNA_CHECK_QUORUM=0` to disable it. | enabled |
+| `--raft-check-quorum-interval-multiplier` | Heartbeat intervals without majority acknowledgement before check-quorum steps down a leader. `0` derives the window from the start election timeout. Explicit values must be at least `2` and keep `heartbeat interval * multiplier` at or below the start election timeout. | `0` |
 | `--raft-self-repair-peer-down-grace` | How long promotion-gate self-repair waits while a voter peer is not alive before gap-skipping committed drain or orphaned-tail truncation proceeds, in milliseconds. `0` disables the grace. | `30000` |
 | `--raft-check-leader-interval` | Leader check interval in milliseconds. | `250` |
 | `--raft-timer-initial-delay` | Initial delay before Raft timers start, in milliseconds. | `2500` |

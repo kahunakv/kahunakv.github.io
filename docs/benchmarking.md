@@ -73,39 +73,42 @@ A run has three phases:
 
 Seeding is capped at 100,000 keys and uses at most 64 concurrent writers.
 
-## Three-Node Cluster Example
+## Persistent Cluster Example
 
 Start a cluster with the Docker image or the `Kahuna.Server` .NET global tool on each node.
 
-Pass every cluster endpoint in one comma-separated connection source:
+Pass one reachable node or every cluster endpoint in one comma-separated connection source. This sample uses a local cleartext gRPC endpoint:
 
 ```bash
 kahuna-bench \
   -c "https://127.0.0.1:8082,https://127.0.0.1:8084,https://127.0.0.1:8086" \
-  --insecure \
-  --duration 30
+  --insecure
+  --duration 120 \
+  --workload mixed \
+  --durability persistent \
+  --concurrency 256
 ```
 
-Example output from a three-node cluster using the default mixed workload and persistent durability:
+Example output using the mixed workload and persistent durability:
 
 ```text
-Kahuna Benchmark — mixed, 30s + 5s warmup, concurrency=64, target=unbounded
-  endpoints : https://127.0.0.1:8082, https://127.0.0.1:8084, https://127.0.0.1:8086
-  tls       : disabled (--insecure)
-  routing   : Learned (auto)
+Kahuna Benchmark — mixed, 120s + 5s warmup, concurrency=256, target=unbounded
+  endpoints : https://127.0.0.1:8082,https://127.0.0.1:8084,https://127.0.0.1:8086
+  tls       : disabled (localhost)
+  routing   : RoundRobin (auto)
   key-space : 10000   value-size : 128B   durability : persistent
 Seeding key-space…
   Seeding 10,000 keys (parallelism=64)…
 Warming up for 5s…
-Running measurement for 30s…
+Running measurement for 120s…
 
-Operation     Count   req/s      p50      p90      p95      p99    p99.9       max     mean   errors   misses
-get         118,219   3,940    1.5ms    2.6ms    2.7ms    2.9ms    4.5ms   134.4ms    1.7ms        0        0
-set         118,152   3,938   14.0ms   20.4ms   23.0ms   26.7ms   74.2ms   146.9ms   14.6ms        0        0
-TOTAL       236,371   7,879    6.2ms   17.8ms   20.4ms   24.8ms   34.0ms   146.9ms    8.1ms        0        0
+Operation       Count    req/s      p50      p90      p95      p99     p99.9    max     mean   errors   misses
+get         1,796,853   14,973    218µs    425µs    537µs    1.4ms     6.0ms   3.2s    373µs        0        0
+set         1,797,018   14,975   12.9ms   21.2ms   28.2ms   63.2ms   345.9ms   3.3s   16.7ms        0        0
+TOTAL       3,593,871   29,948    7.1ms   17.7ms   21.2ms   46.6ms   151.9ms   3.3s    8.5ms        0        0
 ```
 
-This persistent run completed 236,371 successful operations at 7,879 requests per second without errors or misses. Reads reached a 2.9 ms p99, while persistent writes reached a 26.7 ms p99 because they include the replicated consensus path before success is returned.
+This persistent run completed 3,593,871 successful operations at 29,948 requests per second without errors or misses. Reads reached a 1.4 ms p99, while persistent writes reached a 63.2 ms p99 because they include the replicated consensus path before success is returned.
 
 Use a longer measurement, such as `--warmup 10 --duration 60`, when establishing a performance baseline or comparing deployments.
 
@@ -121,6 +124,7 @@ Use a longer measurement, such as `--warmup 10 --duration 60`, when establishing
 | `delete-many` | Delete `--batch-size` generated keys per operation |
 | `txn` | Open an interactive transaction, write `--keys-per-txn` keys, and commit |
 | `bank` | Run contended transactional transfers between seeded account keys |
+| `rate-limit` | Run an ephemeral script counter that admits or refuses requests by subject and window |
 | `lock` | Acquire and release one lock per operation |
 | `sequence` | Allocate the next value from the shared `bench:seq:0` sequence |
 | `script` | Execute the transaction script supplied with `--script` |
@@ -146,6 +150,11 @@ kahuna-bench -c https://kahuna-1:8082 \
 kahuna-bench -c https://kahuna-1:8082 \
   --workload bank --txn-locking optimistic --duration 60
 
+# Ephemeral fixed-window rate limiter over 10,000 subjects
+kahuna-bench -c https://kahuna-1:8082 \
+  --workload rate-limit --durability ephemeral \
+  --rate-limit-budget 100 --rate-limit-window 1000 --duration 60
+
 # Ephemeral writes with 1 KiB values
 kahuna-bench -c https://kahuna-1:8082 \
   --workload set --durability ephemeral --value-size 1024
@@ -156,7 +165,7 @@ kahuna-bench -c https://kahuna-1:8082 \
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-c`, `--connection-source` | required | Comma-separated Kahuna endpoints |
-| `--workload` | `mixed` | `set`, `get`, `mixed`, `delete`, `set-many`, `delete-many`, `txn`, `bank`, `lock`, `sequence`, or `script` |
+| `--workload` | `mixed` | `set`, `get`, `mixed`, `delete`, `set-many`, `delete-many`, `txn`, `bank`, `rate-limit`, `lock`, `sequence`, or `script` |
 | `--duration` | `30` | Measured duration in seconds, excluding warmup |
 | `--warmup` | `5` | Warmup duration in seconds whose samples are discarded |
 | `--concurrency` | `64` | Closed-loop workers or open-loop consumers |
@@ -168,6 +177,10 @@ kahuna-bench -c https://kahuna-1:8082 \
 | `--batch-size` | `100` | Keys mutated per `set-many` or `delete-many` request |
 | `--keys-per-txn` | `4` | Keys written inside each `txn` workload transaction |
 | `--txn-locking` | `pessimistic` | Transaction locking mode for `txn`: `pessimistic` or `optimistic` |
+| `--rate-limit-mode` | `fixed` | Rate-limit workload mode: `fixed` or `sliding` |
+| `--rate-limit-budget` | `100` | Requests one subject may make per window before the script refuses it |
+| `--rate-limit-window` | `1000` | Rate-limit window length in milliseconds |
+| `--rate-limit-grace` | `100` | Extra milliseconds added to fixed-window counter expiry |
 | `--durability` | `persistent` | `persistent` or `ephemeral` for key/value and lock workloads |
 | `--script` | none | Path to the `.4gl` file required by the `script` workload |
 | `--timeout` | `10` | Per-request timeout in seconds |
@@ -175,6 +188,7 @@ kahuna-bench -c https://kahuna-1:8082 \
 | `--output` | stdout | Output file for JSON or CSV |
 | `--insecure` | `false` | Skip TLS certificate validation |
 | `--grpc-channels` | `2` | HTTP/2 connections opened per endpoint. Raise this when one client process needs more parallel streams per node |
+| `--no-request-frames` | `false` | Disable gRPC request frames so each key/value request is sent as its own stream message. Use for A/B measurements; frames are enabled by default |
 | `--batch-coalescing-threshold` | `10` | Batch size below which the client may wait briefly to gather more work before dispatch. Set to `1` to disable coalescing. |
 | `--batch-coalescing-delay` | `2` | Maximum client batch coalescing wait in milliseconds. `0` disables the wait. |
 | `--seed` | time-based | Random seed; use a nonzero value for repeatability |
@@ -184,6 +198,46 @@ kahuna-bench -c https://kahuna-1:8082 \
 | `--routing-counters` | `false` | Print totals from the `Kahuna.Client.Routing` meter after the run |
 
 Localhost endpoints automatically disable certificate validation. Use `--insecure` explicitly for other development endpoints with self-signed certificates.
+
+## Request Frames
+
+The .NET client used by `kahuna-bench` enables gRPC request frames by default. When several key/value requests are already waiting on the same stream, the client can send them together in one gRPC message and the server can answer them together. This reduces transport overhead without waiting to fill a frame.
+
+Use `--no-request-frames` only when comparing transport behavior:
+
+```bash
+kahuna-bench -c http://127.0.0.1:8083 \
+  --workload rate-limit \
+  --durability ephemeral \
+  --rate-limit-budget 1000000 \
+  --duration 10
+
+kahuna-bench -c http://127.0.0.1:8083 \
+  --workload rate-limit \
+  --durability ephemeral \
+  --rate-limit-budget 1000000 \
+  --duration 10 \
+  --no-request-frames
+```
+
+Frames cover key/value requests, scripts, scans, and interactive transaction calls. Lock and sequence workloads still send one request per message.
+
+## Recent Local Results
+
+Recent local memory benchmarks are useful when evaluating Kahuna for cache-like ephemeral workflows as well as coordination workloads.
+
+Setup: one 8-core Apple Silicon machine, Kahuna server and benchmark client on the same host, cleartext gRPC, memory storage, memory WAL, one partition, concurrency 64, key space 10,000, 128-byte values. The Valkey reference is Valkey 9.1.2 with `valkey-benchmark -c 64`, no pipelining, on the same machine. These numbers are a same-machine comparison, not a universal throughput guarantee.
+
+| Workload | Kahuna result | Same-machine reference |
+|----------|---------------|------------------------|
+| Ephemeral fixed-window rate limiter | 194k-203k req/s, p50 284-289 us, p99 0.6-0.8 ms | Valkey Lua counter: 161k req/s as `EVAL`, 175k req/s as `EVALSHA` |
+| In-memory point `get` | 290.6k req/s | Valkey plain `GET`: 247k req/s |
+| In-memory mixed `get`/`set` | 233.5k req/s | Compare with your own workload |
+| Script `RETURN 1` | 416k-438k req/s | Measures transport and script dispatch overhead |
+
+The rate-limit result uses the default gRPC request frames plus the single-key script fast path. That matters because it is not a raw key/value microbenchmark: each request runs a server-side script, checks a limit, updates an ephemeral counter, and returns an allow/deny result atomically.
+
+Persistent replicated writes are a different class of benchmark because they include Raft quorum replication and WAL durability. Use the persistent examples above when sizing durable state, and use these local memory results when comparing short-lived counters, temporary coordination state, or server-side script overhead.
 
 ## Routing Measurements
 
@@ -242,29 +296,29 @@ If achieved throughput remains below the target while p99 grows rapidly, the ins
 The console report contains one row per operation and one aggregate row:
 
 ```bash
-kahuna-bench -c "https://127.0.0.1:8082" --insecure --duration 240 --durability ephemeral --concurrency 256
+kahuna-bench -c "http://127.0.0.1:8083" --duration 120 --workload mixed --durability ephemeral --concurrency 256
 ```
 
 ```text
-Kahuna Benchmark — mixed, 240s + 5s warmup, concurrency=256, target=unbounded
-  endpoints : https://127.0.0.1:8082
-  tls       : disabled (--insecure)
+Kahuna Benchmark — mixed, 120s + 5s warmup, concurrency=256, target=unbounded
+  endpoints : http://127.0.0.1:8083
+  tls       : disabled (localhost)
   routing   : RoundRobin (auto)
   key-space : 10000   value-size : 128B   durability : ephemeral
 Seeding key-space…
   Seeding 10,000 keys (parallelism=64)…
 Warming up for 5s…
-Running measurement for 240s…
+Running measurement for 120s…
 
-Operation        Count    req/s     p50     p90     p95     p99   p99.9      max    mean   errors   misses
-get          6,767,821   28,199   4.6ms   5.3ms   5.4ms   5.8ms   7.7ms   98.2ms   4.5ms        0        0
-set          6,771,788   28,216   4.6ms   5.3ms   5.3ms   5.7ms   7.6ms   98.2ms   4.5ms        0        0
-TOTAL       13,539,609   56,415   4.6ms   5.3ms   5.4ms   5.8ms   7.6ms   98.2ms   4.5ms        0        0
+Operation        Count     req/s     p50     p90     p95     p99   p99.9       max    mean   errors   misses
+get         27,601,937   230,015   454µs   933µs   1.1ms   1.7ms   3.8ms   149.1ms   552µs        0        0
+set         27,602,889   230,023   455µs   935µs   1.1ms   1.7ms   3.8ms   149.1ms   553µs        0        0
+TOTAL       55,204,826   460,038   455µs   934µs   1.1ms   1.7ms   3.8ms   149.1ms   553µs        0        0
 ```
 
-This run completed 13,539,609 successful operations at 56,415 requests per second. The default mixed workload produced an approximately even split between reads and writes. Its p99 was 5.8 ms and p99.9 was 7.6 ms, with no errors or misses.
+This run completed 55,204,826 successful operations at 460,038 requests per second. The default mixed workload produced an approximately even split between reads and writes. Its p99 was 1.7 ms and p99.9 was 3.8 ms, with no errors or misses.
 
-The 98.2 ms maximum shows why a single worst request should not be treated as representative latency. Use p99 or p99.9 for a stable tail-latency objective, while still investigating repeated or unusually large maximums.
+The 149.1 ms maximum shows why a single worst request should not be treated as representative latency. Use p99 or p99.9 for a stable tail-latency objective, while still investigating repeated or unusually large maximums.
 
 | Field | Meaning |
 |-------|---------|

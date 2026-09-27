@@ -59,6 +59,7 @@ These features share the same replication, persistence, routing, and client mode
 | Native .NET and TypeScript clients | Async APIs, cancellation, transactions, and multiple endpoints fit normal .NET and Node.js services. |
 | REST, gRPC, CLI, and scripts | Applications and operators can choose the appropriate interface. |
 | Hash and key-range routing | Support both general coordination keys and ordered, scan-heavy key spaces. |
+| Cache-class speed for temporary state | Local memory benchmarks reached 194k-203k requests per second for an atomic ephemeral rate-limit script, competitive with a same-machine Valkey Lua counter. |
 | Jepsen-tested correctness | Public Jepsen workloads exercise key/value registers, locks, interactive transactions, sequences, and membership churn under faults. |
 | MIT license | Use, modify, and redistribute Kahuna without proprietary runtime fees. |
 

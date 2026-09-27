@@ -262,6 +262,7 @@ var client = new KahunaClient(
     {
         GrpcChannelPoolSize = 4,
         DefaultOperationTimeout = TimeSpan.FromSeconds(10),
+        GrpcRequestFrames = true,
         BatchCoalescingThreshold = 10,
         BatchCoalescingDelayMs = 2,
         Routing = KahunaRoutingMode.Metadata,
@@ -275,6 +276,8 @@ var client = new KahunaClient(
 ```
 
 `GrpcChannelPoolSize` controls how many HTTP/2 channels the client opens per endpoint. The default is `2`. Raise it when one client process is driving high concurrency and a single endpoint needs more parallel streams. Each extra channel is an additional connection, so keep it small unless measurement shows the client is the bottleneck.
+
+`GrpcRequestFrames` is enabled by default. Under load, the client can send several already-waiting key/value requests in one gRPC stream message to nodes that announce support for request frames. A single quiet request still travels alone, so the option does not add a coalescing delay. Leave it enabled unless you are doing an A/B benchmark or diagnosing transport behavior during a rolling upgrade.
 
 Routing options control how the client chooses the first node for an operation. `Learned` reuses route hints from previous responses. `Metadata` also reads the cluster routing map so new resources can go directly to their owner. `RoutingEndpointMap` is needed when servers advertise internal addresses but the application dials mapped or public addresses.
 
@@ -296,6 +299,7 @@ Key `KahunaOptions` fields:
 | `MaxConnections` | `1` | Upper bound for connection-related client setup. |
 | `DefaultOperationTimeout` | `30 seconds` | Timeout used when a call has no cancellation token deadline. |
 | `GrpcChannelPoolSize` | `2` | gRPC channels opened per configured endpoint. |
+| `GrpcRequestFrames` | `true` | Pack already-waiting key/value requests into one gRPC stream message when the server supports it. |
 | `BatchCoalescingThreshold` | `10` | Minimum batch size before immediate dispatch; smaller batches may wait briefly. |
 | `BatchCoalescingDelayMs` | `2` | Maximum batch coalescing wait in milliseconds. |
 | `AllowInsecureCertificateValidation` | `false` | Skip TLS server certificate validation for local or test environments. |
@@ -998,6 +1002,7 @@ await client.RetryableTransaction(txOptions, async (session, cancellationToken) 
 | `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction reads. It is a snapshot view, not read-your-own-writes, and cannot be combined with `TrackAndValidate`. |
 | `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
 | `Priority` | `Normal` | Admission priority used when the server has enabled `MaxConcurrentSessions`. It affects when the session starts, not how it commits. |
+| `ConflictPolicy` | `Normal` | Set to `Yield` for retryable maintenance work that should let foreground writers take over point-key intents instead of failing. |
 
 Example with durable commit decisions:
 
@@ -1045,6 +1050,21 @@ Durable decision mode is different from persistent key durability:
 Durable decision mode rejects transactions that confirmed ephemeral modifications, because ephemeral values, prepared intents, and receipts cannot survive process loss. The active interactive session is still memory-resident; if it disappears before a canonical record is installed, retry the business operation from a new transaction.
 
 When a durable commit returns `true`, Kahuna has durably recorded the transaction decision. By default, value materialization and prepared-intent settlement may continue in the background. Kahuna's read and write paths resolve committed-but-unsettled intents through the canonical record, and recovery finishes settlement if a background run is lost. Recent servers materialize committed durable values by reference to prepared intents, so this behavior requires no client-side value replay. If commit returns `false` or throws `MustRetry`, retry the same commit operation and treat it as uncertainty rather than a conflict.
+
+#### Yielding Maintenance Transactions
+
+Use `ConflictPolicy = TransactionConflictPolicy.Yield` for background maintenance that should not block or fail foreground work:
+
+```csharp
+KahunaTransactionOptions options = new()
+{
+    Locking = KeyValueTransactionLocking.Pessimistic,
+    ConflictPolicy = TransactionConflictPolicy.Yield,
+    Timeout = 10_000
+};
+```
+
+A normal writer can take over a point-key intent owned by this transaction. The yielding transaction then aborts on a later touch of that key or at commit, and it never commits a key it lost. Prefix locks and range locks are refused for yielding sessions. See [Yielding Transactions](/docs/distributed-keyvalue-store/yielding-transactions/).
 
 #### Snapshot Reads in a Transaction Session
 

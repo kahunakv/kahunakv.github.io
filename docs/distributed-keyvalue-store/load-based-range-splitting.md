@@ -63,6 +63,8 @@ The sustained window filters short bursts and delayed gossip reports. Keep the w
 
 After splitting, both children enter `RangeSplitSettleWindow`. This gives leadership time to stabilize and the balancer time to relocate a child before either range is evaluated again.
 
+Before copying keys out of the source partition, Kahuna compares the source leader's apply fingerprint with the other replicas. If a replica has more committed transactional heads than the source leader at the same applied log id, the source leader may be missing acknowledged state. The split is refused with the retryable outcome `SourceStateIncomplete`, and `kahuna.range.split.incomplete_source_refusals` increases. The split can be retried on a later cadence after leadership or replica state converges.
+
 ## Configuration
 
 Kahuna Server exposes the primary range split and merge knobs as command-line flags. The same settings are available on `EmbeddedKahunaOptions` using the corresponding property names.
@@ -102,6 +104,7 @@ The `Kahuna` meter publishes these counters with a `keyspace` tag:
 | `kahuna.range.splits` | Successfully committed count- or load-based splits |
 | `kahuna.range.split.no_relief_skips` | Load splits skipped because no peer can host the new leadership |
 | `kahuna.range.split.indivisible_refusals` | Splits refused because writes cannot be divided usefully |
+| `kahuna.range.split.incomplete_source_refusals` | Splits refused because the source leader looked incomplete compared with another replica |
 | `kahuna.range.split.settle_skips` | Checks skipped while a range is inside its settle window |
 | `kahuna.range.merge.warm_skips` | Merges refused because at least one range remains warm |
 
