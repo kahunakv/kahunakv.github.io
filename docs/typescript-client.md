@@ -294,7 +294,7 @@ await client.splitRange("orders", "orders/50000");
 await client.mergeRanges();
 ```
 
-Range registration is node-local for the routing half, so apply it to every node that should serve that key space.
+Range registration seeds the descriptor through the system-partition leader and waits for local visibility. Other nodes reconcile their routing registries from committed range-map apply, restore, and snapshot installation. `Indeterminate` can follow a committed proposal; verify or retry rather than assuming rollback. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/#how-a-key-space-becomes-range-routed).
 
 ## Errors and Cancellation
 

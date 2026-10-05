@@ -11,7 +11,7 @@ A script can run inside one actor turn when it:
 - Uses ephemeral key/value commands: `EGET`, `ESET`, `EEXISTS`, `EDELETE`, or `EEXTEND`
 - Touches exactly one key after parameter resolution
 - Runs as an auto-commit script, without explicit `BEGIN` options
-- Uses statements such as `LET`, `IF`, `RETURN`, and `THROW`
+- Uses statements such as `LET`, `IF`, `SWITCH`, `RETURN`, and `THROW`
 - Runs on the node that currently leads that key's partition
 
 Example:
@@ -19,7 +19,7 @@ Example:
 ```kahuna
 let current = eget @counter_key
 
-if not current then
+if not found then
   eset @counter_key 1 ex @expires_ms
   return 1
 end

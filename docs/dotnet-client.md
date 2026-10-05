@@ -378,7 +378,7 @@ For point reads:
 using Kahuna.Client;
 using Kahuna.Shared.KeyValue;
 
-var client = new KahunaClient("https://node1:2071");
+var client = new KahunaClient("https://node1:8082");
 
 KahunaKeyValue latest = await client.GetKeyValue(
     "users/000100",
@@ -442,7 +442,7 @@ For cache-style keys that only need the latest value, the client can set a key w
 using Kahuna.Client;
 using Kahuna.Shared.KeyValue;
 
-var client = new KahunaClient("https://node1:2071");
+var client = new KahunaClient("https://node1:8082");
 
 KahunaKeyValue result = await client.SetKeyValueNoRevision(
     "cache/user/1001",
@@ -488,9 +488,9 @@ using Kahuna.Client;
 using Kahuna.Shared.KeyValue;
 
 var client = new KahunaClient([
-    "https://node1:2071",
-    "https://node2:2071",
-    "https://node3:2071"
+    "https://node1:8082",
+    "https://node2:8082",
+    "https://node3:8082"
 ]);
 
 List<KahunaKeyValue> page = await client.GetByRange(
@@ -515,9 +515,9 @@ using Kahuna.Client;
 using Kahuna.Shared.KeyValue;
 
 var client = new KahunaClient([
-    "https://node1:2071",
-    "https://node2:2071",
-    "https://node3:2071"
+    "https://node1:8082",
+    "https://node2:8082",
+    "https://node3:8082"
 ]);
 
 await using KahunaTransactionSession session = await client.StartTransactionSession(
@@ -985,7 +985,7 @@ await client.RetryableTransaction(txOptions, async (session, cancellationToken) 
 });
 ```
 
-`RetryableTransaction(...)` starts a fresh transaction for each attempt. It retries conflict-style outcomes such as `Aborted`, `MustRetry`, and `AlreadyLocked`, then gives up with a `KahunaException` if the retry budget is exhausted.
+`RetryableTransaction(...)` starts a fresh transaction for each attempt and retries `Aborted`, `MustRetry`, and `AlreadyLocked`. Because `MustRetry` can represent an unknown commit outcome, use it only for business operations safe to repeat. Retry an unresolved durable finalize with the same session identity.
 
 #### Transaction Options
 
@@ -1000,7 +1000,7 @@ await client.RetryableTransaction(txOptions, async (session, cancellationToken) 
 | `AutoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit `Commit`. Disposal of a pending session rolls back. |
 | `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. Optimistic locking validates its read set at commit even when this value is `None`. |
 | `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction reads. It is a snapshot view, not read-your-own-writes, and cannot be combined with `TrackAndValidate`. |
-| `DecisionDurability` | `BestEffort` | Use `Durable` when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
+| `DecisionDurability` | `BestEffort` | Persistent modifications use a canonical record and durable prepared intents under either policy. Explicit `Durable` rejects ephemeral modified keys. |
 | `Priority` | `Normal` | Admission priority used when the server has enabled `MaxConcurrentSessions`. It affects when the session starts, not how it commits. |
 | `ConflictPolicy` | `Normal` | Set to `Yield` for retryable maintenance work that should let foreground writers take over point-key intents instead of failing. |
 
@@ -1045,7 +1045,7 @@ if (!committed)
 Durable decision mode is different from persistent key durability:
 
 - `KeyValueDurability.Persistent` controls whether a value is replicated and stored persistently.
-- `DecisionDurability.Durable` controls whether finalization records and prepared persistent intents can be recovered after durable finalization starts.
+- `DecisionDurability.Durable` rejects ephemeral modified keys. Persistent modifications use durable-intent finalization even under the default BestEffort policy.
 
 Durable decision mode rejects transactions that confirmed ephemeral modifications, because ephemeral values, prepared intents, and receipts cannot survive process loss. The active interactive session is still memory-resident; if it disappears before a canonical record is installed, retry the business operation from a new transaction.
 
@@ -1200,3 +1200,7 @@ Backup responses expose `RequestedKind`, `ActualKind`, and `SubstitutionReason` 
 Backup listing entries also expose `ClusterId` and `CoordinatorNode` when the server wrote current-format manifests. In production, use these fields to confirm that all nodes are pointed at the same shared backup catalog and that coordinated backups are not scattered across node-local directories.
 
 See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for server setup, node bootstrap, and restore constraints.
+
+## Transaction Visibility and Failover
+
+A first latest transactional `Get` or `Exists` pins a committed observation per key, including a committed unsettled intent. Later point operations can abort when a competing update makes that observation stale. These pins are distinct from an explicit read-only `ReadTimestamp`. A session stays on its original coordinator node across partition leadership changes, but actor-local staging and locks can be lost; staging-continuity validation and lock-grant term proofs can return terminal `Aborted` (`Lost staging: …` or `Lost lock: …`). Renewing a lost lock does not repair earlier reads; same-term lease expiry and grants from older nodes without term reporting are outside the lock proof. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/).

@@ -11,13 +11,13 @@ Raft implements a leader-based consensus protocol within each partition group. W
 
 The leader election process automatically selects a coordinator for each Raft group. This leader becomes the sole node authorized to handle client write operations and assumes responsibility for propagating log entries (representing data changes) to follower nodes. This centralized decision-making approach streamlines coordination and maintains operation ordering.
 
-Log replication follows a structured process where the leader appends new operations to its local log before transmitting these entries to followers. Once a majority of nodes within the group have acknowledged receipt and storage of the entry, the leader marks it as committed. This majority-based commitment strategy ensures that data changes persist even when some nodes experience failures.
+By default, the leader queues its local WAL write and sends proposals to followers concurrently (`--raft-fan-out-before-local-write`). Quorum completion still requires the leader's local write to be durable. A local failure after fan-out can leave followers holding the proposal, so a retryable result does not prove rejection. Process-loss durability also requires persistent WAL storage and durable write settings.
 
 ## Fault Tolerance and Recovery Systems
 
 Raft's resilience to node failures comes from its replicated log architecture. If a leader node becomes unavailable, the remaining nodes in the group initiate a new election process based on their current log state. This automated failover mechanism minimizes system downtime while preserving fault tolerance capabilities.
 
-Data consistency across the system is achieved through strict ordering guarantees. Raft ensures that all committed log entries are applied to each node's state machine in identical sequence. This strong consistency model is essential for maintaining transactional integrity throughout the Kahuna ecosystem, especially when handling complex operations.
+Data consistency across the system is achieved through strict ordering guarantees. Committed entries are delivered in log order, but followers may lag. With `--raft-follower-apply-in-own-turn` enabled (the default), follower append acknowledgement precedes application in separate executor turns; the system partition applies inline. An append acknowledgement does not prove application catch-up.
 
 ## Operational Architecture
 
@@ -33,7 +33,7 @@ One replica is elected leader and processes requests for that partition. Followe
 
 ## Leadership Management
 
-Leadership transitions occur through a voting mechanism triggered when the current leader becomes unresponsive or experiences failures. Each leadership election establishes a new "term" represented by a monotonically increasing counter value. The protocol strictly enforces that only one leader can exist per term within each Raft group, preventing split-brain scenarios.
+Leadership transitions occur through a voting mechanism triggered when the current leader becomes unresponsive or experiences failures. Each leadership election establishes a new "term" represented by a monotonically increasing counter value. A term has at most one elected leader under Raft voting rules. A stale node can still believe it is leader from an older term; quorum confirmation and term fences are needed to reject its authoritative work.
 
 In multi-partition clusters, independent elections can leave one node leading more partitions or more high-traffic partitions than its peers. Kahuna's optional [leader balancer](/docs/leader-balancing/) monitors leader count and partition load, then suggests normal Raft leadership handoffs. It changes leadership placement without moving partition data. Replica placement is a separate feature that changes which nodes store and vote for a partition.
 
@@ -45,9 +45,9 @@ A node can briefly believe it is still leader after it has been cut off from the
 - Authoritative reads confirm leadership through a quorum before serving from the leader
 - Actor-only state changes, including interactive transaction staging and point, prefix, or range locks, also confirm leadership before changing local memory
 - Proposals carry the term observed when they were admitted. If the node lost leadership and regained it in a newer term before appending the proposal, the proposal is rejected as stale and the caller retries
-- When a node loses leadership for a partition, Kahuna drops belief-only state for that partition: staged transactional writes, write intents, and exclusive prefix or range locks
+- When a node loses leadership for a partition, Kahuna drops belief-only state for that partition: staged transactional writes, unprepared write intents, and point, prefix, or range locks in every mode
 
-Check-quorum step-down is enabled by default. A leader that stops hearing same-term acknowledgement from a majority steps down, bounding the stale-leader window. See [Server Configuration](/docs/server-configuration/#raft-timing) for `--raft-enable-check-quorum` and `--raft-check-quorum-interval-multiplier`.
+Check-quorum step-down is enabled by default for server and clustered embedded nodes. The standalone `EmbeddedKahunaNode` constructor forces it off, along with backfill, because its phantom witnesses are not real replicas. A leader that stops hearing same-term acknowledgement from a majority steps down, bounding the stale-leader window. See [Server Configuration](/docs/server-configuration/#raft-timing) for `--raft-enable-check-quorum` and `--raft-check-quorum-interval-multiplier`.
 
 ## Transaction Support
 
@@ -55,8 +55,12 @@ Raft plays a crucial role in Kahuna's transaction processing by ensuring changes
 
 ## Multi-Raft Management
 
-Kahuna's architecture efficiently manages thousands of concurrent Raft groups (partitions) on individual nodes. The system employs sophisticated batch processing techniques and intelligent scheduling algorithms to coordinate multiple Raft groups simultaneously without compromising performance or reliability.
+Kommander schedules partition groups through shared executors and WAL queues. Partition write coalescing batches compatible proposals; follower apply turns use cooperative time and entry budgets. Capacity depends on workload, storage, and configured limits; the implementation does not establish an unconditional partition-count or performance guarantee.
 
 ## Kommander Implementation
 
 Kahuna implements the Raft protocol through the [Kommander library](https://github.com/kahunakv/kommander). Kommander handles Raft message processing, elections, log persistence, and state-machine callbacks. Raft log storage is configured separately from Kahuna's materialized key/value backend; each layer can use RocksDB or SQLite depending on server configuration.
+
+## Snapshot Catch-Up and Retention
+
+A follower below retained log history needs whole-partition snapshot seeding. Receive staging caps account for disk and memory together; current peers acknowledge staging separately and poll installation with a progress-based stall bound. Live-replica retention combines an entry budget with a capped recent-history window and is a bounded catch-up aid, not a guarantee that every pause within that time avoids snapshots. See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for settings, failure behavior, and installation limits.

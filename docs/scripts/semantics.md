@@ -98,7 +98,7 @@ Unknown option names, unknown values, and repeated options are script errors. `t
 
 `admissionWait` is separate from transaction lifetime. It controls how long a script waits for a transaction admission slot before it starts. `admissionWait=0` means "start only if a slot is free right now"; otherwise Kahuna returns `AdmissionRefused`.
 
-`readValidation=trackAndValidate` tracks latest reads and validates them at commit. Optimistic locking does this automatically. `decisionDurability=durable` uses the durable transaction decision path for all-persistent write sets. `snapshot` cannot be combined with read validation because a historical view cannot validate against later writes.
+`readValidation=trackAndValidate` tracks latest reads and validates them at commit. Optimistic locking does this automatically. Persistent modifications use durable-intent finalization under either policy; `decisionDurability=durable` rejects ephemeral modified keys. `snapshot` cannot be combined with read validation because a historical view cannot validate against later writes.
 
 ## Array Indexing
 
@@ -130,3 +130,44 @@ set @checksum_key checksum
 ```
 
 Built-in names are reserved, unknown functions return `Errored`, and user-defined functions cannot appear in key position. See [User-Defined Functions](/docs/scripts/user-defined-functions/).
+
+## Statement-Result Guards
+
+These boolean expressions inspect the last completed operation of a particular kind, not whichever statement ran most recently:
+
+| Guard | Operation it remembers | When it is true |
+|---|---|---|
+| `not found` | Last `get`, `exists`, `get by bucket`, or `scan by prefix`, including ephemeral forms. | The read did not find its key or returned an empty collection. Successful `exists` counts as found. |
+| `not set` | Last `set`, `delete`, or `extend`, including ephemeral forms. | The write did not take effect: a condition failed or a delete/extend found no key. Successful deletes and extends count as writes that took effect. |
+| `not deleted` | Last `delete` or `edelete`. | No key was deleted. |
+| `not extended` | Last `extend` or `eextend`. | No key's expiry was changed. |
+
+A `let`, expression, or an operation of another kind does not overwrite the remembered result. For example, this guard still checks the read even though a write ran after it:
+
+```kahuna
+let profile = get `users/42`
+set `audit/last-lookup` "42"
+if not found then
+  return "profile missing"
+end
+return profile
+```
+
+A newer write of any kind changes `not set`; only a delete changes `not deleted`, and only an extend changes `not extended`. If no earlier operation of the required kind ran, evaluating the guard is a script error. The guards describe an operation's result, **not whether the enclosing transaction has committed**. They do not replace handling transaction aborts or unknown commit outcomes.
+
+When leading writes are optimized into set-many or delete-many, the remembered result is that of the **last statement in script order**, regardless of response arrival order. A conditional set that fails contributes no modified key; it does not by itself prevent other successful writes in that batch from committing.
+
+`not deleted` and `not extended` are compound tokens; `deleted` and `extended` alone remain valid names.
+
+## Switch Comparisons
+
+`switch` evaluates its subject once and compares case values in source order through the same implementation as `==`. The first matching body runs. Later alternatives and cases are not evaluated:
+
+```kahuna
+switch 1
+  case 1, 1 / 0 then return "matched"
+  case 1 / 0 then return "unreachable"
+end
+```
+
+This returns `"matched"` without dividing by zero. Numeric strings can compare with numbers, bytes compare with strings through UTF-8 encoding, and `null` matches only `null`. Incompatible comparisons are script errors: `switch 1 case "abc" then return true end` cannot parse `"abc"` as a number. String comparisons remain ordinal and case-sensitive. See [Switch/Case](control-structures.md#switchcase) for syntax and locking behavior.

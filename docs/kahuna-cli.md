@@ -261,3 +261,9 @@ list backups
 ```
 
 See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for retention, bootstrap, and restore constraints.
+
+## Leave Requests and Elections
+
+Requesting leave does not immediately stop the node from participating in elections: it remains eligible while membership removal is being committed, so it can help elect the system-partition leader needed to finish that removal. A refused or failed API leave leaves the node campaigning while it remains a member. After removal commits, candidacy is suppressed.
+
+Once a local leave request reaches Kommander's leave service, automatic rejoin is suppressed even if the attempt fails; a timed-out removal could still commit later. Verify committed membership after an uncertain response and finish decommissioning explicitly. Process shutdown follows its own teardown path and suppresses candidacy after its removal attempt ends; disposal alone is not evidence that membership removal committed.

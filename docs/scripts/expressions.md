@@ -122,3 +122,7 @@ let json_str = to_json([10, 42, 30])  # serializes to JSON
 ```
 
 These functions cover areas like string manipulation, key/value operations, math, time, JSON handling, and more, making Kahuna Script a powerful tool for writing logic close to the data.
+
+## Statement-Result Guards
+
+`not found`, `not set`, `not deleted`, and `not extended` return booleans based on the last completed read, write, delete, or extend respectively. They preserve that result across unrelated statements and require an earlier operation of the relevant kind. See [Statement-Result Guards](semantics.md#statement-result-guards) for exact scope, successful delete/extend handling, and batched statement order.

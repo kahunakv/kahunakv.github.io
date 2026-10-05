@@ -22,7 +22,7 @@ The scheduler is shared across compatible persistent log types for the same part
 
 Durable transaction records have one live writer: the ordered apply stream driven by Raft. A finalizer that submitted a durable record waits for that ordered apply result instead of applying the record from the proposal completion callback. This keeps the proposing leader's transaction stores in the same log order as followers, including during leadership changes and bundled commits.
 
-Some transaction work intentionally stays outside this scheduler. Ephemeral transaction staging and the ephemeral subset of a mixed transaction still use the legacy in-memory prepare/commit/rollback path. The persistent durable subset enters the scheduler only when finalization writes canonical records, prepared intents, materialization records, or settlement deltas. Current servers materialize committed durable values by reference to prepared intents by default, avoiding a second value copy through Raft.
+Some transaction work intentionally stays outside this scheduler. Ephemeral transaction staging and the ephemeral subset of a mixed transaction still use the legacy in-memory prepare/commit/rollback path. The persistent durable subset enters the scheduler only when finalization writes canonical records, prepared intents, materialization records, or settlement deltas. Current servers materialize committed durable values by reference to prepared intents by default. Embedded/code-level `DurableMaterializeOnResolve` can instead install values during settlement apply, omitting separate per-key materialization entries. See [Durable Settlement](/docs/internals/durable-settlement/).
 
 Kahuna still preserves normal consistency:
 
@@ -56,7 +56,7 @@ The defaults are intended to improve throughput without adding visible latency t
 |-------------|---------|-------------|
 | `--kv-write-linger-ms` | `1` | Delay from the oldest queued persistent partition write before a partition batch is proposed. `0` dispatches an idle partition immediately. |
 | `--kv-write-post-completion-hold-ms` | `0` | Optional hold after a batch completes before the next sub-threshold batch dispatches. This can increase batch density under saturated same-partition load. Full batches and queue-age releases bypass the hold. |
-| `--kv-write-max-batch-items` | `512` | Maximum log entries selected for one Raft call. |
+| `--kv-write-max-batch-items` | `512` | Maximum submissions selected for one Raft call. An ordered bundle can contribute multiple log entries. |
 | `--kv-write-max-in-flight-batches` | `1` | Maximum batches one partition may have awaiting Raft results at once. Higher values pipeline quorum waits while preserving FIFO dispatch order. |
 | `--kv-write-max-batch-bytes` | `4194304` | Target serialized bytes selected for one Raft call. A single oversized item still dispatches alone. |
 | `--kv-write-max-queued-items` | `8192` | Maximum admitted persistent submissions per partition, including writes already in flight. |
@@ -104,6 +104,11 @@ Write-coalescing metrics are published on the `Kahuna` meter:
 | `kahuna.kv.write.rejections` | Counter | Rejected or released submissions, tagged by reason such as `queue_full`, `inbox_full`, `stopping`, `fence_stale`, `queue_expired`, or `unflushed_backlog`. |
 | `kahuna.kv.write.batches` | Counter | Raft batches dispatched by the aggregator. |
 | `kahuna.kv.write.entries` | Counter | Log entries dispatched across all aggregator batches. |
+| `kahuna.kv.write.stage_entries` | Counter | Dispatched entries tagged by producing stage, distinguishing prepare/decision/materialize/settle/one-phase work. |
+| `kahuna.kv.write.batch_submissions` | Histogram | Submissions per batch; ordered bundles can contain multiple entries. |
+| `kahuna.kv.write.cycle_stage` | Histogram | Dispatch-to-dispatch cycle stages, in milliseconds. |
+| `kahuna.kv.write.cycle_trigger` | Counter | Closed cycles tagged by next dispatch trigger: completion, wake, or submit. |
+| `kahuna.kv.write.wake_lateness` | Histogram | Wake delay beyond its deadline, tagged by timer kind and flush/age deadline. |
 | `kahuna.kv.write.outcomes` | Counter | Batch outcomes tagged as `success`, `transient`, or `permanent`. |
 | `kahuna.kv.write.batch_items` | Histogram | Entries per dispatched batch. |
 | `kahuna.kv.write.batch_bytes` | Histogram | Serialized bytes per dispatched batch. |
@@ -130,3 +135,9 @@ kahuna.kv.write.entries / kahuna.kv.write.batches
 ```
 
 During a healthy coalescing burst, this ratio should move above one and may approach the configured item cap. If it stays near one under heavy write load, writes may be too spread out across partitions, the linger may be too low for the arrival pattern, or the bottleneck may be somewhere else.
+
+## Cycle Accounting and Precise Wakes
+
+`kahuna.kv.write.cycle_stage{stage}` records consecutive stages: `raft`, `completion_mailbox`, `completion_turn`, `hold`, `arrival_wait`, `wake_late`, `wake_mailbox`, and `dispatch`, plus their sum as `cycle`. Cycles whose batch overlaps a later dispatch, or whose partition goes idle, are omitted. Compare requested hold with wake lateness rather than assuming a one-millisecond timer fires exactly on time.
+
+`KeyValueWritePreciseWake` defaults to `false` in core and embedded configuration and has no server CLI flag. When enabled, flush wakes for linger and post-completion hold use a high-resolution wait whose last two milliseconds spin-yield on a thread-pool thread. Queue-age release wakes continue using the timer queue. This trades CPU for reduced wake delay; it does not guarantee an exact dispatch deadline. Count/byte thresholds and queue-age release can bypass the post-completion hold.

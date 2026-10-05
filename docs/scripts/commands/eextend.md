@@ -17,7 +17,7 @@ An expiration value of zero means that the key never expires:
 
 ```kahuna
 eextend `session_token_user1` 0
-r0 set 7ms
+r0 extended 7ms
 ```
 
 For **ephemeral keys**, even if they are set to **never expire**, they can still be **evicted at any time** if the server is under **memory pressure**.
@@ -31,3 +31,7 @@ For keys with a long expiration time (several hours or days), it's recommended t
 Persistent durability provides high availability and fault tolerance, making it ideal for use cases such as long-term sessions, configuration data, or delayed tasks.
 
 Internally, expiration timestamps are managed using the [Hybrid Logical Clock (HLC)](../../architecture/hybrid-logical-clocks.md), which helps avoid issues caused by clock drift between nodes. This ensures that expiration times are consistent and causally ordered across the cluster, even in distributed environments where system clocks may differ slightly.
+
+## Checking the Result
+
+Use `if not extended then ... end` to test whether the last extend found no key. An undefined placeholder created by a transaction lock counts as absent. `not set` is false after a successful extend, because the expiry update took effect. An extend changes expiry without advancing the key's revision. See [Statement-Result Guards](/docs/scripts/semantics/#statement-result-guards).

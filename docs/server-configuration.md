@@ -9,9 +9,9 @@ See [Backend I/O Scheduler](/docs/backend-io-scheduler/) for how backend read/wr
 | Command Line Option(s) | Description | Default Value |
 |------------------------|-------------|---------------|
 | `-h`, `--host` | Host option accepted by the CLI. The current Kestrel setup listens on all interfaces for configured HTTP/HTTPS ports. | `*` |
-| `-p`, `--http-ports` | One or more HTTP ports for external REST traffic. If omitted, Kahuna listens on HTTP port `2070`. When `--https-certificate` is configured, cleartext listeners are not bound unless `--allow-plaintext-listener` is set. Use `--grpc-cleartext-ports` for cleartext gRPC. | `2070` |
-| `--https-ports` | One or more HTTPS ports for external REST/gRPC traffic. HTTPS is bound only when `--https-certificate` is configured. Passing HTTPS ports without a certificate is rejected. | none unless a certificate is configured |
-| `--grpc-cleartext-ports` | One or more cleartext HTTP/2 ports for gRPC without TLS. These listeners are gRPC-only and reject HTTP/1.1, so REST clients must use `--http-ports` or `--https-ports`. When `--https-certificate` is configured, cleartext listeners are not bound unless `--allow-plaintext-listener` is set. | none |
+| `-p`, `--http-ports` | One or more HTTP ports for external REST traffic. If omitted, Kahuna listens on HTTP port `8081`. When `--https-certificate` is configured, cleartext listeners are not bound unless `--allow-plaintext-listener` is set. Use `--grpc-cleartext-ports` for cleartext gRPC. | `8081` |
+| `--https-ports` | One or more HTTPS ports for external REST/gRPC traffic. HTTPS is bound only when `--https-certificate` is configured. Passing HTTPS ports without a certificate is rejected. | `8082` when a certificate is configured |
+| `--grpc-cleartext-ports` | One or more cleartext HTTP/2 ports for gRPC without TLS. These listeners are gRPC-only and reject HTTP/1.1. TLS suppresses cleartext listeners unless `--allow-plaintext-listener` is set. | `8083` for standalone nodes without TLS; none by default when joining a cluster |
 | `--https-certificate` | Path to the HTTPS certificate used by Kestrel and trusted for internal HTTPS communication. | empty |
 | `--https-certificate-password` | Password for the HTTPS certificate. | empty |
 | `--allow-plaintext-listener` | Bind cleartext HTTP and h2c listeners even when an HTTPS certificate is configured. Node-only surfaces still refuse cleartext callers in `MutualTls` mode. | disabled |
@@ -110,7 +110,7 @@ The route is always advisory: the receiving server re-resolves the resource and 
 | `--raft-nodename` | Human-readable node name used by Raft. If omitted, the server uses the machine name. | machine name |
 | `--raft-nodeid` | Numeric node identifier used by Raft. | `0` |
 | `--raft-host` | Host advertised for Raft consensus and replication traffic. | `localhost` |
-| `--raft-port` | Port advertised for Raft consensus and replication traffic. | `2070` |
+| `--raft-port` | Port advertised for Raft consensus and replication traffic. | `8081` |
 
 ## Replica Placement
 
@@ -273,10 +273,13 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 | `--raft-grpc-max-message-bytes` | Largest gRPC message this node accepts from or sends to a peer. Raise on every receiver before increasing outbound or backfill batch byte caps beyond it. | `16777216` |
 | `--raft-snapshot-receive-session-ttl` | Idle snapshot-receive session lifetime in milliseconds before the receiver drops buffered bytes. | `30000` |
 | `--raft-snapshot-max-pending-sessions` | Maximum concurrent snapshot-receive sessions across all partitions. Older inactive sessions can be evicted after the cap. | `8` |
-| `--raft-snapshot-max-pending-bytes` | Maximum buffered bytes across in-progress snapshot-receive sessions. | `536870912` |
+| `--raft-snapshot-max-pending-bytes` | Total staged bytes across receive sessions, including installing sessions and disk-backed bytes. Size above the largest expected partition snapshot. | `536870912` |
+| `--raft-snapshot-staging-directory` | Private per-node spill directory. Unset keeps all received snapshot bytes in memory. Spill files are deleted at startup. | empty |
+| `--raft-snapshot-staging-memory-bytes` | Resident receive-staging byte budget when a directory is configured; `0` stages entirely on disk. Does not bound decoded state or total heap. | `67108864` |
+| `--raft-reseed-request-timeout` | Repair-request apply hold and leader checkpoint-request timeout, in milliseconds. | `180000` |
 | `--raft-allow-legacy-snapshot-senders` | Accept snapshot chunks from older senders that omit session metadata. Use only for temporary mixed-version upgrades. | disabled |
-| `--raft-snapshot-transfer-step-timeout` | Maximum time, in milliseconds, allowed for one outbound snapshot-transfer step to stall before failing that transfer. A step that makes progress resets the clock. | `120000` |
-| `--raft-snapshot-chunk-ack-timeout` | Maximum time, in milliseconds, allowed for one snapshot chunk acknowledgement. A stuck receiver install path fails the transfer after this bound instead of holding it open for the full step timeout. The effective bound is the smaller of this option and `--raft-snapshot-transfer-step-timeout`. | `15000` |
+| `--raft-snapshot-transfer-step-timeout` | No-progress limit in milliseconds for export/read/send steps and reported importer bytes read. Progress resets the install stall clock; this is not a total install deadline. | `120000` |
+| `--raft-snapshot-chunk-ack-timeout` | Milliseconds for a chunk acknowledgement or install-status call. Current peers poll installation separately; the effective call bound is the smaller of this and transfer-step timeout. | `15000` |
 | `--raft-grpc-enable-append-logs-coalescing` | Coalesce multiple AppendLogs calls into one gRPC frame per write cycle for write-heavy multi-partition workloads. | disabled |
 | `--raft-grpc-append-logs-max-coalesce-batch` | Maximum AppendLogs items drained into one coalesced gRPC frame when coalescing is enabled. | `256` |
 | `--raft-transport-security` | Structured transport security JSON accepted by the CLI. The current server startup path does not parse or apply this field yet. | empty |
@@ -289,6 +292,8 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 | `--raft-snapshot-rescue-probe-interval` | Probe interval, in milliseconds, while the snapshot-rescue breaker is open. A probe lets a recovered follower be reseeded eventually. Values less than or equal to `0` disable probing. | `300000` |
 | `--raft-snapshot-export-retry-cache-max-bytes` | Maximum bytes cached for one produced snapshot export on the leader so retries can resend the same export instead of rebuilding it. Values less than or equal to `0` disable the cache. | `67108864` |
 | `--raft-compaction-live-replica-lag-budget` | Entry-count lag budget that protects a live follower after snapshot rescue so normal compaction does not immediately put it below the floor again. Values less than or equal to `0` disable the hold. | `1000000` |
+| `--raft-compaction-live-replica-lag-window` | Recent-history window in milliseconds used to raise the live-peer entry budget based on observed commit rate. `0` uses the entry budget alone. | `180000` |
+| `--raft-compaction-live-replica-lag-cap` | Maximum entries contributed by that window. Nonpositive disables its increase; it does not lower a larger entry budget. | `10000000` |
 | `--raft-compaction-silent-peer-retention-window` | Milliseconds a leader keeps holding WAL compaction for a peer that stopped answering. After the window, the silent peer no longer holds compaction and a restart is seeded by snapshot. `0` disables the hold. | `120000` |
 | `--raft-compaction-durability-clamp-report-interval` | Interval in milliseconds for repeated warnings when Raft compaction is held by the application-durability floor. Values less than or equal to `0` keep only start and end logs. | `60000` |
 
@@ -320,6 +325,10 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
+| `--raft-fan-out-before-local-write` | Queue leader WAL write and follower sends concurrently. Quorum completion still waits for local durability; failure after fan-out can leave an unknown outcome. | enabled |
+| `--raft-follower-apply-in-own-turn` | Acknowledge follower append before ordered application in separate executor turns. Partition 0 applies inline. | enabled |
+| `--raft-follower-apply-turn-time` | Cooperative apply-turn time budget in **microseconds**, with at least one entry delivered. `0` leaves only the entry budget. | `100` |
+| `--raft-follower-apply-turn-budget` | Entries per follower apply turn. Nonpositive removes the count bound; backlog can increase the effective budget. | `1024` |
 | `--raft-max-queued-client-proposals` | Maximum queued client proposals per partition before backpressure applies. | `2048` |
 | `--raft-max-wal-queue-depth-per-partition` | Per-partition WAL write queue depth limit. | `4096` |
 | `--raft-max-global-wal-queue-depth` | Global WAL write queue depth limit across all partitions. `0` means unlimited. | `0` |
@@ -415,3 +424,9 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 - RocksDB WAL shard tuning flags apply only when `--wal-storage rocksdb`. Numeric `0` values leave Kommander's shipped defaults in force; invalid combinations are still rejected at startup so a bad tuning value is not hidden by a backend switch.
 - The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, durable-decision deadline knobs, durable deferred-settlement and prepared-intent bounds, terminal write-aggregator reserve knobs, and some advanced range-split policy internals remain code-level or embedded-node configuration today. Transaction priority admission, durable record-retention budgets, and the primary key-range split/merge knobs are exposed as server flags.
 - The embedded node exposes the broader runtime surface, including collector and persistent-revision settings. See [Embedded Kahuna Node](/docs/embedded-kahuna-node/) for the full embedded configuration options.
+
+## Snapshot Configuration Semantics
+
+Current peers can acknowledge staged final chunks with `InstallPending` and poll installation separately. Chunk-ack timeout bounds transport/status calls, while transfer-step timeout also bounds lack of reported importer byte progress. A progressing install can exceed both durations in total. Older non-polling senders wait for install on the final chunk. Receive byte/session caps remain active with disk staging; no second session is staged for a partition whose install is running.
+
+See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for receive staging, validation, partial-install behavior, compaction-window semantics, and server/embedded differences. `DurableMaterializeOnResolve`, `DurableMaterializeByReference`, and `KeyValueWritePreciseWake` are core/embedded configuration fields with no server CLI flag today.

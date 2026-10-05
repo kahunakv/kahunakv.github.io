@@ -36,7 +36,9 @@ Kahuna categorizes replicated logs with simple type names:
 | `kv` | Key/value state mutation. |
 | `rangemap` | Key-range descriptor map, replicated on the meta partition. |
 | `snapshotfloor` | Snapshot-hold floor registry, replicated on the meta partition. |
-| `coorddecision` | Durable transaction decision delta, replicated on the data partition that owns the record anchor key. |
+| `coorddecision` | Legacy coordinator-decision delta. |
+| `txnrecord` | Canonical transaction-record delta on the anchor partition. |
+| `preparedintent` | Participant prepared-intent and settlement delta. |
 | `receipt` | Completion receipt handoff for range split/merge movement. In steady state, receipts ride key/value commits. |
 
 `ReplicationSerializer` serializes these messages with protobuf. Larger values use recyclable memory streams to reduce allocation pressure.
@@ -49,7 +51,7 @@ The restore path:
 
 1. Raft loads logs from its WAL.
 2. Kahuna routes each log by replication type.
-3. Lock, key/value, range-map, snapshot-floor, decision, and receipt handlers rebuild in-memory state.
+3. Lock, key/value, range-map, snapshot-floor, transaction-record, prepared-intent, legacy decision, and receipt handlers rebuild state.
 4. Materialized persistence provides checkpointed baseline data.
 5. New committed logs continue through the normal replication path.
 
@@ -104,7 +106,7 @@ Raft handles leader election per partition. When a leader changes:
 - Followers catch up from the leader's log
 - Committed entries remain ordered
 - Uncommitted proposals may need to be retried
-- Staged transactional writes, write intents, and exclusive prefix or range locks from the old leadership term are discarded on the node that lost leadership
+- Staged transactional writes, unprepared write intents, and point, prefix, or range locks in every mode from the old leadership term are discarded on the node that lost leadership
 
 Clients can see retry or abort responses when leadership changes race with an operation.
 
@@ -127,6 +129,18 @@ At leadership changes, Kahuna logs the local fingerprint. It also exposes gauges
 | `kahuna.keyvalues.applied_log_id` | Highest key/value log id applied on this node for the partition. |
 | `kahuna.durable_tx.committed_head_ledger_entries` | Committed-head ledger entries held on this node for the partition. |
 
-When a node becomes leader, it probes other replicas for their fingerprints. A peer with the same applied log id but a different committed-head count indicates apply drift: one replica's materialized transactional state no longer matches the log-derived ledger. Kahuna logs this at error level and increments `kahuna.keyvalues.apply_divergence_detected`.
+Every replica schedules peer comparisons on leadership changes, retrying while fingerprints are not comparable. Equal applied log ids with different committed-head or intent counts indicate apply drift. Kahuna logs this and increments `kahuna.keyvalues.apply_divergence_detected`. These are count-based fingerprints, not value hashes: equal counts do not prove equal values or detect every divergence.
 
 Range splitting performs the same check before copying from the source partition. If another replica has more committed heads than the source leader at the same applied log id, the split is refused with `SourceStateIncomplete` and `kahuna.range.split.incomplete_source_refusals` increments. The trigger can retry on a later pass after leadership or replica state converges.
+
+## Containment
+
+A conclusive comparison showing local incompleteness is checked again before containment. The node gates local partition reads and mutations with `MustRetry`, relinquishes leadership to the fullest peer or steps down, withholds candidacy, and requests reseeding. Repair requests repeat on a one-minute cadence. Successful whole-partition installation clears containment. The gate is in memory; this is not a subsecond recovery guarantee or proof of correctness for undetected equal-count divergence.
+
+See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for transfer contents, verification, staging budgets, and partial-install behavior.
+
+## Missing By-Reference Values
+
+Containment also follows verified missing reconstruction sources. Live apply checks a missing prepared intent against queued writes and backend rows before concluding that a by-reference value is missing. The first proven live miss gates the partition and withholds candidacy immediately; relinquish/reseed work continues asynchronously. Restart replay similarly gates unresolved results before campaigning. Benign duplicates with sufficient local state and keys now owned by another partition do not imply a missing value.
+
+See [restart replay and missing-value alarms](/docs/internals/durable-settlement/#restart-replay-and-missing-value-alarms) for source selection, metrics, and Warning-level restore summaries.

@@ -182,3 +182,7 @@ Kahuna validates backup chains before restore and refuses chains whose artifact 
 Replication factor is meant for clusters bootstrapped with placed replicas. Existing full-replication partitions keep their legacy placement when a cluster is restarted with a positive replication factor.
 
 For an existing production cluster, bootstrap a new cluster with the desired replication factor and move data through an application-level migration or backup/restore process that preserves the required coverage.
+
+## Snapshot Receive Capacity
+
+A learner below retained history receives a whole-partition snapshot. Pending-byte caps include memory and disk staging, so disk spill does not remove the maximum-snapshot-size limit. Current peers acknowledge staging separately from installation and poll the install outcome. While an install runs, a second snapshot of that partition is not staged. Configure a private staging directory and size acknowledgement budgets for transport/status calls and transfer-step budgets for expected progress stalls. See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for options and partial-install limitations.

@@ -37,7 +37,7 @@ Collection pressure is based on:
 
 The byte estimate is intentionally approximate. It includes key text, value bytes, fixed entry overhead, revision metadata, revision value bytes, and MVCC metadata.
 
-Memory limits are per actor. A cluster with many partitions can cache more data overall because each partition has its own entry and byte budget. If a working set repeatedly falls out of cache, raise `MaxEntriesPerActor` or `MaxBytesPerActor`, or split the workload across more partitions so each actor owns less data.
+Memory limits are per key/value actor in each durability ring, not per Raft partition. `KeyValueWorkers` determines actor count; one actor can own keys from multiple partitions and a partition can span actors. These approximate budgets are collection thresholds rather than hard heap caps. Tune actor count and cache budgets against observed residency; adding partitions alone does not add an actor budget.
 
 ## Phase 1: Garbage Reclamation
 
@@ -80,17 +80,17 @@ This safety rule affects memory behavior: under heavy write load, recently modif
 
 Eviction is not the only way Kahuna reduces memory. Revision and transaction metadata are bounded inline, where they grow:
 
-- Each new archived revision trims in-memory revision history back to `RevisionRetention`.
-- If an MVCC snapshot hold is active, trimming also keeps the boundary revision at or before the effective snapshot floor.
+- Each new archived revision trims settled history toward `RevisionRetention`; committed revisions still awaiting backend flush are retained beyond that target.
+- If an MVCC snapshot hold is active, trimming also keeps the boundary revision at or before the protective registered-hold floor.
 - When a transaction commits, rolls back, or releases a lock, its MVCC snapshot is removed and expired sibling snapshots are cleaned up.
 
-This is important for hot keys. A hot key may never be selected by LRU, but its revision or transaction metadata can still grow. Inline trimming lets Kahuna reduce memory without scanning the entire store or evicting the current value. Snapshot holds add one protected boundary revision per affected key, so long-lived historical readers can keep reading at their pinned timestamp without keeping unbounded history in memory.
+This is important for hot keys. A hot key may never be selected by LRU, but its revision or transaction metadata can still grow. Inline trimming lets Kahuna reduce memory without scanning the entire store or evicting the current value. Snapshot holds protect a boundary revision in memory; unflushed revisions can add more. Persistent history keeps the boundary and all newer revisions until the protective floor advances.
 
 | Setting | Meaning | Default |
 |---------|---------|---------|
 | `RevisionRetention` | Number of latest revisions retained in memory per key. | `16` |
 
-Persistent revision cleanup is also clamped by the effective snapshot floor. While a hold is live, the persistent backend must keep the boundary revision and all newer revisions, even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise prune them.
+Persistent revision cleanup is also clamped by the protective registered-hold floor. While a hold remains registered, including after lease expiry until replicated purge or release, the persistent backend must keep the boundary revision and all newer revisions, even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise prune them.
 
 ## Persistent vs Ephemeral Keys
 
@@ -139,3 +139,7 @@ When a key/value collector pass evicts entries, Kahuna logs a summary with the n
 ## Log Compaction
 
 Key eviction is separate from Raft WAL compaction. Each Raft group also compacts its WAL through [Kommander](https://github.com/kahunakv/kommander), removing old log entries that are no longer needed after checkpointing. WAL compaction reduces disk usage; key/value eviction reduces in-memory cache usage.
+
+## Pruning Confirmation
+
+Destructive revision cleanup confirms local system-partition application before sampling the protective hold floor. Failure skips the pass (`kahuna.snapshot_floor.prune_skipped_unconfirmed_total`). Acquire overlapping a local prune generation returns `MustRetry`; this is not a cluster-wide atomic barrier and cannot restore already-deleted history. See [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/#acquire-and-prune-races).

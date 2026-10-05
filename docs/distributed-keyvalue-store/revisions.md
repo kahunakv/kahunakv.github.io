@@ -1,7 +1,7 @@
 
 # Revisions
 
-In Kahuna, a `revision` is a monotonic version number that tracks when a key was last modified. Every time a key is updated or deleted, its `revision` increments, ensuring strong consistency and strict ordering. It acts as a logical timestamp to resolve stale client operations.
+In Kahuna, a `revision` is a monotonic version number that tracks when a key was last modified. `SET` and `DELETE` advance the revision, including staged transactional mutations. `EXTEND` changes expiry without advancing it. The counter is per key; it does not establish an order across keys or replace the commit HLC.
 
 ## Understanding revisions
 
@@ -36,10 +36,10 @@ When querying a key, you can see its current revision. The revision does not cha
 
 ```kahuna
 get `example`
-r2 value3 10ms
+r4 value4 10ms
 
 get `example`
-r2 value3 9ms
+r4 value4 9ms
 ```
 
 ## Skipping Historical Revisions
@@ -60,7 +60,7 @@ Use normal `SET` when you need audit history, debugging timelines, rollbacks, or
 
 ## Querying Previous Revisions
 
-Kahuna works like a time machine, allowing you to query the value of a key at any particular point-in-time:
+Kahuna can query an archived revision while that revision remains retained:
 
 ```kahuna
 get `example` at 0
@@ -79,7 +79,7 @@ Kahuna supports two different historical read models:
 - **`AT <revision>`** reads one exact archived revision for a key.
 - **`AS OF <timestamp>`** reads the value that was visible at a specific **HLC snapshot time**.
 
-Use `AT` when you already know the precise revision you want. Use `AS OF` when you want to answer "what did the cluster see at time `T`?" across one or more reads.
+Use `AT` when you already know the precise revision you want. Use `AS OF` to select revisions committed at or before `T`, subject to retained history, safe-time fences, and current TTL filtering.
 
 Examples:
 
@@ -106,12 +106,16 @@ While many systems only care about the latest value, Kahuna's ability to retriev
 - **Safe Rollbacks of Configuration or State**: Roll back to a previous known-good configuration. If a new config breaks the system, you can pull a previous value and restore it. Provides a quick and clean rollback mechanism.
 - **Data Versioning for CI/CD or Experiments**: Compare previous and current values during deploys or A/B tests. You can track how configs or feature flags evolved over time. Useful for debugging failed deployments or verifying that changes had intended effects.
 
-> **Kahuna** supports two types of durability: `ephemeral`, which uses only the volatile memory (RAM) of the leader node where the key/value is stored, and `persistent`, which uses durable disk-based storage. In case of memory pressure, ephemeral keys may be evicted if they haven’t been accessed recently. In the case of ephemeral storage, the server stores a limited number of recent revisions. If you need to store all revisions of a key, you should use persistent storage. Learn more in the [supported durabilities](/docs/architecture/durability-levels) section
+> **Kahuna** supports two types of durability: `ephemeral`, which uses only the volatile memory (RAM) of the leader node where the key/value is stored, and `persistent`, which uses durable disk-based storage. In case of memory pressure, ephemeral keys may be evicted if they haven’t been accessed recently. In the case of ephemeral storage, the server stores a limited number of recent revisions. Persistent storage retains history according to configured count/age limits and snapshot holds; it does not retain all revisions unconditionally. Learn more in the [supported durabilities](/docs/architecture/durability-levels) section
 
 ## Summary
 
 - Revision tracks when a key was last modified.
-- It updates on every write but stays the same for reads.
+- `SET` and `DELETE` advance it; `EXTEND` and reads leave it unchanged.
 - `SET ... NOREV` still advances the current revision but skips historical revision storage.
-- Used in leader election, distributed locks and race condition prevention.
+- Key/value revisions are distinct from Raft terms and distributed-lock fencing tokens.
 - Essential for Compare-And-Swap (CAS) operations.
+
+## Historical Read Limits
+
+A live writer that may commit at or before `T` can cause an as-of read to wait. Persistent-history fallback returns `MustRetry` while relevant revisions are unflushed. Reads more than five seconds ahead of the serving node's HLC skip the clock fence and can change as later commits land within that timestamp. TTL filtering uses the current read time, so `AS OF` does not freeze expiration. See [fixed-timestamp reads](/docs/distributed-keyvalue-store/read-and-lock-semantics/#fixed-timestamp-reads).

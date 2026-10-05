@@ -140,7 +140,7 @@ Kahuna's REST and persistence JSON paths use source-generated metadata, so trimm
 | `InitialPartitions` | `1` | Number of Raft partitions. |
 | `Storage` | `memory` | Key/value storage backend: `memory`, `sqlite`, or `rocksdb`. |
 | `StoragePath` | empty | Storage directory for persistent backends. |
-| `StorageRevision` | generated | Storage revision name. |
+| `StorageRevision` | generated | Storage revision name. Keep stable when reopening persisted state; it also determines the automatic receive-staging directory. |
 | `WalStorage` | `memory` | Raft WAL backend: `memory`, `sqlite`, or `rocksdb`. |
 | `WalPath` | empty | WAL directory for persistent backends. |
 | `WalRevision` | generated | WAL revision name. |
@@ -209,6 +209,7 @@ Kahuna's REST and persistence JSON paths use source-generated metadata, so trimm
 | `FunctionSlowWarnMs` | `50` | Logs a warning when a user-defined function takes longer than this many milliseconds. `0` disables the warning. |
 | `FailFastOnOutOfMemory` | `true` | Fail fast on `OutOfMemoryException` so an orchestrator can restart the embedded process. When disabled, Kahuna records the fatal fault and reports unhealthy through health surfaces that expose the core state. |
 | `DurableDeferredSettlement` | `true` | Return from durable commit once the canonical decision record is durable, then materialize values and settle intents in the background. Set `false` to await settlement inline. |
+| `DurableMaterializeOnResolve` | `false` | Install values from local prepared intents during settlement apply, before removing them. Overrides by-reference materialization; enable only after every replica supports this encoding. See [Durable Settlement](/docs/internals/durable-settlement/). |
 | `DurableMaterializeByReference` | `true` | Materialize committed durable transactions with a value-free record that references the prepared intent already held by each replica. Set `false` only during mixed-version rollouts from builds that cannot apply `MaterializeIntent`. |
 | `DurablePreparedIntentMaxCount` | `500000` | Resident prepared-intent count bound for durable transactions. A non-positive value disables the count bound. |
 | `DurablePreparedIntentMaxBytes` | `1073741824` | Resident prepared-intent value-byte bound for durable transactions. A non-positive value disables the byte bound. |
@@ -223,6 +224,7 @@ Kahuna's REST and persistence JSON paths use source-generated metadata, so trimm
 | `KeyValueWriteMaxBatchItems` | `512` | Maximum log entries selected for one partition write coalescing Raft call. |
 | `KeyValueWriteMaxInFlightBatchesPerPartition` | `1` | Maximum coalesced batches a partition may have awaiting Raft results at once. Higher values pipeline quorum waits while preserving FIFO dispatch order. |
 | `KeyValueWriteMaxBatchBytes` | `4194304` | Target serialized bytes selected for one partition write coalescing Raft call. |
+| `KeyValueWritePreciseWake` | `false` | Use a spin-yielding final 2 ms for linger/hold flush wakes; trades thread-pool CPU for wake precision. Queue-age wakes retain ordinary timers. |
 | `KeyValueWriteMaxQueuedItemsPerPartition` | `8192` | Maximum admitted persistent submissions per partition, including writes already in flight. |
 | `KeyValueWriteMaxQueuedBytesPerPartition` | `33554432` | Maximum admitted serialized bytes per partition, including writes already in flight. |
 | `KeyValueWriteMaxQueueDelayMs` | `1000` | Maximum pre-dispatch wait before a queued write is released as `MustRetry`. |
@@ -292,7 +294,7 @@ Kahuna's REST and persistence JSON paths use source-generated metadata, so trimm
 | `HeartbeatInterval` | `100 ms` | Leader heartbeat interval. |
 | `RecentHeartbeat` | `HeartbeatInterval / 4` | Recent-heartbeat de-duplication window. Leave unset to track the heartbeat cadence safely; set explicitly only when it remains below `HeartbeatInterval`. |
 | `VotingTimeout` | `1500 ms` | Vote wait timeout. |
-| `EnableCheckQuorum` | `true` | Make an isolated leader step down after it stops hearing same-term acknowledgement from a majority of voters. Keep enabled for clustered embedded deployments. |
+| `EnableCheckQuorum` | `true` | Clustered embedded nodes honor this option. The standalone node constructor forces it off, along with backfill, because its phantom witnesses are not real replicas. |
 | `CheckQuorumIntervalMultiplier` | `0` | Heartbeat intervals without majority acknowledgement before check-quorum steps down a leader. `0` derives the window from `StartElectionTimeout`. |
 | `CheckLeaderInterval` | `250 ms` | Leader check interval. |
 | `TimerInitialDelay` | `2500 ms` | Initial delay before Raft timers start. |
@@ -361,4 +363,27 @@ Some `KahunaConfiguration` options are not currently exposed by either `Kahuna.S
 - Load-based splitting requires a multi-node embedded deployment, key-range-routed spaces, and `EnableLeaderBalancer = true`. See [Load-Based Range Splitting](/docs/distributed-keyvalue-store/load-based-range-splitting/).
 - Positive `ReplicationFactor` values are intended for multi-node embedded deployments. `0` keeps the single-node/full-replication default. See [Replication Factor and Replica Placement](/docs/replica-placement/).
 - Use `EmbeddedKahunaCluster.CreateInMemoryAsync` when tests need leader election, failover, restart, or network-partition behavior without Docker or sockets.
-- Always dispose the node with `await using` or `DisposeAsync` so Raft leaves the cluster and file-backed resources are released.
+- Always dispose the node with `await using` or `DisposeAsync` to stop local Raft/actors and release resources. Disposal is not an operator membership-removal guarantee; explicitly decommission clustered nodes when removing them from the roster.
+
+## Snapshot Receive Staging
+
+These nullable options preserve Kommander defaults unless set:
+
+| Option | Default behavior |
+|---|---|
+| `RaftSnapshotMaxPendingBytes` | 512 MiB total staged bytes, on disk and in memory together; must be positive. |
+| `RaftSnapshotMaxPendingSessions` | 8 receive sessions; must be positive. |
+| `RaftSnapshotStagingDirectory` | SQLite/RocksDB with `StoragePath` use `{StoragePath}/snapshot-staging_{StorageRevision}` automatically; other hosts stage in memory. An explicit directory overrides this. |
+| `RaftSnapshotStagingMemoryBytes` | 64 MiB resident receive budget with a directory; `0` stages entirely on disk. Must be nonnegative. |
+| `RaftSnapshotChunkAckTimeout` | `TimeSpan.FromSeconds(15)`; bounds chunk/status calls, not a progressing install's total duration. |
+| `RaftSnapshotTransferStepTimeout` | `TimeSpan.FromSeconds(120)`; no-progress limit per transfer step and reported importer bytes read. |
+
+An explicit staging directory must be nonblank and private to one node: spill files there are removed at startup. Without a stable `StorageRevision`, the automatic directory uses a new GUID on each construction. `EmbeddedKahunaCluster.CreateInMemoryAsync` gives members separate `NodeName` subdirectories under an explicit base directory; the cluster still uses memory backend/WAL storage.
+
+Timeouts must be positive, and an explicitly requested acknowledgement timeout above the effective step timeout is rejected. The effective acknowledgement bound is the smaller of the two. A lost acknowledgement does not roll back an install already running. See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for a configuration example and failure limits. Server follower-apply scheduling and live-replica lag-window/cap flags currently have no matching embedded options.
+
+## Disposal and In-Flight Work
+
+`DisposeAsync` first signals background maintenance to stop, then drains the partition write aggregator while Raft and replication callbacks are still attached. Queued writes are released retryably; in-flight durable batches can still obtain ordered apply results. The write drain has a five-second budget. After callbacks detach, parked durable completions are released as unobserved rather than waiting for an apply that can no longer arrive.
+
+Raft is then disposed and actors receive a separate five-second graceful-stop budget. These are per-stage limits, not a guarantee that the entire dispose takes five seconds or that every pending transaction and backend row is flushed. A shutdown result can remain uncertain; do not infer rollback from an unobserved completion. Logs report drain, Raft-dispose, and actor-stop durations for diagnosing slow teardown.

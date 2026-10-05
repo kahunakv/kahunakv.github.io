@@ -36,6 +36,31 @@ else
 end
 ```
 
+## Switch/Case
+
+Use `switch` to choose a branch by comparing one value with several alternatives:
+
+```kahuna
+switch @status
+  case "pending" then
+    return "wait"
+  case "paid", "shipped" then
+    return "accepted"
+  else
+    return "unknown status"
+end
+```
+
+The subject (`@status` here) is evaluated once. Case values are expressions, evaluated in source order using the same comparison rules as `==`. The first match runs its body; there is **no fall-through**, and no `break` statement is needed. Evaluation stops at the match, including later alternatives in that same case.
+
+`else` is optional. With no match and no `else`, the switch does nothing and execution continues after `end`. A switch requires at least one case; each case requires `then` and a nonempty body. Switches can be nested and used inside loops or transaction blocks. Keywords are case-insensitive.
+
+Equality retains its usual conversions and errors: numeric strings can match numeric cases (`"2.0"` matches `2`), string-to-string comparisons are ordinal and case-sensitive, and incompatible operands cause a script error rather than silently failing to match. See [Script Semantics](semantics.md#switch-comparisons).
+
+In pessimistic scripts, lock discovery includes keys in **every** case body and the `else` body, even branches that will not run, as it does for both branches of `if`. Only the selected body executes. Eligible scripts using `switch` can also use the [single-key actor fast path](single-key-fast-path.md).
+
+`switch` and `case` are now reserved words. Existing scripts using them as bare names must rename those variables or quote literal key names, for example ``get `case` ``.
+
 ## For
 
 The `for` loop allows a block of code to be executed **a specific number of times** or to **iterate over an array of values one by one**.
@@ -73,7 +98,7 @@ In this example, the loop looks for a valid candidate. As soon as it finds one, 
 
 ## Begin/Commit/Rollback
 
-All scripts are executed as a **transaction** by default, even if they are not explicitly wrapped in a `begin` / `commit` / `rollback` block.
+Multi-statement scripts normally use an auto-commit transaction even without an explicit `begin` block. Eligible single-command scripts can dispatch directly, and eligible single-key ephemeral scripts can run in one actor turn.
 
 However, if you need **finer control** over when a transaction should be committed or rolled back, or if you want to **customize the default transaction behavior**, you can use a `begin` block.
 

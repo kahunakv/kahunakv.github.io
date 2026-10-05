@@ -96,3 +96,7 @@ Use Kahuna when several services must agree on ownership, small shared state, or
 - Persistent or ephemeral coordination state
 
 Use a simpler cache or local store when data can be lost, rebuilt, or briefly inconsistent.
+
+## Visibility and Recovery Details
+
+Latest transactional reads pin committed observations per key; they are distinct from fixed-timestamp historical reads. Persistent commit establishes a canonical decision before optional deferred settlement, and process-loss durability depends on a persistent, durably written Raft WAL. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/), [Durable Settlement](/docs/internals/durable-settlement/), and [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for the guarantees and failure limits.

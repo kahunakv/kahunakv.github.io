@@ -19,7 +19,7 @@ A hold has:
 - a lease duration in milliseconds
 - a server-generated `holdId`
 
-The effective snapshot floor is the lowest timestamp among all live holds. While the floor is active, Kahuna preserves the revision at or before that floor, and every newer revision, even if persistent revision retention would otherwise prune it.
+`GetSnapshotFloor` reports the minimum timestamp of live, non-expired holds and their live count. Pruning uses a different protective floor: the minimum timestamp of **all registered holds**, including expired leases, until a replicated release or purge removes them. Persistent cleanup preserves the boundary revision at or before that protective floor and every newer revision.
 
 Holds are replicated cluster state. You can contact any node; Kahuna routes acquire, renew, and release operations to the system-partition leader.
 
@@ -34,7 +34,7 @@ using Kahuna.Client;
 using Kahuna.Shared.KeyValue;
 using Kommander.Time;
 
-var client = new KahunaClient("https://node1:2071");
+var client = new KahunaClient("https://node1:8082");
 
 long branchTimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 HLCTimestamp timestamp = new(0, branchTimestampMs, uint.MaxValue);
@@ -98,7 +98,7 @@ Acquire a hold before starting a long-lived historical view:
 import { KahunaClient, snapshotAt } from "kahuna-client";
 
 const client = new KahunaClient({
-  endpoints: ["https://node1:2071"]
+  endpoints: ["https://node1:8082"]
 });
 
 const branchTimestampMs = Date.now();
@@ -146,11 +146,11 @@ Kahuna also exposes the hold API over REST:
 | `POST /v1/kv/snapshot-hold/release` | Release an existing hold by `holdId`. |
 | `GET /v1/kv/snapshot-floor` | Return the authoritative effective floor and live hold count, or a retryable response when leadership cannot be confirmed. |
 
-`leaseMs` must be greater than zero. Invalid or expired holds return a key/value response type instead of pinning history.
+`leaseMs` must be greater than zero. Renew can revive an expired hold while it remains registered; after release or purge it returns `DoesNotExist`. Revival confirms system-partition application before proving registration.
 
 ## Operational Notes
 
-- Renew well before the lease expires. If the holder crashes or stops renewing, the hold expires and no longer protects history.
+- Renew well before the lease expires. If the holder stops renewing, the hold becomes purge-eligible. Protection ends when replicated removal commits; do not depend on a delay between expiry and purge.
 - After a full-cluster restart, renew important holds promptly so they survive the startup grace window.
 - Choose lease durations that are coarse enough to avoid making renewals a hot path.
 - Snapshot holds protect persistent historical revisions. Memory-only keys that have no durable history can still lose deep history outside the in-memory revision window.
@@ -165,6 +165,13 @@ Snapshot holds publish metrics under the `Kahuna` meter:
 |--------|---------|
 | `kahuna.snapshot_floor.live_holds` | Number of live, non-expired holds. |
 | `kahuna.snapshot_floor.effective_floor_ms` | Physical millisecond component of the effective floor, or `0` when no hold is live. |
+| `kahuna.snapshot_floor.prune_skipped_unconfirmed_total` | Prune cycles skipped because local system-partition catch-up could not be confirmed. |
 | `kahuna.snapshot_floor.missing_protected_version_total` | Fault counter that should remain `0`; it increments if cleanup ever tries to remove a floor-protected revision. |
 
 Alert if `kahuna.snapshot_floor.missing_protected_version_total` becomes non-zero. Use live hold count and effective floor age to understand how much history clients are pinning.
+
+## Acquire and Prune Races
+
+Acquire/renew/release replication uses keyed deltas; the full local snapshot and system-partition transfer still scale with registered hold count. Destructive pruning first confirms local application of partition 0; failure skips that prune cycle. A local prune-generation guard detects acquire overlapping a deletion pass and returns `MustRetry`, even if the hold was replicated. Retry the same `(holderId, timestamp)`.
+
+This guard does not recreate history already deleted. Catch-up confirmation followed by sampling the protective floor is not a cluster-wide atomic acquire/prune barrier; a residual cross-node window remains. Holds protect retention, not an arbitrary timestamp's clock safety or cluster-wide snapshot consistency. See [historical read semantics](/docs/distributed-keyvalue-store/read-and-lock-semantics/#fixed-timestamp-reads).

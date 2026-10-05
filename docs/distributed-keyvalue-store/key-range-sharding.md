@@ -66,7 +66,7 @@ This gives Kahuna three things hash routing cannot provide:
 
 ## Why It Matters
 
-With plain hash routing, a large ordered space such as `users/*` or `orders/*` scatters across partitions. That makes whole-space ordered scans and range-level coordination expensive or impossible.
+With plain hash routing, all keys of a space such as `users/*` share one partition. A large or hot space can concentrate storage and write load there; hash routing does not split that space into independently placed ordered ranges.
 
 With key-range routing, those keys stay in contiguous slices. Kahuna can then split a hot or large slice into two smaller slices and move the upper half to a different partition while preserving key order.
 
@@ -123,10 +123,10 @@ Key-range routing is an explicit opt-in. The key space must be registered so Kah
 
 Registration has two parts:
 
-- the routing-mode flag is node-local and must be set on every node
-- the initial whole-space descriptor is replicated once through the meta partition
+- registration flips the answering node locally, then seeds the initial descriptor through the meta-partition leader and waits for local visibility
+- startup, live range-map apply, restore, and partition-0 snapshot installation reconcile each node's local routing registry from the committed descriptor map
 
-Use the CLI to register on every endpoint in the connection string:
+The CLI contacts the configured endpoints to register and verify their local routing views:
 
 ```bash
 kahuna-cli \
@@ -134,7 +134,7 @@ kahuna-cli \
   --register-key-range users
 ```
 
-The CLI fans out because registering only one node leaves a mixed cluster: that node routes `users/*` by key range while the others still hash it. Use `--node` only when you intentionally want to target one node and accept that intermediate state.
+Committed descriptors propagate the routing mode to other nodes; operators do not need to manually register each node for propagation. CLI fan-out verifies answering nodes. `Indeterminate` means local descriptor visibility was not established and can follow a committed proposal: re-read or retry instead of assuming registration was rolled back.
 
 The registration response reports:
 
@@ -225,3 +225,9 @@ POST /v1/ranges/merge
 Merge scans every key-range space and folds adjacent ranges that are below the configured minimum. There is no per-key-space merge API and no request-level size override. A non-leader returns `NotLeader` instead of reporting `0` merges, so `0` means a leader actually ran the pass and found nothing eligible.
 
 Range admin is also available through gRPC, `Kahuna.Client`, and the TypeScript client.
+
+## Handoff and Retirement
+
+Split/merge quiesce uses a leader-local `WriteFence` range lock: it blocks new mutations while allowing Shared readers and does not plant per-key intents. Descriptor transitions retain a generation fence and deadline. Data and completion receipts, transaction records, and prepared intents must be replicated at the destination before cutover. Handoff uses bounded batches (512 items, with a 1 MiB intent-byte target); a single oversized intent or same-key group can exceed those targets.
+
+Merge cutover records `RetiredPartitionIds` in replicated metadata. A later system-partition leader can finish removing the retired groups; partition identifiers are not reused. The backend remains node-global and range ownership determines slices to move or purge. With explicit replica placement, node-global storage does not mean every node stores every partition.

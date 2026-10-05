@@ -411,3 +411,7 @@ Metrics are emitted on the `Kahuna` meter. Backup and restore operations report 
 - Plan backup coverage before enabling a positive replication factor. A one-node backup may no longer cover the whole cluster.
 
 A restored node can seed a later cluster join, but membership and Raft catch-up are separate operations. If its restore point is still within retained history, replicas can transfer only the remaining log. Otherwise, normal cluster recovery may require a complete state transfer.
+
+## Transaction Settlement Encodings
+
+Restore reconstructs by-reference materialization and opt-in materializing settlement from prepared intents in the committed WAL history, using the transaction commit HLC for target-time filtering. A Raft-committed prepare alone does not expose an unfinished transaction. Missing reconstruction history fails restore rather than silently dropping a value. See [Durable Materialization Replay](/docs/internals/backups-and-pitr/#durable-materialization-replay) and [upgrade requirements](/docs/internals/durable-settlement/#rolling-upgrades).

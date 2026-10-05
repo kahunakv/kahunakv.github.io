@@ -8,7 +8,7 @@ set `services/email/instance-3` '{"ip": "10.1.1.22", "port": 9090}'
 r0 set 9ms
 
 extend `services/email/instance-3` 10000
-r0 set 7ms
+r0 extended 7ms
 ```
 
 In the previous example, the key is set to expire in 10,000 ms (10 seconds) from the moment the extend command is executed.
@@ -17,7 +17,7 @@ An expiration value of zero means that the key never expires:
 
 ```kahuna
 extend `services/email/instance-3` 0
-r0 set 7ms
+r0 extended 7ms
 ```
 
 This is useful for keys that represent long-lived or permanent data, such as configuration settings, user profiles, or static resources that should remain available indefinitely unless explicitly deleted.
@@ -28,3 +28,6 @@ For keys with short expiration times, it is recommended to use [ephemeral durabi
 
 Internally, expiration timestamps are managed using the [Hybrid Logical Clock (HLC)](../../architecture/hybrid-logical-clocks.md), which helps avoid issues caused by clock drift between nodes. This ensures that expiration times are consistent and causally ordered across the cluster, even in distributed environments where system clocks may differ slightly.
 
+## Checking the Result
+
+Use `if not extended then ... end` to test whether the last extend found no key. An undefined placeholder created by a transaction lock counts as absent. `not set` is false after a successful extend, because the expiry update took effect. An extend changes expiry without advancing the key's revision. See [Statement-Result Guards](/docs/scripts/semantics/#statement-result-guards).

@@ -38,3 +38,7 @@ exists `config/limits/max-connections` as of 1718392012345
 ```
 
 This checks whether the key existed at that snapshot time, not whether it exists now.
+
+## Statement-Result Guard
+
+A successful existence check counts as found for `not found`, just as a successful `get` does. The guard remembers the last read even when a `let` or a write runs between that read and the guard. See [Statement-Result Guards](/docs/scripts/semantics/#statement-result-guards).

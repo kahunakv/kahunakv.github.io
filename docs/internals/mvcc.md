@@ -39,7 +39,7 @@ Interactive operations also carry stable operation IDs. The operation registry l
 
 This lets Kahuna keep transactional state separate from the committed current value until the transaction commits.
 
-Latest reads can record the visible revision as a read observation. During optimistic validation, the coordinator checks those observations against committed revisions and concurrent write intents before preparing mutations.
+The first latest transactional point read pins a committed value or absence per key, including a committed unsettled intent. These pins do not form a common transaction-start snapshot. Follow-up point reads or writes can abort immediately if the observation is stale; finalization still validates registered dependencies.
 
 Snapshot reads are different. A read at a fixed HLC timestamp selects the newest revision whose commit timestamp is at or before that timestamp. Because it is a historical view, it does not create a live read dependency for latest-state validation.
 
@@ -53,7 +53,7 @@ There are two important levels:
 - **Prefix write intent**: protects a bucket or prefix, which matters for operations such as `get by bucket`.
 - **Range write intent or lock**: protects an ordered interval, which matters for bounded range reads.
 
-Prefix and range protection prevent phantom inserts and conflicting writes while a transaction depends on a consistent predicate read.
+Prefix and range locks block conflicting mutations while held. They are leader-local and can disappear on failover; range renewal is best-effort, so validation remains necessary.
 
 ## Locking Modes
 
@@ -102,7 +102,7 @@ For multi-key transactions, Kahuna uses a prepare/commit protocol. The concrete 
 | Read-only | No prepare round is needed. |
 | All ephemeral | Commit in memory. |
 | All persistent | Durable-intent two-phase commit. |
-| Mixed | Prepare ephemeral mutations first, then let the persistent durable decision drive ephemeral commit or rollback. |
+| Mixed under BestEffort | Prepare ephemeral mutations first, then let the persistent decision drive ephemeral commit or rollback. The ephemeral subset can be lost on process failure. |
 
 The general lifecycle is:
 
@@ -116,13 +116,13 @@ The general lifecycle is:
 8. Decide commit or abort.
 9. Release locks and clean up transaction state.
 
-The transaction commits only when all participants commit. Otherwise, Kahuna rolls back prepared mutations so partial updates do not become visible.
+For persistent writes, the canonical commit decision determines visibility across prepared participants; physical settlement can lag that decision. Explicit Durable mode rejects ephemeral modified keys. Mixed BestEffort transactions do not promise crash atomicity for the ephemeral subset.
 
 Read-only transactions can commit without a prepare round.
 
 ## Durable Commit Decisions
 
-Best-effort transactions keep terminal outcomes in memory for a bounded idempotency window. Durable decision mode adds durable-intent 2PC for all-persistent write sets.
+Live session outcomes are retained in memory for a bounded idempotency window. Persistent modifications use durable-intent finalization even under the default BestEffort policy; explicit Durable mode additionally rejects ephemeral modified keys.
 
 The first confirmed persistent modified key becomes the record anchor. The coordinator initializes a canonical transaction record on that anchor partition, prepares the anchor partition's intents in the same ordered proposal when possible, replicates prepared intents for every other modified persistent partition, validates staged bases and reads, then compare-and-sets the canonical record to `Commit` or `Abort`.
 
@@ -158,11 +158,11 @@ Each key tracks a revision counter. Reads can request a specific revision, and r
 
 The MVCC snapshot floor protects historical reads that must remain valid for longer than the normal revision-retention window. A client acquires a leased snapshot hold at timestamp `T`; while that hold is live, cleanup must keep the revision that was visible at or before `T`, plus every newer revision.
 
-The effective floor is the minimum timestamp across all live holds. It is replicated through the system partition, so the floor survives restart and leader changes. Acquire, renew, and release operations can enter through any node, but they are routed to the system-partition leader before being committed.
+The reported effective floor is the minimum timestamp across live holds. The pruning floor includes all registered holds, even expired ones, until replicated release or purge. Hold state is replicated through the system partition and restored from local snapshots. Acquire, renew, and release operations can enter through any node, but they are routed to the system-partition leader before being committed.
 
 The floor constrains both revision cleanup paths:
 
-- In memory, Kahuna keeps the normal newest `RevisionRetention` revisions plus the boundary revision at or before the floor.
+- In memory, Kahuna keeps the normal newest `RevisionRetention` revisions, the floor boundary, and committed archive revisions whose backend flush is still pending. Unflushed revisions can exceed the retention target.
 - On disk, persistent revision cleanup must not delete the boundary revision or anything newer, even when count-based or age-based retention would otherwise remove it.
 
 Historical reads first try the in-memory archive. If the requested timestamp is older than the in-memory window, persistent read paths fall back to on-disk revision history. Point reads, range reads, bucket reads, and prefix scans all use the same rule: return the newest revision whose commit timestamp is at or before the requested snapshot timestamp.
@@ -176,3 +176,11 @@ Persistent cleanup is budgeted. A targeted cleanup pass deletes at most `Persist
 After restart, durable snapshot holds are loaded with a startup grace window before expired leases are purged. That grace keeps a timestamp protected long enough for a holder to renew after full-cluster downtime, provided the underlying historical revisions are still present.
 
 The hold API is described in [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/).
+
+## Historical Read Fences
+
+Safe-time waits cover live writers that may commit at or before the requested timestamp. The serving actor folds eligible read timestamps into its HLC, and durable commit timestamps are minted above the maximum participant staged timestamp. A read more than five seconds ahead of the serving HLC skips the clock fence; `kahuna.kv.snapshot_clock_fence_skipped_total` counts this path. Such future reads can change as later commits land within the requested time.
+
+Disk-history fallback returns `MustRetry` while needed committed revisions are unflushed. `kahuna.kv.revisions.retained_unflushed_total` counts retention beyond the memory target; `kahuna.kv.revisions.history_reads_fenced_total` counts fenced fallback reads. TTL uses the current read time, not historical time. Snapshot holds protect retention and cannot recreate pruned or `NOREV` history.
+
+See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) for newer-head precedence over lingering intents, point-lock convergence, and range-lock compatibility. [Durable Settlement](/docs/internals/durable-settlement/) covers the optional materializing-resolve encoding.

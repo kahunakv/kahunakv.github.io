@@ -6,9 +6,9 @@ import TabItem from '@theme/TabItem';
 
 ## Overview
 
-Kahuna offers **distributed transactions** to enable safe, consistent, and atomic access to keys across the cluster. Transactions ensure that multiple reads and writes either all succeed together or none take effect, making them essential for maintaining **data correctness** in concurrent and distributed environments.
+Kahuna coordinates reads and writes across partition leaders. Persistent write sets use replicated prepared intents and a canonical commit or abort record. A committed decision makes the prepared values visible even when background settlement has not installed them yet. Ephemeral values and mixed persistent/ephemeral transactions do not have the same process-loss guarantees.
 
-Kahuna supports **snapshot isolation** and **serializable consistency** through **MVCC (Multi-Version Concurrency Control)** and **optimistic/pessimistic locking**.
+Latest transactional reads pin the first committed observation **per key**; they do not share a transaction-start snapshot. Fixed-timestamp historical reads use a separate read-only path. Read validation and pessimistic locks govern conflicts and predicate protection. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) for exact visibility, lock compatibility, and failover limits.
 
 For interactive transactions, Kahuna uses a server-side **transaction coordinator**. The client keeps a session handle, but the server owns the authoritative working set: confirmed reads, writes, locks, range locks, prefix locks, and cleanup state. Commit and rollback use that server-owned state instead of trusting the client to send a final list of touched keys.
 
@@ -23,7 +23,7 @@ In a distributed system, multiple clients might access and modify overlapping se
 Kahuna’s transactional engine addresses these issues by:
 
 - Isolating reads and writes from each other using **MVCC** versions
-- Detecting write conflicts during commit
+- Detecting conflicts during point operations and final validation
 - Optionally acquiring **locks** to serialize conflicting transactions
 - Deduplicating retried interactive operations with stable operation IDs
 - Closing the transaction to new work before commit or rollback finalizes
@@ -34,20 +34,20 @@ Kahuna’s transactional engine addresses these issues by:
 |--------|-------------|
 | **Transaction Coordinator** | The server component that owns the transaction lifecycle, working set, finalization, cleanup, and optional durable commit decision. |
 | **Transaction Handle** | Client-side identity that routes later operations, commit, and rollback back to the correct coordinator. |
-| **Snapshot Isolation** | Readers see a consistent snapshot of the data as of the transaction start. Writers commit only if no conflicting writes occurred. |
-| **Serializable Transactions** | Pessimistic locking and range-aware guards let Kahuna block phantoms and conflicting writes on the working set you read. |
-| **MVCC** | Each key maintains multiple versions. Reads select the correct version based on transaction timestamp. |
-| **Transaction Timestamp** | A [Hybrid Logical Clock (HLC)](../architecture/hybrid-logical-clocks.md) timestamp assigned at transaction start, used for snapshot reads and version tracking. |
+| **Historical Reads** | A fixed `ReadTimestamp` selects retained revisions committed at or before that HLC; historical sessions cannot write. |
+| **Predicate Protection** | Pessimistic prefix and range locks block conflicting mutations while held. They are leader-local; renewal is best-effort and final validation remains necessary. |
+| **MVCC** | Latest reads record per-key observations; historical reads select revisions by commit HLC. A transaction reads its own staged writes. |
+| **Transaction Timestamp** | A [Hybrid Logical Clock (HLC)](../architecture/hybrid-logical-clocks.md) identity assigned at transaction start. It is distinct from an explicitly requested historical read timestamp. |
 | **Write Set** | The keys the server has confirmed as modified by the transaction. |
 | **Read Set** | The keys the server observed during latest-state reads, used for conflict detection when validation is enabled. |
 | **Operation ID** | Stable identity assigned to an interactive operation so a retry can return the same result without applying the mutation twice. |
 | **Locks** | Optional. Acquired for pessimistic or serialized transactions. Locks have expiration to prevent being held forever. |
-| **Durable Decision** | Optional durable-intent 2PC path for all-persistent write sets. It stores a canonical transaction record plus prepared intents so recovery can finish or presume-abort after coordinator loss. |
+| **Durable Decision** | Persistent modifications use a canonical transaction record and replicated prepared intents. Explicit `DecisionDurability.Durable` rejects ephemeral modified keys. |
 | **Priority Admission** | Optional per-node start gate that can queue transactions by priority when script or session concurrency ceilings are enabled. |
 
 ## Transaction API
 
-All operations in a Kahuna Script are implicitly part of a transaction:
+Multi-statement scripts use the transaction machinery. Eligible single-command scripts can dispatch directly without opening a transaction:
 
 ```kahuna
 set "services/auth" "localhost:8081"
@@ -69,7 +69,7 @@ begin
 end
 ```
 
-### Example: Conditional Write Based on a Snapshot
+### Example: Conditional Write Based on a Read
 
 ```kahuna
 begin
@@ -81,7 +81,7 @@ begin
 end
 ```
 
-Even if `feature-x` is disabled mid-transaction by another client, the snapshot ensures this transaction still sees the older version and behaves consistently.
+The first read pins the committed observation of `feature-x`. With validation enabled, a competing change can abort a later operation or commit; retry the business operation in a new transaction after a definite abort.
 
 ## Using `get by bucket` inside a Transaction
 
@@ -125,7 +125,7 @@ KeyValueGetByRangePageResult page = await session.GetByRange(
 
 `GetByRange(...)` is the right primitive when the working set is an ordered slice rather than a whole single-partition bucket.
 
-In a **pessimistic** transaction, `GetByRange(...)` acquires a **range lock** over the requested interval. That means inserts, deletes, and updates inside that range are blocked or aborted while the transaction is open, writes outside the requested boundary can still proceed, repeated reads of the same range stay idempotent, and `rollback` releases the range lock.
+In a **pessimistic** transaction, `GetByRange(...)` acquires a **range lock** over the requested interval. While held, the lock blocks conflicting inserts, deletes, and updates inside the interval; writes outside it can proceed. Leadership loss clears these actor-local locks, and renewal can leave gaps. `rollback` releases the recorded lock set. See [lock and failure semantics](/docs/distributed-keyvalue-store/read-and-lock-semantics/#transaction-locks).
 
 Within the same transaction session, range reads also follow **read-your-own-writes** semantics: uncommitted inserts and updates made by the session are visible to later reads from that session, and uncommitted deletes stay hidden from that session's later reads.
 
@@ -150,8 +150,8 @@ Learn more about transaction lifecycle in the [architecture](../architecture/dis
 
 | Mode | Behavior |
 |------|----------|
-| **Persistent** | Commits are replicated and flushed to disk using Raft. Strong durability guarantees. |
-| **Ephemeral** | For lightweight, non-persistent use cases (e.g., caching, temporary locks). Faster but not durable. |
+| **Persistent** | Commit depends on the replicated Raft WAL and durable decision. The materialized backend flush is asynchronous; process-loss durability requires persistent WAL storage and durable write settings. |
+| **Ephemeral** | Leader-memory state; values and unprepared transaction staging can be lost on leadership or process loss. |
 
 Example:
 
@@ -418,7 +418,7 @@ The session exposes `Status`, `TransactionId`, `Handle`, and `RecordAnchorKey` f
 
 In case of conflicts or encountering exclusive locks under pessimistic locking, transactions can be aborted so they can be retried on the client side.
 
-The recommended approach is to use the built-in retry mechanism provided by Kahuna clients, which automatically retries aborted or retryable transactions using a short jittered backoff interval:
+The clients provide helpers that rerun a transaction body with a short jittered backoff. Use them for operations whose repeated execution is safe:
 
 ```csharp
 KahunaTransactionOptions txOptions = new()
@@ -442,7 +442,7 @@ await client.RetryableTransaction(txOptions, async (session, cancellationToken) 
 });
 ```
 
-`RetryableTransaction(...)` starts a fresh transaction for each attempt. It retries conflict-style outcomes such as `Aborted`, `MustRetry`, and `AlreadyLocked`, then gives up with a `KahunaException` if the retry budget is exhausted.
+`RetryableTransaction(...)` starts a fresh transaction for each attempt. It retries `Aborted`, `MustRetry`, and `AlreadyLocked`, then gives up with a `KahunaException` if the budget is exhausted. Because `MustRetry` can represent an unknown commit outcome, this helper requires a business operation safe to repeat. For an unresolved durable finalize, retry the same identity instead.
 
 Durable commit decisions can be requested when every modified key is persistent:
 
@@ -567,7 +567,7 @@ Choosing between the two approaches depends on the specific needs of your applic
 
 **Disadvantages**
 - **Increased Latency**: Requires multiple round-trips between the client and server, which can introduce additional delays.
-- **More Retry Handling**: Network interruptions can leave commit or rollback temporarily retryable. The client must retry `MustRetry` with the same session handle or use `RetryableTransaction(...)`.
+- **More Retry Handling**: Network interruptions can leave commit or rollback unresolved. Retry that finalization with the same session handle; starting a fresh transaction is not a substitute for resolving an unknown commit.
 - **Graceful Degradation Challenges**: In the event of partial failures (e.g., network partitions), locks can be held until the transaction times out. This can be mitigated by setting short transaction timeouts.
 
 ### Kahuna Scripts
@@ -582,3 +582,7 @@ Choosing between the two approaches depends on the specific needs of your applic
 **Disadvantages**
 - **Potentially Harder to Maintain**: Kahuna Script syntax may be less familiar and harder to debug or test compared to your main programming language.
 - **Script Size Limitations**: Large or complex business logic may be difficult to express and maintain within Kahuna Scripts.
+
+## Locks Lost During Failover
+
+A participant leader change can discard transaction locks. Renewing or upgrading one on a new leader cannot preserve the exclusion under which an earlier value was read. The coordinator records grant terms and checks them at commit, including read-only commit; a failed proof aborts with `Lost lock: …`. Restart the transaction and recompute from new reads. Same-term lease expiry and grants from older nodes without term reporting remain outside this proof. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover).

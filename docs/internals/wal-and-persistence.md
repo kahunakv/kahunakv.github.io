@@ -79,10 +79,16 @@ Full backups wait for the apply barrier, flush pending materialized writes, crea
 
 ## Revision Cleanup
 
-Persistent revision cleanup removes historical `key~revision` rows only when count, age, and live snapshot-hold rules allow it. Cleanup after writes is targeted by key and bounded by both `PersistentRevisionCleanupBatchSize` and `PersistentRevisionCleanupTimeBudget`, so a revision-heavy key cannot starve the background flush path. Keys not reached within the time budget stay queued for the next cycle.
+Persistent revision cleanup removes historical `key~revision` rows only when count, age, and registered snapshot-hold rules allow it. Cleanup after writes is targeted by key and bounded by both `PersistentRevisionCleanupBatchSize` and `PersistentRevisionCleanupTimeBudget`, so a revision-heavy key cannot starve the background flush path. Keys not reached within the time budget stay queued for the next cycle.
 
 ## Persistent vs Ephemeral
 
 Persistent durability writes through Raft and eventually materializes to the backend. Ephemeral durability keeps state in memory and is optimized for temporary data.
 
 Ephemeral objects may still participate in actor routing and expiration logic, but they should not be treated as restart-safe.
+
+## Settlement Durability Floors
+
+Opt-in materializing settlement can derive multiple key/value rows at one Raft index. The application-durability floor stays at that index until all derived rows and required transaction-store snapshots/receipts are durable. Removed intents whose rows await flush remain in the settled-intent restart snapshot. See [Durable Settlement](/docs/internals/durable-settlement/#durability-replay-and-recovery).
+
+Archive revisions still awaiting flush are retained beyond `RevisionRetention`; historical disk fallback can return `MustRetry` rather than answer from incomplete history. Destructive pruning first confirms local system-partition application and uses the protective registered-hold floor. See [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/#acquire-and-prune-races).

@@ -20,3 +20,7 @@ r2 set 9ms
 Keep in mind that ephemeral keys, when removed, are only marked as deleted, but they are not immediately cleared from memory. They are fully evicted only when the eviction process runs.
 
 The delete tombstone is its own revision. This behavior allows the system to retain the revision history temporarily, which can be useful for consistency checks, conflict resolution, or short-term auditing before the memory is reclaimed.
+
+## Checking the Result
+
+Use `if not deleted then ... end` to test whether the last delete found no key. `not set` also treats a successful delete as a write that took effect. A transaction lock's undefined placeholder is absent, so deleting a key that never existed does not create a tombstone. Within a transaction, set-then-delete deletes the staged value; deleting it again finds no key. See [Statement-Result Guards](/docs/scripts/semantics/#statement-result-guards).

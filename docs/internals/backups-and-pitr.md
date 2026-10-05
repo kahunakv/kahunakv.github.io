@@ -170,7 +170,7 @@ Commit HLC is not globally monotonic with WAL index across independent coordinat
 
 Key/value messages are decoded through the same `KeyValueMessageDecoder` used by normal log restoration. Writes are upserts keyed by key and revision, making replay restartable after interruption.
 
-Only committed WAL entries are stored in backup segments. Prepared transaction intents and rolled-back entries are absent, so an unfinished transaction does not become visible during restore.
+Only Raft-committed WAL entries are stored in backup segments. A transaction prepare is itself a committed Raft delta and can appear before the transaction has a commit decision. Replay retains prepares for reconstruction; an unfinished or aborted transaction does not become a visible key/value mutation merely because its prepare is present.
 
 :::caution Current PITR image scope
 
@@ -237,3 +237,9 @@ Choosing a timestamp before active commits prevents the backup from cutting thro
 Restore reconstructs storage state; it does not register the node with a cluster. A restored node must still join through the normal membership path and catch up through Raft.
 
 Keeping these operations separate prevents backup artifacts from depending on node identity or the current membership roster. It also allows a recent restore to seed a node before normal replication transfers the remaining WAL entries.
+
+## Durable Materialization Replay
+
+PITR tracks prepared intents from committed `preparedintent` deltas. It expands by-reference `MaterializeIntent` records (including legacy logged type `30`) and opt-in materializing settlement resolves from those prepares, using the transaction's commit HLC for the target-time filter. Recent duplicate settlement is tolerated. If neither a prepare nor recognized duplicate history can reconstruct a materializing resolve, restore fails closed rather than omitting a committed value.
+
+Readers must support these encodings before producers enable them. Disabling an option later does not make older readers safe for existing records. See [Durable Settlement](/docs/internals/durable-settlement/#rolling-upgrades).
