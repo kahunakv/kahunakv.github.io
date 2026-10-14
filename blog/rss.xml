@@ -4,10 +4,95 @@
         <title>Kahuna Blog</title>
         <link>https://kahunakv.github.io/blog/</link>
         <description>Kahuna Blog</description>
-        <lastBuildDate>Mon, 21 Sep 2026 00:00:00 GMT</lastBuildDate>
+        <lastBuildDate>Wed, 14 Oct 2026 00:00:00 GMT</lastBuildDate>
         <docs>https://validator.w3.org/feed/docs/rss2.html</docs>
         <generator>https://github.com/jpmonette/feed</generator>
         <language>en</language>
+        <item>
+            <title><![CDATA[Testing Kommander: The Raft Core Behind Kahuna]]></title>
+            <link>https://kahunakv.github.io/blog/testing-kommander/</link>
+            <guid>https://kahunakv.github.io/blog/testing-kommander/</guid>
+            <pubDate>Wed, 14 Oct 2026 00:00:00 GMT</pubDate>
+            <description><![CDATA[Every write to Kahuna passes through Kommander. Kommander is the open-source Raft library that elects leaders, replicates the log, and decides when a write is durable. If Kommander loses a committed entry, Kahuna loses your data. If Kommander elects two leaders for one term, Kahuna can serve two different histories.]]></description>
+            <content:encoded><![CDATA[<p>Every write to Kahuna passes through <a href="https://github.com/kahunakv/kommander" target="_blank" rel="noopener noreferrer" class="">Kommander</a>. Kommander is the open-source Raft library that elects leaders, replicates the log, and decides when a write is durable. If Kommander loses a committed entry, Kahuna loses your data. If Kommander elects two leaders for one term, Kahuna can serve two different histories.</p>
+<p>This post explains how we test a component with that much responsibility. You will learn which test suites exist, what the coverage number means, what runs on every push, what runs every night, and what deterministic simulation testing adds that normal tests cannot. If you plan to run Kahuna in production, this is the evidence behind its consistency promise.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-kommander-does-for-kahuna">What Kommander does for Kahuna<a href="https://kahunakv.github.io/blog/testing-kommander/#what-kommander-does-for-kahuna" class="hash-link" aria-label="Direct link to What Kommander does for Kahuna" title="Direct link to What Kommander does for Kahuna" translate="no">​</a></h2>
+<p>Raft is a protocol that lets a group of servers agree on one ordered log, even when some servers crash or lose contact. Kahuna splits its key space into partitions, and each partition is its own Raft group with its own leader and its own log. Kommander runs all of them.</p>
+<p>For each partition, Kommander provides:</p>
+<ul>
+<li class="">Leader election, with pre-vote and term fences to stop stale nodes from winning.</li>
+<li class="">Log replication to a quorum before a write is reported as committed.</li>
+<li class="">A write-ahead log on RocksDB or SQLite, with compaction of old entries.</li>
+<li class="">Catch-up for followers that fall behind, by log backfill or by snapshot.</li>
+<li class="">Dynamic membership, replica placement, and leader balancing.</li>
+</ul>
+<p>Kahuna sits on top of this and adds keys, locks, transactions, and clients. The <a class="" href="https://kahunakv.github.io/docs/architecture/raft/">Raft architecture page</a> describes how the two layers connect. The important point is simple: Kahuna cannot be more correct than Kommander.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-test-suites">The test suites<a href="https://kahunakv.github.io/blog/testing-kommander/#the-test-suites" class="hash-link" aria-label="Direct link to The test suites" title="Direct link to The test suites" translate="no">​</a></h2>
+<p>Kommander has more than 2,600 test methods in its test project. They fall into groups with different goals:</p>
+<table><thead><tr><th>Suite</th><th>What it checks</th></tr></thead><tbody><tr><td>Raft safety</td><td>The five Raft safety properties in isolation: election safety, log matching, leader completeness, commit monotonicity, and the term and frontier fences that protect them.</td></tr><tr><td>Write-ahead log</td><td>RocksDB, SQLite, and in-memory logs. Restore after crash, compaction floors, stale completions, and a disk with no free space.</td></tr><tr><td>Communication</td><td>gRPC, REST, and in-memory transports. Reordered, duplicated, and blocked messages. Shared-secret and mutual TLS authentication.</td></tr><tr><td>Scheduling</td><td>The partition executors and fair I/O schedulers that decide which work runs when, including a thread-free mode for embedded hosts.</td></tr><tr><td>Cluster integration</td><td>Real clusters of one to five nodes in one process. Joins, graceful leaves, eviction and rejoin, snapshot installs, replica moves, quiescence, and leader restarts.</td></tr><tr><td>Chaos</td><td>Scripted fault scenarios with a nemesis that cuts, delays, and reorders traffic while invariants run on every step.</td></tr><tr><td>Simulation</td><td>Deterministic simulation testing. A seeded search over generated fault schedules, with replay and automatic shrinking.</td></tr></tbody></table>
+<p>Tests carry categories such as <code>Stress</code>, <code>ChaosSoak</code>, <code>DSTSmoke</code>, and <code>DSTRandom</code>. The category decides where a test runs. Cheap tests run on every change. Expensive searches run at night.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-92-coverage-means-here">What 92% coverage means here<a href="https://kahunakv.github.io/blog/testing-kommander/#what-92-coverage-means-here" class="hash-link" aria-label="Direct link to What 92% coverage means here" title="Direct link to What 92% coverage means here" translate="no">​</a></h2>
+<p>Line coverage for the Kommander library is above 92%. The number is measured with <a href="https://github.com/coverlet-coverage/coverlet" target="_blank" rel="noopener noreferrer" class="">coverlet</a> on every push, and it is scoped on purpose:</p>
+<ul>
+<li class="">Only the <code>Kommander</code> library counts. The server host, the benchmarks, and the tests themselves are out of scope.</li>
+<li class="">Generated code is excluded. Protobuf stubs and gRPC bindings do not inflate the figure.</li>
+</ul>
+<p>Coverage tells you which lines ran, not whether the right thing happened. We treat it as a floor, not as a goal. The suites below exist because a line can run in every test and still be wrong under the one schedule nobody wrote.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-runs-on-every-push">What runs on every push<a href="https://kahunakv.github.io/blog/testing-kommander/#what-runs-on-every-push" class="hash-link" aria-label="Direct link to What runs on every push" title="Direct link to What runs on every push" translate="no">​</a></h2>
+<p>The <a href="https://github.com/kahunakv/kommander/blob/main/.github/workflows/run-tests.yml" target="_blank" rel="noopener noreferrer" class="">pull-request job</a> runs on every push and pull request. It does more than <code>dotnet test</code>:</p>
+<ol>
+<li class="">It checks the determinism boundary. A script fails the build if any file on the consensus path reads the wall clock directly. One such read makes a simulation run impossible to replay, and the failure is silent.</li>
+<li class="">It builds and tests the thread-free variant, which compiles only under a separate flag.</li>
+<li class="">It runs a single-node Kommander on the browser WebAssembly runtime under Node.js. That runtime refuses blocked waits, so it catches a class of deadlock normal .NET hides.</li>
+<li class="">It mounts a small filesystem with a small inode count, so the RocksDB tests can observe a disk that really runs out of space.</li>
+<li class="">It runs every test except the stress and nightly categories, with coverage and a hang detector.</li>
+</ol>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="deterministic-simulation-testing">Deterministic simulation testing<a href="https://kahunakv.github.io/blog/testing-kommander/#deterministic-simulation-testing" class="hash-link" aria-label="Direct link to Deterministic simulation testing" title="Direct link to Deterministic simulation testing" translate="no">​</a></h2>
+<p>Deterministic simulation testing, or DST, is the part of the suite that finds bugs nobody thought to write a test for. The idea comes from FoundationDB and Antithesis. Instead of a person who writes a scenario, a generator draws a schedule of faults from a seed, runs it against a real cluster, and checks invariants after every step.</p>
+<p>Kommander's DST runs real three-node clusters in one process. The production code is unchanged. What changes is everything around it:</p>
+<ul>
+<li class=""><strong>A simulated transport</strong> that can block a link in one direction, delay a message, duplicate it, reorder it, or hold it until a later step.</li>
+<li class=""><strong>A simulated write-ahead log</strong> that can starve a node of disk, refuse writes, or stall a completion.</li>
+<li class=""><strong>Virtual time.</strong> Every election timeout and heartbeat reads a tick source, so a run moves through hundreds of simulated seconds in one real second.</li>
+<li class=""><strong>A seeded generator</strong> that crashes nodes, pauses them, restarts them with a blank disk, compacts logs, hangs snapshot exports, and drives client writes.</li>
+<li class=""><strong>Eleven invariants</strong> checked on every step. They include one leader per term, committed entries agree, committed prefix present, leader completeness, compaction floor respected, and the library's own term and frontier monotonicity reports.</li>
+<li class=""><strong>One liveness rule.</strong> While a majority is healthy and connected, a leader must appear within forty election timeouts. Every safety rule passes on a cluster with no leader, so this rule is what names a stuck election.</li>
+<li class=""><strong>A client history checker</strong> that records every operation and verifies the results are consistent with one linear history.</li>
+</ul>
+<p>When a seed fails, the run writes the plan of actions in the order they happened. A plan can be replayed action for action, and a shrinker removes actions until only the ones the failure needs remain. A plan of forty actions becomes three. Plans whose cause is understood are promoted into a regression folder and replayed on every search.</p>
+<p>The <a href="https://github.com/kahunakv/kommander/blob/main/Kommander.Tests/Simulation/README.md" target="_blank" rel="noopener noreferrer" class="">simulation README</a> records what the search found so far. Among the findings:</p>
+<ul>
+<li class="">A log hole below the backfill threshold that was never repaired.</li>
+<li class="">A backfill anchored exactly at the leader's compaction floor that looped forever.</li>
+<li class="">A follower below the compaction floor that a hung snapshot export left stranded.</li>
+<li class="">A paused leader whose two live peers could not elect a replacement for the whole pause.</li>
+<li class="">A running leader that answered no partition view, so a convergence check misread it as absent.</li>
+</ul>
+<p>Each one is now a seed in the corpus, a promoted plan, or both. A seed in the corpus earned its line by re-finding a known defect when that defect was put back on purpose.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-nightly-search">The nightly search<a href="https://kahunakv.github.io/blog/testing-kommander/#the-nightly-search" class="hash-link" aria-label="Direct link to The nightly search" title="Direct link to The nightly search" translate="no">​</a></h2>
+<p>The seeded search is too expensive for a pull request, and a seed that fails is a lead, not a verdict. So it runs as a <a href="https://github.com/kahunakv/kommander/blob/main/.github/workflows/nightly-dst.yml" target="_blank" rel="noopener noreferrer" class="">nightly job</a> at 03:15 UTC, off the hour on purpose so other scheduled jobs do not load the runner.</p>
+<p>Each night the job:</p>
+<ul>
+<li class="">Sweeps 32 new seeds beside the corpus seeds. The seed base can be moved to explore a different region.</li>
+<li class="">Shrinks any failing plan automatically, within a budget of 40 cluster runs and 20 minutes.</li>
+<li class="">Replays every promoted regression plan 24 times. These plans reproduce intermittently, so the repeat count is derived from the measured rate. The first promoted plan reproduced about nine times in a hundred. Three replays would catch its regression one night in four. Twenty-four replays reach about ninety percent.</li>
+<li class="">Writes a summary with the signature of each failure and uploads the plans as artifacts for 30 days.</li>
+</ul>
+<p>The job also enforces stall detectors. A run that stops making progress fails instead of a run that passes slowly after an hour.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="chaos-scenarios-and-jepsen">Chaos scenarios and Jepsen<a href="https://kahunakv.github.io/blog/testing-kommander/#chaos-scenarios-and-jepsen" class="hash-link" aria-label="Direct link to Chaos scenarios and Jepsen" title="Direct link to Chaos scenarios and Jepsen" translate="no">​</a></h2>
+<p>Two more layers complete the picture.</p>
+<p>The chaos suite runs real nodes over the in-memory transport with a nemesis in the middle. The state machine is a hash chain, so any divergence between nodes is trivially visible. The nine scripted scenarios cover snapshot chunks under partition, a deposed leader that still sends a snapshot, loss during leadership transfer, symmetric and asymmetric cuts in a five-node cluster, writes on the minority side, duplicated and reordered messages, and a paused leader that resumes. The <a href="https://github.com/kahunakv/kommander/blob/main/specs/chaos-fault-injection-spec.md" target="_blank" rel="noopener noreferrer" class="">chaos spec</a> explains why network partitions alone were enough to break four of the five Raft safety properties in other libraries, and why these scenarios target them first.</p>
+<p><a href="https://jepsen.io/" target="_blank" rel="noopener noreferrer" class="">Jepsen</a> tests Kommander from the outside, on separate machines, with real network partitions, process kills, and clock skew. That suite lives in <a href="https://github.com/kahunakv/kommander-jepsen" target="_blank" rel="noopener noreferrer" class="">kommander-jepsen</a>. We wrote about the Kahuna version in <a class="" href="https://kahunakv.github.io/blog/jepsen-testing-kahuna/">Breaking Kahuna on Purpose with Jepsen</a>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-go-this-far">Why go this far<a href="https://kahunakv.github.io/blog/testing-kommander/#why-go-this-far" class="hash-link" aria-label="Direct link to Why go this far" title="Direct link to Why go this far" translate="no">​</a></h2>
+<p>A consensus library fails in the gaps between tests: a message that arrives one step late, a disk that stalls during an election, a snapshot that lands after the leader changed. None of these is exotic in production. All of them are rare in a test suite that a person wrote by hand.</p>
+<p>Because Kommander sits under every Kahuna write, we made the effort to find every one of these gaps exhaustive. Unit tests prove each rule. Integration tests prove the rules hold together. Chaos tests prove they hold under faults a person can imagine. The simulation search proves they hold under faults nobody imagined, and when it finds one, it reduces it, replays it, and keeps it forever.</p>
+<p>The result is not a promise that Kommander has no bugs. It is a process that finds them before you do, and a record of every one it found.</p>]]></content:encoded>
+            <category>kahuna</category>
+            <category>kommander</category>
+            <category>raft</category>
+            <category>testing</category>
+            <category>distributed-systems</category>
+        </item>
         <item>
             <title><![CDATA[290k Requests per Second on One Node, and Faster Than Valkey]]></title>
             <link>https://kahunakv.github.io/blog/290k-requests-per-second/</link>
