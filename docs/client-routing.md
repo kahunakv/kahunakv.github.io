@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Client Leader-Aware Routing
 
 Kahuna accepts requests on every node. If a request lands on a node that does not lead the target partition, that node forwards the request to the current owner. Client leader-aware routing removes many of those extra hops by letting the client learn where a resource lives and send later requests there directly.
@@ -14,6 +17,9 @@ Set `KahunaOptions.Routing` in .NET or `routing` in TypeScript:
 | `RoundRobin` | Rotates over configured endpoints. This is the pre-routing behavior. |
 | `Learned` | Reuses the endpoint reported by a previous response for the same resource. Unknown resources fall back to rotation. |
 | `Metadata` | Uses learned routes and also reads cluster routing metadata so unseen resources can route directly. |
+
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 using Kahuna.Client;
@@ -32,6 +38,9 @@ var client = new KahunaClient(
 );
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
 ```ts
 import { KahunaClient } from "kahuna-client";
 
@@ -44,6 +53,9 @@ const client = new KahunaClient({
   routing: "metadata"
 });
 ```
+
+</TabItem>
+</Tabs>
 
 `Auto` is usually the right starting point. A single-endpoint client stays on `RoundRobin` because it cannot use hints that name other nodes unless those endpoints are also configured or mapped.
 
@@ -58,6 +70,8 @@ const client = new KahunaClient({
 | Prefix, bucket, and range scans | Server-dispatched because one coordinator owns fan-out, pagination, and merge. |
 | Transaction scripts and sessions | Routed by coordinator identity, not by an individual data key. |
 | Cluster, range, backup, and snapshot administration | Node-scoped; explicit `nodeUrl` arguments are honored. |
+
+Forwarded point and batch reads re-resolve ownership at the receiving node. A hosting follower forwards within the hop budget; exhaustion returns `MustRetry` instead of serving its local state. Forwarded sequence operations similarly redirect a hosting follower to the leader and refuse when the budget is exhausted.
 
 Batch calls intentionally stay server-dispatched. Splitting one batch into several client requests would make transport failures ambiguous per group, while the server already returns per-item outcomes and route hints.
 
@@ -88,6 +102,9 @@ A response cannot make the client dial an arbitrary address by default. A hint i
 
 Use `RoutingEndpointMap` when servers advertise internal addresses but the application dials external addresses:
 
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
+
 ```csharp
 var client = new KahunaClient(
     [
@@ -108,6 +125,9 @@ var client = new KahunaClient(
 );
 ```
 
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
 ```ts
 const client = new KahunaClient({
   endpoints: [
@@ -123,6 +143,9 @@ const client = new KahunaClient({
   }
 });
 ```
+
+</TabItem>
+</Tabs>
 
 Set `AllowUnlistedRoutingEndpoints = true` only when every advertised node URL is trusted and client-reachable, including nodes added after the client starts.
 

@@ -51,6 +51,20 @@ r14 my-value 18ms
 
 If no command-line parameters are provided, `kahuna-cli` enters **interactive mode**, allowing you to execute commands and view their results in real time.
 
+### Multiline Scripts
+
+Pressing Enter inside an open `IF`, `FOR`, `SWITCH`, or `BEGIN` block, or an unfinished single- or double-quoted string, continues input at the `...>` prompt. Closing the blocks and quotes submits the script on Enter:
+
+```text
+kahuna-cli> begin
+       ...>   set `messages/welcome` "first line
+       ...> second line"
+       ...>   commit
+       ...> end
+```
+
+Two trailing blank lines force submission of the current input, even if unfinished; the server then reports syntax errors. The continuation check is a lightweight block/quote check, not a full parser. Malformed input that appears complete is submitted for server validation. Shell commands such as `lock`, `cluster`, and `run` submit immediately rather than treating words in their arguments as block openers.
+
 ## Connection String
 
 By default, `kahuna-cli` connects to the local cleartext gRPC endpoint:
@@ -266,4 +280,4 @@ See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recover
 
 Requesting leave does not immediately stop the node from participating in elections: it remains eligible while membership removal is being committed, so it can help elect the system-partition leader needed to finish that removal. A refused or failed API leave leaves the node campaigning while it remains a member. After removal commits, candidacy is suppressed.
 
-Once a local leave request reaches Kommander's leave service, automatic rejoin is suppressed even if the attempt fails; a timed-out removal could still commit later. Verify committed membership after an uncertain response and finish decommissioning explicitly. Process shutdown follows its own teardown path and suppresses candidacy after its removal attempt ends; disposal alone is not evidence that membership removal committed.
+Automatic rejoin is suppressed while departure remains in force. A refusal that committed nothing, or a confirmed rollback of a decommission drain to `Voter`, releases that suppression. A newer committed roster naming the node `Voter` also confirms rollback when its acknowledgement was lost. A timed-out removal without such proof can still commit later, so suppression remains. Verify committed membership after an uncertain response and finish decommissioning explicitly. Process shutdown follows its own teardown path and suppresses candidacy after its removal attempt ends; disposal alone is not evidence that membership removal committed.

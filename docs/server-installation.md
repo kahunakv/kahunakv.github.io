@@ -87,3 +87,7 @@ The important server flags are documented in [Server Configuration](/docs/server
 - `--https-certificate`
 
 For local single-node development, prefer the standalone Docker or NuGet examples above.
+
+## Kubernetes
+
+The [Kahuna Kubernetes Operator](/docs/kubernetes-operator/) provisions cluster resources and coordinates membership-aware scale-up/down. Its optional autoscaler uses per-node direct-write admissions and proposal queue depth. Follow the operator guide to create a placed cluster and avoid scaling fully replicated data into additional copies.

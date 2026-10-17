@@ -4,13 +4,21 @@ import TabItem from '@theme/TabItem';
 
 # Transactions
 
-## Overview
+A **transaction** groups several reads and writes so they take effect together or not at all. Use one when a single business change touches more than one key, or when a write depends on a value you read first.
 
-Kahuna coordinates reads and writes across partition leaders. Persistent write sets use replicated prepared intents and a canonical commit or abort record. A committed decision makes the prepared values visible even when background settlement has not installed them yet. Ephemeral values and mixed persistent/ephemeral transactions do not have the same process-loss guarantees.
+For example, moving 50 credits from Alice to Bob means reading two balances, checking that Alice has enough, and writing both balances back. Without a transaction, two things can go wrong:
 
-Latest transactional reads pin the first committed observation **per key**; they do not share a transaction-start snapshot. Fixed-timestamp historical reads use a separate read-only path. Read validation and pessimistic locks govern conflicts and predicate protection. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) for exact visibility, lock compatibility, and failover limits.
+- The process crashes after debiting Alice but before crediting Bob, and 50 credits disappear.
+- Another client changes Alice's balance between your read and your write, and one of the two updates is silently lost.
 
-For interactive transactions, Kahuna uses a server-side **transaction coordinator**. The client keeps a session handle, but the server owns the authoritative working set: confirmed reads, writes, locks, range locks, prefix locks, and cleanup state. Commit and rollback use that server-owned state instead of trusting the client to send a final list of touched keys.
+Inside a Kahuna transaction, both writes commit together or neither does. With read validation or locks, a conflicting change by another client makes the transaction abort instead of producing a wrong result, and you retry it. This holds even when the keys live on different partitions and nodes.
+
+Kahuna offers two ways to run a transaction:
+
+- **[Scripts](/docs/scripts/)**: send the whole read-check-write logic to the cluster as one request. This is the simplest and fastest option when the logic fits in Kahuna Script.
+- **Interactive transactions**: open a session from the [.NET](/docs/dotnet-client/) or [TypeScript](/docs/typescript-client/) client, run operations one by one with application code in between, and then commit or roll back.
+
+**You do not need a transaction** for a single-key update. A plain `SET`, or a [compare-and-swap](/docs/distributed-keyvalue-store/cas/) when the new value depends on the old one, is cheaper.
 
 ## Why Transactions Matter?
 
@@ -27,6 +35,14 @@ Kahuna’s transactional engine addresses these issues by:
 - Optionally acquiring **locks** to serialize conflicting transactions
 - Deduplicating retried interactive operations with stable operation IDs
 - Closing the transaction to new work before commit or rollback finalizes
+
+## How Kahuna Runs Transactions
+
+Kahuna coordinates reads and writes across partition leaders. Persistent write sets use replicated prepared intents and a canonical commit or abort record. A committed decision makes the prepared values visible even when background settlement has not installed them yet. Ephemeral values and mixed persistent/ephemeral transactions do not have the same process-loss guarantees.
+
+Latest transactional reads pin the first committed observation **per key**; they do not share a transaction-start snapshot. Fixed-timestamp historical reads use a separate read-only path. Read validation and pessimistic locks govern conflicts and predicate protection. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) for exact visibility, lock compatibility, and failover limits.
+
+For interactive transactions, Kahuna uses a server-side **transaction coordinator**. The client keeps a session handle, but the server owns the authoritative working set: confirmed reads, writes, locks, range locks, prefix locks, and cleanup state. Commit and rollback use that server-owned state instead of trusting the client to send a final list of touched keys.
 
 ## Core Concepts
 
@@ -153,12 +169,12 @@ Learn more about transaction lifecycle in the [architecture](../architecture/dis
 | **Persistent** | Commit depends on the replicated Raft WAL and durable decision. The materialized backend flush is asynchronous; process-loss durability requires persistent WAL storage and durable write settings. |
 | **Ephemeral** | Leader-memory state; values and unprepared transaction staging can be lost on leadership or process loss. |
 
-Example:
+Example: `eset` stores `session:abc` with ephemeral durability (in memory), and `set` stores `session:xyz` with persistent durability (disk):
 
 ```kahuna
 begin
- eset "session:abc" "active" # session is stored in ephemeral durability (in-memory)
- set "session:xyz" "active" # session is stored in persistent durability (disk)
+ eset "session:abc" "active"
+ set "session:xyz" "active"
  commit
 end
 ```
@@ -585,4 +601,10 @@ Choosing between the two approaches depends on the specific needs of your applic
 
 ## Locks Lost During Failover
 
-A participant leader change can discard transaction locks. Renewing or upgrading one on a new leader cannot preserve the exclusion under which an earlier value was read. The coordinator records grant terms and checks them at commit, including read-only commit; a failed proof aborts with `Lost lock: …`. Restart the transaction and recompute from new reads. Same-term lease expiry and grants from older nodes without term reporting remain outside this proof. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover).
+A participant leader change can discard transaction locks. Renewing or upgrading one on a new leader cannot preserve the exclusion under which an earlier value was read. The coordinator records grant terms and checks them at commit, including read-only commit; a failed proof returns `Aborted` with `Lost lock: …` for an interactive session, or `MustRetry` for a script. Restart the transaction and recompute from new reads. Recorded range-lock lease lapses also abort within the same term, even after renewal. Explicit range-lock leases use monotonic elapsed time while held by an actor, but write intents and session-owned age ceilings remain HLC-based. Expiry between one-phase validation and apply, and grants from older nodes without term reporting, remain outside this proof. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover).
+
+## Lost Exclusion and Retryable Commit Checks
+
+An interactive transaction that loses a lock, staging, or the original write intent returns terminal `Aborted`; start a new session and recompute from new reads. A self-contained script maps this lost-exclusion abort to `MustRetry`, preserving its reason, so SDK retry handling can rerun the script as a new transaction. Detected data conflicts still return `Aborted`. This distinction does not turn a general `MustRetry` or a transport timeout into proof of rollback.
+
+Commit probes also fail closed with `MustRetry` when leadership, containment, or a peer response prevents proving a key clean or conflicting. An interactive durable finalize retains prepares for retry under the same transaction identity. Successful staged-intent probes hold the intent through commit instead of merely renewing its ordinary lease, and one-phase bundles fence the anchor leadership term before append. See [Staged Writes and Commit Probes](/docs/distributed-keyvalue-store/read-and-lock-semantics/#staged-writes-and-commit-probes) for semantics and metrics.

@@ -135,6 +135,8 @@ The metrics exist inside Kommander, but the deployment must export the `Kommande
 
 ## Safety and Failure Behavior
 
+A transfer remains best-effort: winning an election is not enough for the target to serve. It must drain committed log entries and pass the leadership barrier; a contained or incomplete target can relinquish immediately. Kommander 1.9.7 reads the WAL on each promotion-drain attempt, so a readable entry is not held up solely by its completion callback being queued behind promotion. Entries that remain unreadable still prevent promotion. Check the resulting confirmed leader rather than treating a transfer request as a guarantee of a lasting handoff.
+
 The partition leader, not the planner, has final authority over every transfer. A suggestion is ignored when its term, source leader, destination, or partition state is no longer valid.
 
 Other safety properties include:

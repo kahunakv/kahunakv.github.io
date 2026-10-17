@@ -5,6 +5,8 @@ Kahuna provides a .NET client for distributed key/value operations, locks, seque
 
 For Node.js and TypeScript applications, see [Client for TypeScript and Node.js](/docs/typescript-client/).
 
+For shared fixed-window, sliding-window, token-bucket, and concurrency budgets, see [Distributed Rate Limiting](/docs/distributed-rate-limiting/), including ASP.NET Core policies and failure limits.
+
 ## Client Installation
 
 Kahuna Client for .NET is available as a NuGet package. You can install it via the .NET CLI:
@@ -1203,4 +1205,10 @@ See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recover
 
 ## Transaction Visibility and Failover
 
-A first latest transactional `Get` or `Exists` pins a committed observation per key, including a committed unsettled intent. Later point operations can abort when a competing update makes that observation stale. These pins are distinct from an explicit read-only `ReadTimestamp`. A session stays on its original coordinator node across partition leadership changes, but actor-local staging and locks can be lost; staging-continuity validation and lock-grant term proofs can return terminal `Aborted` (`Lost staging: …` or `Lost lock: …`). Renewing a lost lock does not repair earlier reads; same-term lease expiry and grants from older nodes without term reporting are outside the lock proof. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/).
+A first latest transactional `Get` or `Exists` pins a committed observation per key, including a committed unsettled intent. Later point operations can abort when a competing update makes that observation stale. These pins are distinct from an explicit read-only `ReadTimestamp`. A session stays on its original coordinator node across partition leadership changes, but actor-local staging and locks can be lost; staging-continuity validation and lock-grant term proofs can return terminal `Aborted` for an interactive session, or `MustRetry` for a script (`Lost staging: …` or `Lost lock: …`). Renewing a lost lock does not repair earlier reads; recorded range-lock lease lapses are also rejected without a term change. The lapse check does not cover expiry between one-phase validation and apply; grants from older nodes without term reporting remain unchecked. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/).
+
+## Lost Exclusion and Retryable Commit Checks
+
+An interactive transaction that loses a lock, staging, or the original write intent returns terminal `Aborted`; start a new session and recompute from new reads. A self-contained script maps this lost-exclusion abort to `MustRetry`, preserving its reason, so SDK retry handling can rerun the script as a new transaction. Detected data conflicts still return `Aborted`. This distinction does not turn a general `MustRetry` or a transport timeout into proof of rollback.
+
+Commit probes also fail closed with `MustRetry` when leadership, containment, or a peer response prevents proving a key clean or conflicting. An interactive durable finalize retains prepares for retry under the same transaction identity. Successful staged-intent probes hold the intent through commit instead of merely renewing its ordinary lease, and one-phase bundles fence the anchor leadership term before append. See [Staged Writes and Commit Probes](/docs/distributed-keyvalue-store/read-and-lock-semantics/#staged-writes-and-commit-probes) for semantics and metrics.

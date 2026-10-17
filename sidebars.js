@@ -104,6 +104,7 @@ const sidebars = {
       label: 'Server',
       items: [
         'server-installation',
+        'kubernetes-operator',
         'server-configuration',
         'node-transport-security',
         'status-dashboard',
@@ -112,6 +113,7 @@ const sidebars = {
         'snapshot-and-raft-recovery',
         'leader-balancing',
         'backups-and-point-in-time-recovery',
+        'pitr-bootstrap',
         'embedded-kahuna-node',
         'benchmarking'
       ],
@@ -119,7 +121,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Client',
-      items: ['kahuna-cli', 'dotnet-client', 'typescript-client', 'client-routing'],
+      items: ['kahuna-cli', 'dotnet-client', 'distributed-rate-limiting', 'typescript-client', 'client-routing'],
     },
     {
       type: 'category',
@@ -140,6 +142,8 @@ const sidebars = {
       items: [
         'internals',
         'internals/request-flow',
+        'internals/point-reads',
+        'internals/range-scan-observations',
         'internals/transaction-lifecycle',
         'internals/durable-settlement',
         'internals/actor-model',

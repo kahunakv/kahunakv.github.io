@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <!--
+    The browser playground host: a single embedded Kahuna node with in-memory storage and WAL, on the
+    default single-threaded browser-wasm runtime. The page loads the runtime and calls the exports on
+    Kahuna.Playground.PlaygroundEngine directly.
+
+    The target framework must be net10.0-browser: only a -browser target framework selects the
+    thread-free assemblies of Kahuna.Core and Kommander. Keep WasmEnableThreads off, because the
+    multithreaded runtime needs COOP/COEP headers that GitHub Pages does not send.
+
+    Build and copy the runtime into the site with scripts/build-playground-engine.sh.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-browser</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <OutputType>Exe</OutputType>
+    <WasmEnableThreads>false</WasmEnableThreads>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Required by the JSExport source generator. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+    <!-- Kahuna, Kommander and Nixie are trim-safe: they serialize their JSON through source-generated
+         contexts and annotate the actor constructors they create by reflection. -->
+    <PublishTrimmed>true</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Kahuna.Core" Version="1.12.4" />
+  </ItemGroup>
+
+</Project>

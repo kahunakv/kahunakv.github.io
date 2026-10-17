@@ -88,7 +88,7 @@ This is important for hot keys. A hot key may never be selected by LRU, but its 
 
 | Setting | Meaning | Default |
 |---------|---------|---------|
-| `RevisionRetention` | Number of latest revisions retained in memory per key. | `16` |
+| `RevisionRetention` (`--revisions-to-cache`) | Recent in-memory revisions per key; persistent keys can use disk history, ephemeral keys cannot. | `4` |
 
 Persistent revision cleanup is also clamped by the protective registered-hold floor. While a hold remains registered, including after lease expiry until replicated purge or release, the persistent backend must keep the boundary revision and all newer revisions, even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise prune them.
 
@@ -103,7 +103,7 @@ For this reason, ephemeral durability is best for temporary state such as caches
 
 ## Reads, Scans, and Cache Reloads
 
-Single-key reads check the actor cache first. If a persistent key is missing from memory, Kahuna loads it from the configured backend and usually caches it again. Ephemeral keys cannot be reloaded after eviction because memory was the only copy.
+Latest point gets first try a quiet resident published head after leadership confirmation, then fall back to the actor cache. See [Point Reads and Published Heads](/docs/internals/point-reads/) for guards, transactional pins, and metrics. If a persistent key is missing from memory, Kahuna loads it from the configured backend and usually caches it again. Ephemeral keys cannot be reloaded after eviction because memory was the only copy.
 
 Large ordered scans use paginated range reads. They merge in-memory and on-disk state while carrying a consistent snapshot across pages. Keys that are read from disk during a large scan are not forced back into the cache, so full-table or large-prefix iteration does not flood the cache or disturb hot-key recency.
 
@@ -128,6 +128,7 @@ The server command line currently exposes:
 |---------------------|---------|---------|
 | `--cache-entry-ttl` | Age threshold used by cache cleanup paths, in seconds. | `1800` |
 | `--cache-entries-to-remove` | Maximum number of entries removed by cleanup passes that use this cap. | `100` |
+| `--disable-published-head-reads` | Disable the resident published-head get path for diagnosis; all gets use actors. | disabled |
 | `--dirty-objects-writer-delay` | Delay between dirty object writer flush passes, in milliseconds. Longer delays can increase batching but keep dirty entries pinned longer. | `200` |
 
 Embedded nodes expose the full collector configuration as .NET options. See [Embedded Kahuna Node](/docs/embedded-kahuna-node/) for the full option table.
@@ -143,3 +144,9 @@ Key eviction is separate from Raft WAL compaction. Each Raft group also compacts
 ## Pruning Confirmation
 
 Destructive revision cleanup confirms local system-partition application before sampling the protective hold floor. Failure skips the pass (`kahuna.snapshot_floor.prune_skipped_unconfirmed_total`). Acquire overlapping a local prune generation returns `MustRetry`; this is not a cluster-wide atomic barrier and cannot restore already-deleted history. See [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/#acquire-and-prune-races).
+
+## Idle RocksDB Revision Sweeps
+
+After a complete clean sweep, RocksDB can skip later backend-wide revision-pruning cycles while no relevant state has changed. New writes, retention settings, snapshot-floor changes, or reaching the next age-expiry frontier reopen sweep work. `kahuna.persistence.revision_prune.sweep_idle_total` counts skipped idle cycles. Quiescence avoids repeated scans; it does not disable configured retention or remove snapshot-hold protection.
+
+For per-page read amplification, see [Range-Scan Observations](/docs/internals/range-scan-observations/). A missing page observation means unknown rather than zero.

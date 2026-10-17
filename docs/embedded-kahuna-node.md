@@ -183,7 +183,7 @@ Kahuna's REST and persistence JSON paths use source-generated metadata, so trimm
 | `TransactionPriorityMaxQueued` | `4096` | Callers that may wait for an admission slot per gate before further ones receive `AdmissionRefused`. `0` makes the queue unbounded. |
 | `DefaultAdmissionWaitMs` | `5000` | Admission wait used when the caller does not specify one. |
 | `MaxAdmissionWaitMs` | `30000` | Maximum admission wait allowed by the embedded node. Caller-supplied waits are clamped to this value. |
-| `StagedWriteIntentLeaseMs` | `15000` | Lease for transactional staged writes before other transactions may treat them as abandoned and write past them. |
+| `StagedWriteIntentLeaseMs` | `15000` | Lease for staged writes before the commit probe. A successful probe holds the original intent through commit; cleanup or the session-owned ceiling bounds the hold. |
 | `ScriptActorTurns` | `true` | Let eligible auto-commit scripts over one ephemeral key run inside one actor turn. |
 | `FusedEphemeralFinalize` | `true` | Let a transaction whose whole write set is one ephemeral key finalize in one actor turn. |
 | `ScriptCacheExpiration` | `1 minute` | How long parsed scripts stay cached. |
@@ -216,7 +216,7 @@ Kahuna's REST and persistence JSON paths use source-generated metadata, so trimm
 | `MaxEntriesPerActor` | `50000` | Maximum cached entries per actor before collection pressure applies. |
 | `MaxBytesPerActor` | `268435456` | Approximate maximum cached bytes per actor before collection pressure applies. |
 | `CollectBatchMax` | `1000` | Maximum number of entries evicted in one collection pass. |
-| `RevisionRetention` | `16` | Number of revisions retained for in-memory revision history. |
+| `RevisionRetention` | `4` | Recent revisions per key in memory. Persistent history can fall back to disk; ephemeral history older than this has no disk copy. |
 | `DirtyObjectsWriterDelay` | `1000` | Delay between dirty object writer flush passes, in milliseconds. Longer values can increase batching but keep dirty persistent entries pinned in memory longer. |
 | `CheckpointInterval` | `30 seconds` | Minimum checkpoint cadence for dirty partitions after flushes. Shorter intervals advance WAL compaction sooner; longer intervals reduce checkpoint churn. |
 | `KeyValueWriteLingerMs` | `1` | Delay from the oldest queued persistent partition write before a partition batch is proposed. `0` dispatches an idle partition immediately. |
@@ -224,7 +224,9 @@ Kahuna's REST and persistence JSON paths use source-generated metadata, so trimm
 | `KeyValueWriteMaxBatchItems` | `512` | Maximum log entries selected for one partition write coalescing Raft call. |
 | `KeyValueWriteMaxInFlightBatchesPerPartition` | `1` | Maximum coalesced batches a partition may have awaiting Raft results at once. Higher values pipeline quorum waits while preserving FIFO dispatch order. |
 | `KeyValueWriteMaxBatchBytes` | `4194304` | Target serialized bytes selected for one partition write coalescing Raft call. |
-| `KeyValueWritePreciseWake` | `false` | Use a spin-yielding final 2 ms for linger/hold flush wakes; trades thread-pool CPU for wake precision. Queue-age wakes retain ordinary timers. |
+| `KeyValueWritePreciseWake` | `false` | Use one dedicated timer thread per node for linger, hold, and queue-age wakes; sleeps whole milliseconds and spins the remainder. |
+| `KeyValueWriteFillTargetTrigger` | `false` | Dispatch held/lingering buffers early at the learned submission-count target, with periodic timed probes. |
+| `PublishedHeadReads` | `true` | Serve quiet resident latest point gets from immutable published heads after leadership confirmation; fall back to actors whenever guards fail. |
 | `KeyValueWriteMaxQueuedItemsPerPartition` | `8192` | Maximum admitted persistent submissions per partition, including writes already in flight. |
 | `KeyValueWriteMaxQueuedBytesPerPartition` | `33554432` | Maximum admitted serialized bytes per partition, including writes already in flight. |
 | `KeyValueWriteMaxQueueDelayMs` | `1000` | Maximum pre-dispatch wait before a queued write is released as `MustRetry`. |
@@ -273,6 +275,8 @@ Kahuna's REST and persistence JSON paths use source-generated metadata, so trimm
 | `LeaderBalancerQueueWeight` | `0.5` | Queue-depth weight in the balancer load score. |
 | `ReplicationFactor` | `0` | Desired voter replicas per partition. `0` keeps full replication. Prefer odd values such as `3` or `5` in multi-node deployments. |
 | `EnablePlacementRebalancer` | `false` | Enable ongoing replica-placement repair and balancing. Initial placement still applies when `ReplicationFactor` is positive. |
+| `JoinTimeout` | `60 seconds` | Join admission/initialization ceiling; does not bound the learner promotion wait. |
+| `JoinPromotionStallTimeout` | `5 minutes` | No-progress ceiling during learner promotion, not total catch-up duration. |
 | `PlacementPassInterval` | `5 seconds` | Cadence for placement-controller passes. Commit-triggered passes can still run immediately. |
 | `MaxReplicaMovesPerPass` | `4` | Maximum new replica add/remove sequences started in one placement pass across repair and balance priorities. |
 | `MaxConcurrentReplicaTransfers` | `1` | Maximum partitions with an in-flight learner catch-up or replica removal caused by balance moves. |
@@ -348,7 +352,7 @@ Some `KahunaConfiguration` options are not currently exposed by either `Kahuna.S
 | `KeyValueWriteMaxOperationBytes` | `67108864` | Hard ceiling for one admitted serialized partition write. Values above the ceiling are rejected retryably. |
 | `KeyValueWriteBatchExecutionTimeoutMs` | `30000` | Maximum Raft round-trip time for one aggregator batch before the batch is released retryably. |
 | `DurableRecoveryMaxPartitionsPerPass` | `64` | Maximum partitions driven by prepared-intent recovery in one sweep. |
-| `DurableDecisionDeadlineMultiplier` | `4` | Multiplier applied to observed finalize p99 before clamping the decision-deadline margin. |
+| `DurableDecisionDeadlineMultiplier` | `4` | Multiplier applied to the larger of total finalize p99 and per-intent p99 × manifest size, before clamping the decision-deadline margin. |
 | `SnapshotHoldStartupGraceWindow` | `5 minutes` | Grace window for durable snapshot holds loaded after restart. Expired holds restored from disk are protected briefly so holders can renew before cleanup advances the snapshot floor. |
 
 `HttpsTrustedThumbprint` also exists on `KahunaConfiguration`, but it is derived from `HttpsCertificate` by configuration validation rather than being an independent operator setting.

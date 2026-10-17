@@ -123,6 +123,7 @@ Use a longer measurement, such as `--warmup 10 --duration 60`, when establishing
 | `set-many` | Write `--batch-size` generated keys per operation |
 | `delete-many` | Delete `--batch-size` generated keys per operation |
 | `txn` | Open an interactive transaction, write `--keys-per-txn` keys, and commit |
+| `txn-get` | Open a session, read the same key `--keys-per-txn` times, then roll back; report each round trip separately |
 | `bank` | Run contended transactional transfers between seeded account keys |
 | `rate-limit` | Run an ephemeral script counter that admits or refuses requests by subject and window |
 | `lock` | Acquire and release one lock per operation |
@@ -165,7 +166,7 @@ kahuna-bench -c https://kahuna-1:8082 \
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-c`, `--connection-source` | required | Comma-separated Kahuna endpoints |
-| `--workload` | `mixed` | `set`, `get`, `mixed`, `delete`, `set-many`, `delete-many`, `txn`, `bank`, `rate-limit`, `lock`, `sequence`, or `script` |
+| `--workload` | `mixed` | `set`, `get`, `mixed`, `delete`, `set-many`, `delete-many`, `txn`, `txn-get`, `bank`, `rate-limit`, `lock`, `sequence`, or `script` |
 | `--duration` | `30` | Measured duration in seconds, excluding warmup |
 | `--warmup` | `5` | Warmup duration in seconds whose samples are discarded |
 | `--concurrency` | `64` | Closed-loop workers or open-loop consumers |
@@ -173,10 +174,10 @@ kahuna-bench -c https://kahuna-1:8082 \
 | `--key-space` | `10000` | Number of distinct `bench:{n}` keys |
 | `--key-prefix` | `bench:` | Prefix for generated keys. End it with `/` to keep a `set-many` or `delete-many` batch in one hash key space |
 | `--value-size` | `128` | Write payload size in bytes |
-| `--read-pct` | `50` | Read percentage for `mixed`; the remainder are writes |
+| `--read-pct` | `50` | Read percentage for `mixed`. For `txn-get`, percentage of sessions without a write immediately before opening; the rest read a fresh revision |
 | `--batch-size` | `100` | Keys mutated per `set-many` or `delete-many` request |
-| `--keys-per-txn` | `4` | Keys written inside each `txn` workload transaction |
-| `--txn-locking` | `pessimistic` | Transaction locking mode for `txn`: `pessimistic` or `optimistic` |
+| `--keys-per-txn` | `4` | Keys written per `txn`, or reads of the same key per `txn-get` session |
+| `--txn-locking` | `pessimistic` | Transaction locking mode for `txn`, `txn-get`, and `bank`: `pessimistic` or `optimistic` |
 | `--rate-limit-mode` | `fixed` | Rate-limit workload mode: `fixed` or `sliding` |
 | `--rate-limit-budget` | `100` | Requests one subject may make per window before the script refuses it |
 | `--rate-limit-window` | `1000` | Rate-limit window length in milliseconds |
@@ -374,3 +375,15 @@ kahuna-bench -c "$ENDPOINTS" \
 ```
 
 Run the load generator on a separate machine so it does not compete with Kahuna for CPU, memory, network bandwidth, or storage I/O. Use at least 10 seconds of warmup and 60 seconds of measurement when comparing tail latency.
+
+## Transactional Point-Read Measurements
+
+`txn-get` separates session overhead from reads. Report rows are `txnstart`, `txngetfirst` (first read without a preceding write), `txngetfresh` (first read after a write), `txngetnext` (subsequent reads of that key), `txnrollback`, and optional `set`. `--read-pct 100` disables preceding writes; `--keys-per-txn 1` makes every read a first read. At the default `--read-pct 50`, roughly half of sessions first write their key. The aggregate counts timed round trips, not logical sessions; do not treat its req/s as transactions per second.
+
+```bash
+kahuna-bench -c "$ENDPOINTS" --workload txn-get \
+  --keys-per-txn 1 --read-pct 100 --txn-locking optimistic \
+  --warmup 10 --duration 60
+```
+
+For server attribution, compare [point-read stage metrics](/docs/internals/point-reads/#stage-metrics). The benchmark measures client round trips; those server histograms measure time on the serving node.

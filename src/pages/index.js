@@ -216,14 +216,8 @@ function HomepageHeader() {
             <Link className="button button--primary button--lg" to="/docs/getting-started">
               Get started
             </Link>
-            <Link className="button button--secondary button--lg" to="/docs/intro">
-              Tutorial
-            </Link>
-            <Link className="button button--secondary button--lg" to="/docs/book">
-              Book
-            </Link>
-            <Link className="button button--secondary button--lg" to="#inside-kahuna">
-              How it works ↓
+            <Link className="button button--secondary button--lg" to="/playground">
+              Try it in your browser
             </Link>
           </div>
           <div className={styles.proofGrid}>

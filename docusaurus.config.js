@@ -96,6 +96,11 @@ const config = {
             position: 'left'
           },
           {
+            to: '/playground',
+            label: 'Playground',
+            position: 'left'
+          },
+          {
             to: '/blog',
             label: 'Blog',
             position: 'left'

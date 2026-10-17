@@ -45,6 +45,8 @@ let name = "Andres"
 let robot = "Voltron"
 ```
 
+Single- and double-quoted strings can span lines; raw line endings are preserved in the value. Use escapes for other control characters. See [Strings and Escapes](/docs/scripts/semantics/#strings-and-escapes).
+
 ## Booleans
 
 Represent a `true` or `false` value:

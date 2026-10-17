@@ -42,7 +42,10 @@ reads and scans then use the **strictly newer revision**, including a newer dele
 the old intent must not resurrect the key. The same rule applies after a persistent cache miss.
 
 Equality alone does not prove an intent is materialized. `EXTEND` keeps the revision while changing
-expiry, so an equal-revision intent can remain authoritative. `SET` and `DELETE` advance the revision.
+expiry, but every mutation is stamped strictly after the head it replaces. At equal revision, a head
+whose `LastModified` is strictly later than the intent's commit timestamp supersedes the intent for
+latest reads and snapshots at or after that later stamp. The intent remains authoritative for a
+snapshot before the later head, or when the head's stamp is equal or older. `SET` and `DELETE` advance the revision.
 Historical reads select according to commit time, so an older intent may still be visible at a
 snapshot between commits. See [durable settlement](/docs/internals/durable-settlement/) for the log encodings.
 
@@ -56,8 +59,9 @@ committed intent could otherwise answer the read.
 
 Clock and flush fences prevent answering from incomplete history. Persisted-history fallback can
 answer `MustRetry` while relevant committed revisions are unflushed. Reads more than 5 seconds ahead
-of the serving node's HLC skip the clock fence and can change as later commits land within that future
-snapshot. TTL filtering uses the current read time; a fixed timestamp does not freeze expiration.
+of the serving node's HLC return `MustRetry`; they are never served without the clock fence.
+Retry the same cluster-minted timestamp after the serving clock catches up. Arbitrary future timestamps
+can remain refused. `kahuna.kv.snapshot_clock_fence_refused_total` counts these refusals. TTL filtering uses the current read time; a fixed timestamp does not freeze expiration.
 History suppression (`SetNoRevision`) and reclaimed revisions also limit historical reads.
 
 A [snapshot hold](/docs/distributed-keyvalue-store/snapshot-holds/) protects retained history; it does not turn a caller's
@@ -109,30 +113,49 @@ identity; see the coordinator guide for session and operation deduplication limi
 The edge cases above are exercised by `TestEarlyWriteConflictAbort`, `TestSupersededIntentReads`,
 `TestSnapshotReadRepeatability`, `TestSnapshotCommitClockFence`,
 `TestPointLockOverCommittedUnsettledWrite`, `TestRangeLockOverDecidedIntent`,
-`TestLeaderChangeLostStaging`, and `TestRangeLockLeaseHandoff` in `Kahuna.Server.Tests`.
+`TestLeaderChangeLostStaging`, `TestRangeLockLeaseLapse`, and `TestRangeLockLeaseHandoff` in `Kahuna.Server.Tests`.
 
 ## Detecting Locks Lost During Failover
 
 A lock grant now carries the partition and Raft term in which it was issued. A term identifies a leadership epoch. The coordinator keeps the first grant term for each partition; a later grant or renewal under another term records lost exclusion rather than silently replacing that evidence.
 
-Commit checks that each recorded grant still routes to the same partition and that its confirmed leader still leads under the grant's term. This check also runs for read-only transactions. A changed term, moved range, or inability to confirm leadership after bounded attempts refuses commit with terminal `Aborted` and a `Lost lock: …` reason. Start a new transaction and repeat its reads and computation; reacquiring a lock cannot make the earlier computation safe.
+Commit checks that each recorded grant still routes to the same partition and that its confirmed leader still leads under the grant's term. This check also runs for read-only transactions. A changed term, moved range, or inability to confirm leadership after bounded attempts refuses an interactive commit with terminal `Aborted` and a `Lost lock: …` reason. A self-contained script instead returns `MustRetry` with the reason so the client can rerun it as a new transaction; real conflicts remain `Aborted`. Start a new transaction and repeat its reads and computation; reacquiring a lock cannot make the earlier computation safe.
 
 For example:
 
 ```text
-A: read k under a Shared range lock
+A: interactive session reads k under a Shared range lock
    partition leader changes; its actor-local locks disappear
 B: acquire exclusion, change k, commit
 A: renew or upgrade its range lock on the new leader
 A: commit -> Aborted (Lost lock: ...)
 ```
 
-The proof detects leadership continuity, not every possible lease gap: a lease expiring without a leader change is outside this check. Older nodes that do not report grant terms supply no evidence for their grants, so this protection is incomplete during a mixed-version rollout. Upgrade all lock-granting replicas and coordinators before relying on it. Script and interactive transaction paths carry the evidence automatically; application lock method signatures are unchanged.
+The proof also rejects a transaction when the leader has recorded that one of its range locks lapsed, even if the term is unchanged. A later renewal or regrant does not erase that record. The actor records the holder in the same turn that first observes the dead lock, before permitting work that relies on its absence. This includes a session-owned range lock exceeding its configured ceiling.
+
+Explicit range-lock leases held by an actor use the node's monotonic elapsed-time clock. A forward wall-clock or HLC jump no longer immediately expires those leases. Export for split/merge or listing converts the remaining duration into an HLC deadline; import converts that deadline back into a local monotonic lease. Transfer is therefore still sensitive to HLC differences while the lock is in transit. Write-intent expiry and the age ceiling for session-owned locks remain HLC-based.
+
+This is an observed-lapse check, not an apply-time proof of continuous lease ownership: a lease expiring between one-phase bundle validation and apply remains outside it. Lapse records are node-local and retained for the configured session-owned ceiling, or ten minutes when that ceiling is disabled; they are not permanent revocations. Older nodes that do not report grant terms supply no evidence for their grants, so this protection is incomplete during a mixed-version rollout. Upgrade all lock-granting replicas and coordinators before relying on it. Script and interactive transaction paths carry the evidence automatically; application lock method signatures are unchanged.
 
 With one-phase apply-time validation, the commit bundle carries the anchor partition's grant term and replicas reject a bundle proposed in another term. Without that validation, a multi-process transaction carrying lock evidence uses the two-phase path.
 
 | Metric | Meaning |
 |---|---|
 | `kahuna.transactions.lock_grant_term_changes` | Later grants detected under a different term. |
-| `kahuna.transactions.lost_lock_aborts` | Aborts tagged by how the failed lock proof surfaced. |
+| `kahuna.transactions.lost_lock_aborts` | Aborts tagged by how the failed lock proof surfaced; `detected="lease_lapsed"` identifies recorded range-lock lapses. |
 | `kahuna.durable_tx.one_phase_gated_commit_leader_change_rejections` | Bundled decisions rejected for mismatched proposal/grant terms. |
+
+## Staged Writes and Commit Probes
+
+Every staged `SET`, `DELETE`, and `EXTEND` plants a write intent, regardless of the conflict policy. Commit checks that the exact intent the first stage used still owns the key, is live, and was never observed lapsing. Renewal cannot repair a lapse. A lost intent is a lost-exclusion refusal: interactive sessions return `Aborted`, while scripts return `MustRetry` and rerun their computation.
+
+A successful probe claims the intent for commit. Its ordinary staged-write lease no longer expires; commit or rollback clears it, and the session-owned liveness ceiling bounds abandoned holds. This prevents a slow one-phase append from opening a snapshot-read gap merely because the original lease elapsed. The probe reports the confirmed participant term; one-phase replication checks the anchor's expected term before append, even with apply-time validation disabled. A different term refuses the bundle before durable entries exist; a missing term disables bundling and uses the standard flow.
+
+A probe passes a key only on its clean `DoesNotExist` answer. An answer such as `MustRetry`, `WaitingForReplication`, or an unknown response proves neither cleanliness nor conflict and returns `MustRetry`. Two-phase prepares remain available for an interactive retry under the same identity. An actually detected conflict still aborts; a missing result for a requested key is treated as a broken probe contract and aborts too.
+
+| Metric | Meaning |
+|---|---|
+| `kahuna.transactions.lost_staged_intent_aborts` | Commit refusals because a staged write lost its original intent. |
+| `kahuna.durable_tx.commit_probes_unproven` | Retryable refusals when a returned probe answer established nothing. |
+| `kahuna.durable_tx.one_phase_bundle_term_fence_refusals` | One-phase bundles refused before append because the anchor term changed. |
+| `kahuna.kv.staged_chain_break_rollbacks` | Transactions with lost-staging detections rolled back or reaped before a commit attempt. |

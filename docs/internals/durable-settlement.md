@@ -35,7 +35,7 @@ Suppose a persistent transaction changes Alice's balance from 100 to 90 and Bob'
 
 With the default deferred settlement, the commit call can return at the second row. A read does not return Alice's old balance merely because background settlement has not finished. It resolves the committed intent, locally or through the leader holding the canonical record.
 
-An undecided intent requires waiting or a retryable result instead of guessing its outcome. A later direct write can also produce a strictly newer committed revision that supersedes a lingering intent. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/#committed-intents-and-newer-heads) for those visibility rules.
+An undecided intent requires waiting or a retryable result instead of guessing its outcome. A later direct write can also supersede a lingering intent: a strictly newer revision does so, and a same-revision extend does so when its modification timestamp is later than the intent's commit HLC and visible to the requested snapshot. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/#committed-intents-and-newer-heads) for those visibility rules.
 
 ```mermaid
 flowchart TD
@@ -136,7 +136,7 @@ Settlement is **idempotent**: repeating it for the same intent does not create a
 
 ### Point-in-time recovery
 
-PITR expands a materializing resolve using its replayed prepare. It filters the resulting row by the transaction's **commit HLC**, not the time settlement ran. For example, if a transaction commits before the restore target and settles afterward, settlement's later execution time does not change the committed value's logical timestamp.
+PITR expands a materializing resolve using its replayed prepare or the full backup's verified `intent_frontier.pb`. Recognized duplicate references after settlement are skipped; missing unknown sources fail restore closed. See [Prepared-Intent Frontier](/docs/backups-and-point-in-time-recovery/#prepared-intent-frontier-and-reader-compatibility). It filters the resulting row by the transaction's **commit HLC**, not the time settlement ran. For example, if a transaction commits before the restore target and settles afterward, settlement's later execution time does not change the committed value's logical timestamp.
 
 A recent duplicate settlement is tolerated. If a materializing resolve has neither a replayed prepare nor recognized duplicate history, restore **fails closed**: it reports failure instead of silently omitting a committed value. See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for backup cuts and restore constraints.
 

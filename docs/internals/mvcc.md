@@ -179,8 +179,10 @@ The hold API is described in [Snapshot Holds](/docs/distributed-keyvalue-store/s
 
 ## Historical Read Fences
 
-Safe-time waits cover live writers that may commit at or before the requested timestamp. The serving actor folds eligible read timestamps into its HLC, and durable commit timestamps are minted above the maximum participant staged timestamp. A read more than five seconds ahead of the serving HLC skips the clock fence; `kahuna.kv.snapshot_clock_fence_skipped_total` counts this path. Such future reads can change as later commits land within the requested time.
+Safe-time waits cover live writers that may commit at or before the requested timestamp. The serving actor folds eligible read timestamps into its HLC, and durable commit timestamps are minted above the maximum participant staged timestamp. A read more than five seconds ahead of the serving HLC returns `MustRetry` instead of being served unfenced; `kahuna.kv.snapshot_clock_fence_refused_total` counts refusals. Retry the same cluster-minted timestamp once the clock catches up; a caller-created future timestamp may remain refused.
 
 Disk-history fallback returns `MustRetry` while needed committed revisions are unflushed. `kahuna.kv.revisions.retained_unflushed_total` counts retention beyond the memory target; `kahuna.kv.revisions.history_reads_fenced_total` counts fenced fallback reads. TTL uses the current read time, not historical time. Snapshot holds protect retention and cannot recreate pruned or `NOREV` history.
 
 See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) for newer-head precedence over lingering intents, point-lock convergence, and range-lock compatibility. [Durable Settlement](/docs/internals/durable-settlement/) covers the optional materializing-resolve encoding.
+
+The shared default for in-memory `RevisionRetention` is now **4** across core, embedded, and server configuration. `--revisions-to-cache` is applied on clustered servers and rejects values below 1. Persistent keys can consult older disk history subject to retention/fences; ephemeral keys cannot recover older revisions after memory history is trimmed.

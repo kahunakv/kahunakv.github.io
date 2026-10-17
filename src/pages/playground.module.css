@@ -1,0 +1,13 @@
+.page {
+  min-height: calc(100vh - 60px);
+  padding: clamp(2.5rem, 5vw, 4rem) 0 4rem;
+  background:
+    radial-gradient(circle at 86% 0%, rgba(0, 188, 125, 0.16), transparent 24rem),
+    linear-gradient(180deg, #fff 0%, #f4fcf8 100%);
+}
+
+[data-theme='dark'] .page {
+  background:
+    radial-gradient(circle at 86% 0%, rgba(0, 188, 125, 0.12), transparent 24rem),
+    #01140f;
+}

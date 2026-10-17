@@ -87,15 +87,16 @@ These optimizations do not replace Raft. They reduce avoidable work around the r
 
 ## When to Use Kahuna
 
-Use Kahuna when several services must agree on ownership, small shared state, or ordered allocation:
+Use Kahuna when several application instances must agree on state, ownership, or ordering:
 
-- Distributed locks with leases and fencing tokens
-- Configuration, metadata, sessions, reservations, and feature flags
-- Retry-safe sequence allocation
-- Multi-key transactions and scripts
-- Persistent or ephemeral coordination state
+- **Configuration and service metadata:** share configuration, [service discovery records](/docs/recipes/service-discoverability/), sessions, and [feature flags](/docs/recipes/feature-flags/).
+- **Job ownership and exclusive access:** coordinate scheduled jobs, [leader election](/docs/recipes/leader-election/), and access to shared resources with lock leases. Protected resources must enforce fencing tokens to reject work from an expired owner.
+- **Reservations and multi-key state changes:** update related keys together with transactions or scripts, such as [inventory reservations](/docs/recipes/inventory-reservation/).
+- **Shared rate limits and concurrency budgets:** coordinate admissions across application replicas with [distributed rate limiters](/docs/distributed-rate-limiting/), subject to their durability, renewal, and failure-mode limits.
+- **Retry-safe ordered allocation:** allocate invoice numbers, tickets, order IDs, offsets, or non-overlapping ranges through [sequences](/docs/distributed-sequencer/), using idempotency keys for retries.
+- **Hot small state without a separate cache:** keep persistent values in memory and reload them from RocksDB or SQLite after eviction, using one accepted write path instead of coordinating a database copy and a cache copy. Use ephemeral values when losing that state is acceptable.
 
-Use a simpler cache or local store when data can be lost, rebuilt, or briefly inconsistent.
+Use a simpler cache or local store when data can be lost, rebuilt, or briefly inconsistent. Kahuna does not replace a primary business database for relational queries, document storage, analytics, large records, or bulk data. See [Why Kahuna?](/docs/why-kahuna/) for the tradeoffs behind these use cases.
 
 ## Visibility and Recovery Details
 

@@ -2,6 +2,23 @@ import Kahuna8 from '../assets/kahuna8.png';
 
 # Durability Levels
 
+Every key and lock you write to Kahuna has a **durability level**. It decides where the data lives and what it survives, and it is the main trade-off between safety and speed:
+
+| | Persistent | Ephemeral |
+|---|---|---|
+| Where it lives | Replicated to a quorum of nodes through Raft, then written to disk | Only in the memory of the partition leader |
+| Survives a node crash or restart | Yes | No |
+| Survives a leader change | Yes | No |
+| Survives [memory eviction](/docs/architecture/keys-eviction/) | Yes, reloaded from disk | No |
+| Write cost | Waits for replication; higher latency | In memory; lowest latency |
+| Typical data | Configuration, balances, job state, leader election, anything you cannot lose | Caches, sessions, rate-limit counters, short-lived locks |
+
+You select the level on each operation: `KeyValueDurability` and `LockDurability` in the .NET client, the `durability` option in the TypeScript client, and `set` versus `eset` (and the other `e`-prefixed commands) in [Kahuna Script](/docs/scripts/). Sequences are always persistent.
+
+**How to choose:** ask what happens if the value disappears. If the application can rebuild it or simply start again (a cache entry, a counter that resets), use ephemeral and get faster operations. If losing it would cause wrong results, duplicate work, or lost money, use persistent.
+
+The rest of this page explains what Kahuna does internally for each level.
+
 <div style={{textAlign: 'center'}}>
 <img src={Kahuna8} height="350" />
 </div>
@@ -30,7 +47,7 @@ For read operations, the following process is executed:
 
 ## Ephemeral Durability
 
-Not all operations require long-term durability. In scenarios where keys, locks, and sequences are short-lived, Kahuna offers Ephemeral durability, which limits storage to the volatile memory (RAM) of the leader server for the partition.
+Not all operations require long-term durability. In scenarios where keys and locks are short-lived, Kahuna offers Ephemeral durability, which limits storage to the volatile memory (RAM) of the leader server for the partition.
 
 For ephemeral keys, each time a write operation occurs, the following process is executed:
 

@@ -49,16 +49,22 @@ set `election_leader` "node-A"
 set "election_leader" "node-A"
 ```
 
-By escaping keys, you can use all kinds of characters and symbols that might not otherwise be allowed. For example:
+By escaping keys, you can use all kinds of characters and symbols that might not otherwise be allowed. For example, a reserved word (`end`), symbols, and emojis:
 
 ```kahuna
-set `end` "some value" # reserved word end
-set `user@domain.com` "active" # symbols
-set "config:env/prod#1" true # symbols
-set "🔥special-key$" 123 # emojis
+set `end` "some value"
+set `user@domain.com` "active"
+set "config:env/prod#1" true
+set "🔥special-key$" 123
 ```
 
 This allows for greater flexibility in naming keys, especially when working with external systems, user-generated IDs, or complex naming conventions.
+
+Backtick identifiers must remain on one line. Quoted strings may span lines; see [Strings and Escapes](/docs/scripts/semantics/#strings-and-escapes).
+
+## Comments
+
+Kahuna Script has no comment syntax. A `#` outside a string or an escaped identifier is a syntax error. Put explanations in the code that sends the script, or in its documentation.
 
 ## Whitespace and Line Endings
 

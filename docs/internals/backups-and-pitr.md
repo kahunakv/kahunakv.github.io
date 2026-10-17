@@ -8,7 +8,7 @@ Kahuna builds backup and point-in-time recovery (PITR) from two existing durabil
 A full backup captures the materialized state. Incremental backups preserve later WAL entries. A restore combines both and can stop at a selected Hybrid Logical Clock (HLC) timestamp.
 
 ```text
-storage checkpoint + committed WAL segments = state at timestamp T
+storage checkpoint + optional intent frontier + committed WAL segments = state at timestamp T
 ```
 
 For configuration and operator-facing behavior, see [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/).
@@ -149,7 +149,7 @@ boundary = now - PitrWindow - BaseSnapshotInterval
 
 `LogTimeIndex` performs binary-search-style probes over WAL indexes. Proposed and rolled-back entries may appear between committed entries, so each probe pages forward until it finds a committed entry or reaches the tail. Its correctness depends on committed HLC timestamps being monotonically non-decreasing with WAL index.
 
-If no committed entry exists at or before the boundary, the floor remains unknown and no positive retention index is applied.
+If no retained committed entry exists at or before the boundary, the floor uses the first retained committed index; if no committed entry remains, it uses the first index the WAL can hold. It stays positive under load instead of clearing the protection immediately after compaction. Log-time searches start at the compaction floor. This protects available history going forward and cannot recover an already-removed prefix.
 
 ## Point-in-Time Replay
 
@@ -243,3 +243,9 @@ Keeping these operations separate prevents backup artifacts from depending on no
 PITR tracks prepared intents from committed `preparedintent` deltas. It expands by-reference `MaterializeIntent` records (including legacy logged type `30`) and opt-in materializing settlement resolves from those prepares, using the transaction's commit HLC for the target-time filter. Recent duplicate settlement is tolerated. If neither a prepare nor recognized duplicate history can reconstruct a materializing resolve, restore fails closed rather than omitting a committed value.
 
 Readers must support these encodings before producers enable them. Disabling an option later does not make older readers safe for existing records. See [Durable Settlement](/docs/internals/durable-settlement/#rolling-upgrades).
+
+## Durable Intents Across a Full Backup Boundary
+
+The full's optional `intent_frontier.pb` supplies prepares whose values would otherwise be absent from incremental replay. `BackupDriver` copies live intents and applied positions before recording range ends; `IntentFrontier` folds the WAL into live and settled reconstruction state at those ends and checks the existing tail with restore's expansion rules. Missing sources refuse publication with retryable `CutUnverified`. Restore verifies the artifact and seeds prepares and settled identities before segment replay. Recognized duplicate by-reference records after settlement are harmless; unknown references fail closed.
+
+For coordinated capture, `BackupService` opens a prepared-intent observation before choosing a cut. After checkpoint creation it confirms local application on every covered partition and verifies the observation's minimum commit timestamp is strictly above the cut. A failed check discards the image; after three attempts it reports `CutUnverified`. This verifies durable transactions, not every participant's actor-only ticket-path staging. See [Coordinated Cluster Snapshots](/docs/backups-and-point-in-time-recovery/#coordinated-cluster-snapshots) for scope and operational behavior.

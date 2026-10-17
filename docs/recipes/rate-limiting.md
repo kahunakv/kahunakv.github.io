@@ -5,6 +5,8 @@ import TabItem from '@theme/TabItem';
 
 Rate limiting protects shared resources by rejecting or delaying work once a caller crosses an allowed request budget. Kahuna is useful here because the counter update can run atomically near the data instead of requiring several client round-trips.
 
+For the built-in .NET limiters and ASP.NET Core middleware policies, see [Distributed Rate Limiting](/docs/distributed-rate-limiting/). They provide fixed windows, segmented sliding windows, token buckets, and lease-based concurrency limits.
+
 This recipe uses an **ephemeral** key because rate-limit counters are temporary state. The key expires automatically when the window ends.
 
 The examples below match Kahuna's [single-key script fast path](/docs/scripts/single-key-fast-path/): one auto-commit script, one ephemeral key, no blocking statements. That keeps rate-limit checks atomic without paying the full multi-key transaction cost.
@@ -24,19 +26,21 @@ rate-limit/login/203.0.113.10/1718391900
 rate-limit/api/user-42/1718391900
 ```
 
+This recipe derives window keys from the application clock. Clock skew between replicas can put their requests in different windows, so it is not an exact shared time boundary; the built-in .NET fixed-window limiter computes boundaries with `hlc()` inside its decision script.
+
 The script below creates the counter if it does not exist, increments it if it does, and rejects the request once the limit has been reached. Pass `@expires_ms` as the remaining time in the current window, optionally with a small grace period. Do not pass the full window length on every request, because that turns the counter into a sliding-expiration counter.
 
 ```kahuna
 let current = eget @counter_key
 
-if not current then
+if not found then
   eset @counter_key 1 ex @expires_ms
   return 1
 end
 
 let count = to_int(current)
 
-if count >= @limit then
+if count >= to_int(@limit) then
   return 0
 end
 
@@ -60,14 +64,14 @@ KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransaction
     """
     let current = eget @counter_key
 
-    if not current then
+    if not found then
       eset @counter_key 1 ex @expires_ms
       return 1
     end
 
     let count = to_int(current)
 
-    if count >= @limit then
+    if count >= to_int(@limit) then
       return 0
     end
 
@@ -98,14 +102,14 @@ const expiresMs = Math.max(1, windowEndMs - nowMs + 1000);
 const script = client.loadScript(`
 let current = eget @counter_key
 
-if not current then
+if not found then
   eset @counter_key 1 ex @expires_ms
   return 1
 end
 
 let count = to_int(current)
 
-if count >= @limit then
+if count >= to_int(@limit) then
   return 0
 end
 
@@ -135,14 +139,14 @@ For a simpler throttle, keep one counter per subject and refresh the expiration 
 ```kahuna
 let current = eget @counter_key
 
-if not current then
+if not found then
   eset @counter_key 1 ex @ttl_ms
   return 1
 end
 
 let count = to_int(current)
 
-if count >= @limit then
+if count >= to_int(@limit) then
   return 0
 end
 

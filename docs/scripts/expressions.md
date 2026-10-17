@@ -31,8 +31,10 @@ These allow you to perform basic mathematical operations:
 **Example:**
 
 ```kahuna
-let result = (10 + 5) * 2  # result is 30
+let result = (10 + 5) * 2
 ```
+
+The value of `result` is `30`.
 
 These operators can be used with numeric values and expressions within your script logic.
 
@@ -116,10 +118,12 @@ function_name(arg1, arg2, ...)
 **Examples:**
 
 ```kahuna
-let name = upper("alice")             # returns "ALICE"
-let a_number = round(10.55, 1)        # returns 10.6
-let json_str = to_json([10, 42, 30])  # serializes to JSON
+let name = upper("alice")
+let a_number = round(10.55, 1)
+let json_str = to_json([10, 42, 30])
 ```
+
+`upper` returns `"ALICE"`, `round` returns `10.6`, and `to_json` serializes the array to JSON.
 
 These functions cover areas like string manipulation, key/value operations, math, time, JSON handling, and more, making Kahuna Script a powerful tool for writing logic close to the data.
 

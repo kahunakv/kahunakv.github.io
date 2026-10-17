@@ -118,4 +118,8 @@ While many systems only care about the latest value, Kahuna's ability to retriev
 
 ## Historical Read Limits
 
-A live writer that may commit at or before `T` can cause an as-of read to wait. Persistent-history fallback returns `MustRetry` while relevant revisions are unflushed. Reads more than five seconds ahead of the serving node's HLC skip the clock fence and can change as later commits land within that timestamp. TTL filtering uses the current read time, so `AS OF` does not freeze expiration. See [fixed-timestamp reads](/docs/distributed-keyvalue-store/read-and-lock-semantics/#fixed-timestamp-reads).
+A live writer that may commit at or before `T` can cause an as-of read to wait. Persistent-history fallback returns `MustRetry` while relevant revisions are unflushed. Reads more than five seconds ahead of the serving node's HLC return `MustRetry` instead of an unfenced answer. Retry the same cluster-minted timestamp after the serving clock catches up. TTL filtering uses the current read time, so `AS OF` does not freeze expiration. See [fixed-timestamp reads](/docs/distributed-keyvalue-store/read-and-lock-semantics/#fixed-timestamp-reads).
+
+## Modification Timestamps and Equal Revisions
+
+Every set, delete, extend, and transactional stage stamps its modification strictly after the head it replaces, including a head loaded from another leader or materialized from a coordinator-stamped durable intent. `EXTEND` retains the revision but advances `LastModified`; replicas order equal-revision heads by that timestamp. A later extend therefore supersedes a lingering committed intent for latest reads, while a fixed snapshot before the extend can still use the earlier intent. Revision equality alone does not establish which expiry is current.

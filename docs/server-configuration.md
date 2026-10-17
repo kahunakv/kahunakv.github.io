@@ -160,7 +160,7 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--disable-fused-ephemeral-finalize` | Finalize every ephemeral transaction with separate prepare, range-lock probe, and commit messages. By default, a transaction whose whole write set is one ephemeral key can finalize in one actor turn. | disabled |
 | `--extension-assembly` | Path to an assembly publishing user-defined script functions through `IKahunaFunctionProvider`. Repeatable. Every cluster node that may coordinate scripts should load the same function set. | none |
 | `--function-slow-warn-ms` | Log a warning when a user-defined script function takes longer than this many milliseconds. `0` disables the warning. | `50` |
-| `--revisions-to-cache` | Number of key revisions intended to stay cached in memory. This flag is defined by the server CLI, but the current server startup path does not pass it into `KahunaConfiguration`. | `4` |
+| `--revisions-to-cache` | Recent revisions retained per key in memory; must be at least 1. Older persistent revisions can fall back to disk; older ephemeral revisions have no disk history. | `4` |
 | `--cache-entry-ttl` | Age threshold used by lock cleanup and legacy cleanup paths, in seconds. Key/value LRU eviction is budget-based. | `1800` |
 | `--cache-entries-to-remove` | Maximum entries removed by cleanup paths that use this cap. Values less than or equal to `0` are normalized from the key/value collection batch size. | `100` |
 | `--dirty-objects-writer-delay` | Delay between dirty object writer flush passes, in milliseconds. | `200` |
@@ -175,6 +175,9 @@ These options tune persistent partition writes before they are proposed to Raft.
 |---------------------|-------------|---------------|
 | `--kv-write-linger-ms` | Delay from the oldest queued persistent partition write before its partition batch is proposed. `0` dispatches an idle partition immediately. | `1` |
 | `--kv-write-post-completion-hold-ms` | Optional hold after a partition batch completes before the next sub-threshold batch is dispatched. This can form denser batches under sustained same-partition load. Full batches and queue-age releases are not delayed. | `0` |
+| `--kv-write-precise-wake` | Use one dedicated timer thread per node for linger, hold, and queue-age wakes; sleeps whole milliseconds and spins the sub-millisecond remainder. | `false` |
+| `--kv-write-fill-target-trigger` | Dispatch held/lingering buffers when they reach a learned submission-count target; periodic timed batches refresh the target. | `false` |
+| `--disable-published-head-reads` | Disable resident latest point-get reads from immutable published heads; use actor reads for diagnosis. | disabled; published reads enabled |
 | `--kv-write-max-batch-items` | Maximum log entries selected for one aggregator Raft call. | `512` |
 | `--kv-write-max-in-flight-batches` | Maximum aggregator batches a partition may have awaiting Raft results at once. `1` keeps the serial one-round-at-a-time pipeline. Higher values overlap quorum waits while preserving FIFO dispatch order. | `1` |
 | `--kv-write-max-batch-bytes` | Target serialized bytes selected for one aggregator Raft call. An oversized single item dispatches alone. | `4194304` |
@@ -223,7 +226,8 @@ These options tune automatic splitting and merging for key spaces registered wit
 | `--backup-retention-max-bytes` | Keep the most-recent backup chains whose artifact bytes fit this budget. The newest chain is always kept. `0` is unbounded. | `0` |
 | `--backup-gc-interval` | Periodic backup GC cadence in seconds. A pass also runs after each backup. `0` disables the periodic pass only. | `3600` |
 | `--backup-restore-throttle-mbps` | Throughput budget for the restore checkpoint copy in MB/s. `0` is unlimited. | `0` |
-| `--pitr-bootstrap-from` | Leaf backup ID restored into local persistence and WAL before the node joins an existing cluster. Requires `--join-existing`, `--initial-cluster`, and `--pitr-backup-dir`. | none |
+| `--pitr-bootstrap-fallback-to-join` | Skip an out-of-window seed or a `latest` selection with no valid chain and join through normal catch-up. Does not restore invalid candidates or ignore explicit-chain authentication/corruption failures. | `false` |
+| `--pitr-bootstrap-from` | Leaf backup GUID or `latest`. On an empty RocksDB/SQLite store, copy and verify the full base image before opening the backend, replay incrementals, certify WAL boundaries, then join. Requires `--join-existing`, `--initial-cluster`, and `--pitr-backup-dir`. See [PITR Bootstrap](/docs/pitr-bootstrap/). | none |
 | `--pitr-target-time-ms` | PITR target using the physical HLC component in Unix epoch milliseconds. `0` restores through the selected chain's natural end. | `0` |
 
 See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for setup, client and CLI usage, the backup-chain model, and recovery constraints.
@@ -379,6 +383,8 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 
 ## Raft Membership and Catch-Up
 
+Admission/initialization and learner promotion have separate join budgets. Promotion is bounded by lack of progress, not total elapsed time; progress includes advancing commit frontiers, newly observed partitions, and snapshot receive/install activity. A post-admission failure attempts best-effort withdrawal; caller cancellation leaves that decision to the caller.
+
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
 | `--raft-backfill-threshold` | Committed-entry lag that triggers active follower backfill. | `10` |
@@ -387,8 +393,12 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 | `--raft-max-backfill-bytes-per-round` | Maximum serialized bytes sent to one stale follower per backfill round, in addition to the entry limit. | `4194304` |
 | `--raft-follower-saturation-backoff` | Milliseconds a leader waits before retrying backfill to a peer that reported a saturated WAL queue. | `1000` |
 | `--raft-backfill-no-progress-pause-cap` | Maximum exponential pause, in milliseconds, between backfill batches to a follower whose reported commit frontier is not advancing. | `30000` |
+| `--raft-backfill-seeded-catch-up-grace-cap` | Cap on the estimated catch-up component of a snapshot-seeded follower's escalation grace, in milliseconds; added to the no-progress pause cap. `0` disables the grace. | `180000` |
 | `--raft-backfill-no-progress-anchor-fallback-ships` | Consecutive fruitless backfill shipments before the leader re-anchors the next batch at the follower's reported commit frontier. Values less than or equal to `0` disable this fallback. | `2` |
+| `--raft-join-timeout` | Join admission and initialization ceiling, in milliseconds; excludes the learner promotion wait. | `60000` |
+| `--raft-join-promotion-stall-timeout` | Maximum milliseconds without catch-up progress while waiting for Voter promotion. Must exceed the learner stable window plus node-update interval. | `300000` |
 | `--raft-learner-promotion-lag` | Maximum entries a learner may trail the leader while remaining eligible for voter promotion. | `10` |
+| `--raft-learner-promotion-stall-warning-after` | Time in milliseconds before logging the last failed promotion check for a placement-added learner. Diagnostic only. | `30000` |
 | `--raft-learner-promotion-stable-window` | Time a learner must remain within the promotion lag on all partitions, in milliseconds. | `3000` |
 
 ## Raft Gossip, Failure Detection, and Quiescence
@@ -429,4 +439,8 @@ See [Leader Balancing](/docs/leader-balancing/) for rollout, tuning, metrics, an
 
 Current peers can acknowledge staged final chunks with `InstallPending` and poll installation separately. Chunk-ack timeout bounds transport/status calls, while transfer-step timeout also bounds lack of reported importer byte progress. A progressing install can exceed both durations in total. Older non-polling senders wait for install on the final chunk. Receive byte/session caps remain active with disk staging; no second session is staged for a partition whose install is running.
 
-See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for receive staging, validation, partial-install behavior, compaction-window semantics, and server/embedded differences. `DurableMaterializeOnResolve`, `DurableMaterializeByReference`, and `KeyValueWritePreciseWake` are core/embedded configuration fields with no server CLI flag today.
+See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for receive staging, validation, partial-install behavior, compaction-window semantics, and server/embedded differences. `DurableMaterializeOnResolve` and `DurableMaterializeByReference` are core/embedded configuration fields with no server CLI flag today. Precise wakes and fill-target dispatch have the server switches listed above.
+
+## Shared Server Configuration Mapping
+
+Clustered and standalone server startup now share the embedded configuration mapping before server-only listener and routing settings are added. Backup/PITR settings, durable-record retention/maintenance, checkpoint interval, published-head reads, and revision retention therefore reach the clustered configuration too. Settings previously parsed but ignored on that path can now affect a deployment; review existing flags when upgrading. This does not add CLI flags for runtime-only fields.

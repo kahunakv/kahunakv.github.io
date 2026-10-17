@@ -186,3 +186,11 @@ For an existing production cluster, bootstrap a new cluster with the desired rep
 ## Snapshot Receive Capacity
 
 A learner below retained history receives a whole-partition snapshot. Pending-byte caps include memory and disk staging, so disk spill does not remove the maximum-snapshot-size limit. Current peers acknowledge staging separately from installation and poll the install outcome. While an install runs, a second snapshot of that partition is not staged. Configure a private staging directory and size acknowledgement budgets for transport/status calls and transfer-step budgets for expected progress stalls. See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for options and partial-install limitations.
+
+## Learner Promotion Diagnostics
+
+Placement accepts restarted nodes' fresh load-report incarnations even when their report version counters reset. If the gossiped leader hint is absent or dead, learner-lag checks can resolve a quorum-confirmed leader before deciding promotion readiness. These are recovery paths, not permission to promote an unconfirmed learner.
+
+`--raft-learner-promotion-stall-warning-after` (30,000 ms) logs the last failed check when a placement-added learner stays unpromotable. It is diagnostic only; it does not relax the lag or stability requirements. A non-member range leader is reported as a stall condition. After a failed drain is confirmed rolled back to `Voter`, the node's departure latch is released so a later eviction can trigger automatic rejoin. A removal that may still commit keeps the latch.
+
+For Kubernetes deployment and traffic-driven node counts, use the [Kubernetes Operator](/docs/kubernetes-operator/). It combines placement with roster-gated changes; it does not automatically convert fully replicated partitions or create PITR seed access for new pods.

@@ -1,6 +1,18 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Backups and Point-in-Time Recovery
 
-Kahuna's backup design combines storage-engine checkpoints with the committed Raft write-ahead log (WAL). This supports full backups, incremental backups, and recovery to a selected Hybrid Logical Clock (HLC) timestamp.
+Raft replication protects Kahuna against losing a node, but it does not protect against bad data. If a faulty deploy, a script bug, or an operator mistake deletes or overwrites keys, replication copies that change to every replica within milliseconds. Backups give you a copy of the data from **before** the mistake.
+
+**Point-in-time recovery (PITR)** goes one step further. Instead of restoring only to the moment of the last backup, you can restore to any chosen moment inside a recent window (one hour by default, up to six hours), for example "five seconds before the bad deploy started". Use backups and PITR to:
+
+- Recover from accidental deletes, overwrites, or corrupted application data.
+- Keep a copy of the data outside the cluster, so an incident that destroys the nodes' disks does not destroy every copy.
+- Inspect the state of the data at an earlier time, in a separate directory, without touching the live cluster.
+- Seed a new node from a backup instead of a full transfer from its leader. See [PITR Bootstrap](/docs/pitr-bootstrap/).
+
+Kahuna's backup design combines storage-engine checkpoints with the committed Raft write-ahead log (WAL), the ordered log of every committed change. This supports full backups, incremental backups, and recovery to a selected Hybrid Logical Clock (HLC) timestamp. Kahuna does not schedule backups by itself: you trigger them from the CLI, a client, or the REST and gRPC APIs, usually from a scheduled job.
 
 :::caution Restore scope
 
@@ -16,7 +28,7 @@ The three recovery operations use the same two artifacts:
 
 | Operation | Artifacts | Purpose |
 |-----------|-----------|---------|
-| Full backup | Storage checkpoint and manifest | Creates a complete base image at a known WAL position. |
+| Full backup | Storage checkpoint, manifest, and optional intent frontier | Creates a complete base image at a known WAL position. |
 | Incremental backup | Committed WAL segments and manifest | Stores only changes since a parent backup. |
 | Point-in-time restore | Full checkpoint and an incremental chain | Replays changes in order and stops at the requested HLC timestamp. |
 
@@ -90,7 +102,8 @@ For production clusters, point every node at the same shared `--pitr-backup-dir`
 
 The built-in backup target is `local`. The backup storage layer also supports host-registered targets for object storage or other artifact stores, but those providers live outside the default server package. When using a non-local target, configure `--pitr-backup-target` to the provider name and set `--pitr-backup-scratch-dir` if the target needs a local checkpoint staging area.
 
-### Kahuna CLI
+<Tabs groupId="client-examples">
+<TabItem value="cli" label="CLI">
 
 ```bash
 # Full backup
@@ -115,9 +128,8 @@ kahuna-cli -c "https://kahuna-1:8082" --backup-gc --backup-gc-dry-run
 
 Add `--format json` for machine-readable output. Interactive mode supports `backup full`, `backup coordinated`, and `list backups`.
 
-An incremental request can fall back to a full backup when the WAL range needed for the parent has already been compacted. This is visible in the returned fields: `RequestedKind` remains `Incremental`, `ActualKind` is `Full`, and `SubstitutionReason` explains why Kahuna took a new base image instead.
-
-### .NET Client
+</TabItem>
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 using Kahuna.Client;
@@ -139,7 +151,8 @@ KahunaBackupGcResult preview =
 
 The client supports full, incremental, coordinated backups, catalog inspection, offline restore, and backup garbage collection over REST or gRPC communication.
 
-### TypeScript Client
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
 
 ```ts
 import { KahunaClient } from "kahuna-client";
@@ -159,11 +172,29 @@ const preview = await client.collectBackupGarbage({ dryRun: true });
 
 The TypeScript client supports the same backup catalog, full backup, incremental backup, coordinated backup, restore, and backup garbage-collection operations.
 
+</TabItem>
+</Tabs>
+
+An incremental request can fall back to a full backup when the WAL range needed for the parent has already been compacted. This is visible in the returned fields: `RequestedKind` remains `Incremental`, `ActualKind` is `Full`, and `SubstitutionReason` explains why Kahuna took a new base image instead.
+
 ## Restore to a New Directory
 
 `RestoreAsync` and `--restore` copy the chain's full checkpoint into a target directory and replay incremental entries. A target time of `0` restores through the natural end of the selected chain. A positive target is the HLC physical component expressed as Unix epoch milliseconds.
 
 Kahuna maps a positive `--target-time-ms` to the inclusive end of that millisecond. That prevents same-millisecond commits with a higher HLC counter from being accidentally excluded.
+
+The target path is on the filesystem of the server node handling the request, not the machine running `kahuna-cli`. For remote restore, configure `--pitr-restore-root` and choose a target under that directory:
+
+```bash
+kahuna-server \
+  --pitr-backup-dir /var/lib/kahuna/backups \
+  --pitr-restore-root /var/lib/kahuna/restores
+```
+
+Kahuna rejects restore targets outside the restore root, targets that overlap the live storage path or backup directory, symlinked paths, and non-empty target directories. Restore builds the result in a private staging directory and publishes it with an atomic rename, so a cancelled or failed restore does not leave a partial directory at the final target path.
+
+<Tabs groupId="client-examples">
+<TabItem value="cli" label="CLI">
 
 ```bash
 # Restore the complete chain
@@ -178,17 +209,8 @@ kahuna-cli -c "https://kahuna-1:8082" \
   --target-time-ms 1781478000000
 ```
 
-The target path is on the filesystem of the server node handling the request, not the machine running `kahuna-cli`. For remote restore, configure `--pitr-restore-root` and choose a target under that directory:
-
-```bash
-kahuna-server \
-  --pitr-backup-dir /var/lib/kahuna/backups \
-  --pitr-restore-root /var/lib/kahuna/restores
-```
-
-Kahuna rejects restore targets outside the restore root, targets that overlap the live storage path or backup directory, symlinked paths, and non-empty target directories. Restore builds the result in a private staging directory and publishes it with an atomic rename, so a cancelled or failed restore does not leave a partial directory at the final target path.
-
-The equivalent .NET call is:
+</TabItem>
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 KahunaRestoreResponse restored = await client.RestoreAsync(
@@ -198,7 +220,8 @@ KahunaRestoreResponse restored = await client.RestoreAsync(
 );
 ```
 
-The equivalent TypeScript call is:
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
 
 ```ts
 const restored = await client.restore(
@@ -207,6 +230,9 @@ const restored = await client.restore(
   { targetTimeMs: 0 }
 );
 ```
+
+</TabItem>
+</Tabs>
 
 Start a fresh node against the restored directory using the same storage adapter and storage revision as the backup source. Hot in-place restore of a running node is not supported.
 
@@ -225,7 +251,7 @@ kahuna-server \
   --pitr-target-time-ms 1781478000000
 ```
 
-Omit `--pitr-target-time-ms` or set it to `0` to bootstrap through the chain's natural end. The backup ID must resolve to a valid chain inside the configured PITR window.
+Omit `--pitr-target-time-ms` or set it to `0` to bootstrap through the chain's natural end. The server now copies and verifies the full base image before opening an empty backend, replays the chain, and installs certified WAL snapshot boundaries. `--pitr-bootstrap-from latest` selects the newest seed-compatible chain; optional `--pitr-bootstrap-fallback-to-join` permits retention/no-chain fallback to normal catch-up. Existing data is not overwritten. See [PITR Bootstrap](/docs/pitr-bootstrap/) for authentication, cluster-ID checks, marker recovery, and exact fallback limits.
 
 ## HTTP API
 
@@ -291,11 +317,11 @@ These checks make backup and restore fail closed before Kahuna writes or trusts 
 
 A full backup performs these operations in order for active partitions:
 
-1. Record the last committed WAL position covered by the backup.
+1. Copy live prepared intents and their per-partition applied positions, then record the last committed WAL position covered by the backup.
 2. Wait for the apply barrier so every covered committed write has reached the in-memory state and persistence queue.
 3. Flush pending persistent writes to the materialized storage backend.
 4. Create a storage-engine checkpoint.
-5. Verify artifact sizes and SHA-256 checksums.
+5. Fold the WAL into the prepared-intent frontier at each range end and verify that later records can be reconstructed; verify artifact sizes and SHA-256 checksums.
 6. Write a manifest containing the backup ID, creation time, partition ranges, checksums, sizes, and optional cluster snapshot timestamp.
 
 Recording the committed position before the flush is important. It guarantees the checkpoint contains at least every mutation promised by the manifest, including mutations that were committed but still waiting in the background persistence queue.
@@ -314,7 +340,7 @@ Checkpoint directories and manifests are created through temporary paths and mov
 
 An incremental backup reads committed WAL entries after its parent's final index and writes one segment per partition. It pages through the WAL instead of loading an unbounded log into memory.
 
-Incremental backups are proportional to the write volume since the parent, not the total dataset size. However, every required WAL entry must still be available. If compaction has advanced beyond the incremental's starting index, Kahuna takes a new full backup instead and reports the substitution in `RequestedKind`, `ActualKind`, and `SubstitutionReason`.
+Incremental backups are proportional to the write volume since the parent, not the total dataset size. However, every required WAL entry must still be available. The driver checks the actual WAL compaction floor before and after taking its retention hold; a newer application checkpoint alone does not require a full. Missing indexes in the claimed range fail closed. Compaction gaps or topology divergence from a stamped ancestor (membership change or partition split/merge) require a new full. The backup service substitutes it and reports `RequestedKind`, `ActualKind`, and `SubstitutionReason`; direct facade failures expose `NeedsFull`. Ancestors without a topology stamp retain the legacy compatibility path, so absence of a stamp is not proof the topology matched.
 
 Keep the checkpoint, every incremental artifact, and every manifest in the chain together. A missing artifact or manifest makes later descendants unusable for restore.
 
@@ -324,13 +350,13 @@ To reconstruct state at timestamp `T`, the restore process:
 
 1. Selects a `T` covered by the full checkpoint and incremental chain.
 2. Resolves and validates the selected backup chain.
-3. Opens the root full checkpoint in the destination backend.
+3. Opens the root full checkpoint and seeds reconstruction state from its optional intent frontier.
 4. Replays incremental WAL segments in partition order.
 5. Applies committed key/value entries whose transaction commit HLC is less than or equal to `T`.
 
 Restore writes are idempotent upserts keyed by key and revision. An interrupted incremental replay can be restarted without creating duplicate logical revisions.
 
-Only committed WAL entries are included. Prepared but uncommitted transaction intents are absent, so an unfinished transaction does not become visible after restore.
+Only Raft-committed WAL entries are included. Transaction prepares can be Raft-committed before the transaction is decided: restore retains them for reconstruction, but an unfinished or aborted transaction does not become a visible mutation merely because its prepare is present.
 
 Restore uses the commit HLC carried by the key/value payload, not the per-partition WAL append time, as the PITR cut axis. All participants of a committed distributed transaction share that commit HLC, so restore includes or excludes the transaction as one unit instead of cutting through different partitions.
 
@@ -342,9 +368,11 @@ Keys written with no revisions cannot be rolled back across overwritten values. 
 
 Each Raft partition has its own WAL position, so a log index cannot identify one cluster-wide moment. Coordinated backups instead select one HLC timestamp and cap every partition at that timestamp.
 
-The coordinator chooses a timestamp strictly before the earliest transaction currently preparing across the scanned partitions. This prevents a transaction that is actively committing from being split by the snapshot boundary.
+Durable participants share one coordinator-minted commit HLC; their partition-local append times may differ. The risk during capture is partial materialization: one participant's row can reach the checkpoint before another's, despite sharing a commit timestamp.
 
-Coordinated backup chooses a safe cluster timestamp. During restore, Kahuna cuts key/value replay on the shared transaction commit HLC carried in each payload, so a committed distributed transaction is replayed whole or skipped whole.
+The coordinator chooses `T` below the lowest in-flight commit timestamp it sees in live prepared intents and prepared actor intents. It starts observing prepared intents before that choice. After checkpoint capture it confirms local application of the committed frontier on every covered partition, then rejects the image if the observation saw an intent with commit timestamp at or below `T`. It tries up to three cuts, then returns `CutUnverified` (HTTP 503 / gRPC `Unavailable`) without publishing a backup. Retry after the workload or replication catches up.
+
+This verification covers durable prepared-intent transactions. Persistent transactions using the ticket path, such as extend-only transactions, keep pending state on participant actors; the coordinator sees only its own actors. A plain full backup and an incremental do not perform this coordinated cut verification. Coverage under replica placement remains limited to the captured partitions.
 
 ## Backup Retention and Garbage Collection
 
@@ -387,6 +415,7 @@ Backup and restore failures expose stable outcome names so automation does not n
 | `TargetOutsideCoverage` | Requested restore time is outside the selected chain coverage. |
 | `RetryableLeadershipLoss` | Leadership changed during the operation; retry on the current leader. |
 | `ExactCheckpointUnavailable` | Kahuna cannot prove the base checkpoint exactly represents the requested cut. |
+| `CutUnverified` | Retryable: coordinated cut verification failed, or a full backup cannot supply prepared intents needed by its chain. No backup is published. HTTP 503 / gRPC `Unavailable`. |
 | `UnsupportedFormat` | A legacy or unsupported manifest was found. |
 | `TopologyChanged` | Partition topology or membership changed during backup. Retry after the cluster is stable. |
 | `NotBackupCoordinator` | The node is not the current coordinated-backup owner. Retry against the meta-partition leader. |
@@ -415,3 +444,11 @@ A restored node can seed a later cluster join, but membership and Raft catch-up 
 ## Transaction Settlement Encodings
 
 Restore reconstructs by-reference materialization and opt-in materializing settlement from prepared intents in the committed WAL history, using the transaction commit HLC for target-time filtering. A Raft-committed prepare alone does not expose an unfinished transaction. Missing reconstruction history fails restore rather than silently dropping a value. See [Durable Materialization Replay](/docs/internals/backups-and-pitr/#durable-materialization-replay) and [upgrade requirements](/docs/internals/durable-settlement/#rolling-upgrades).
+
+## Prepared-Intent Frontier and Reader Compatibility
+
+A full backup writes `intent_frontier.pb` when reconstruction state is nonempty. The manifest covers its size and checksum. It carries prepared intents live at each partition range end, including their values, plus settled identities used to recognize duplicates. An incremental may contain only a by-reference materialization or a materializing settlement for a prepare that occurred inside the full's range; the frontier supplies the value that replay would otherwise lack.
+
+Capture copies live intents before reading range ends, then folds WAL history to those ends. It also verifies records already present beyond each end, including entries not yet marked committed, using restore's reconstruction rules. If compaction removed a necessary prepare and neither the copy nor the fold supplies it, the full fails with `CutUnverified`. The check is fail-closed, not permission to ignore missing source data.
+
+Restore verifies and stages the frontier, seeds live prepares and settled history, then replays incrementals. A recognized duplicate by-reference materialization after settlement is skipped; an unknown materialization without a source fails restore. Old fulls without a frontier retain their previous behavior and do not gain missing reconstruction data. Upgrade restore readers before using fulls with a frontier: older artifact verifiers reject the additional file.

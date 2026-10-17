@@ -26,11 +26,14 @@ end
 
 Division by zero is a script error for integers, floats, and numeric strings.
 
-Numeric equality is exact:
+Numeric equality is exact. `1 == 1.0` is `true`, and `1 == 1.0009` is `false`:
 
 ```kahuna
-return 1 == 1.0      # true
-return 1 == 1.0009   # false
+return 1 == 1.0
+```
+
+```kahuna
+return 1 == 1.0009
 ```
 
 Use `nearly_equals(a, b, tolerance)` when a calculation needs a tolerance:
@@ -66,6 +69,15 @@ That range contains `1` through `10`. If the start is greater than the end, the 
 ## Strings and Escapes
 
 Double-quoted, single-quoted, and backtick identifier literals decode escapes. Common escapes include `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, octal escapes, `\xHH`, `\uHHHH`, and `\UHHHHHHHH`.
+
+Single- and double-quoted strings may also contain raw line breaks. The value preserves LF or CRLF exactly as supplied:
+
+```kahuna
+set `messages/welcome` "first line
+second line"
+```
+
+Backtick identifiers must stay on one line. Other raw control characters, such as a tab inside a literal, remain invalid; use `\t`. An unclosed literal is a script error, and diagnostics after multiline literals retain their source line numbers.
 
 Unknown escapes are script errors instead of being silently preserved or dropped.
 
@@ -106,8 +118,10 @@ Array indexes must resolve to whole numbers. Integers, whole-number floats, and 
 
 ```kahuna
 let items = ["a", "b", "c"]
-return items["1"]  # b
+return items["1"]
 ```
+
+The script returns `b`.
 
 ## Prefix Scans
 

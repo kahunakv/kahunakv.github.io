@@ -69,11 +69,11 @@ It can be done with the built-in `cmprev` modifier on `set`. For example, only u
 set `election/leader` "node-A" cmprev 0
 ```
 
-we can return a custom value according to the result of the operation:
+A refused `set` does not stop the script. To return a custom value according to the result of the operation, check it with the [`not set`](/docs/scripts/semantics/#statement-result-guards) guard:
 
 ```kahuna
-let elected = set `election/leader` "node-A" cmprev 0
-if not elected then
+set `election/leader` "node-A" cmprev 0
+if not set then
   return false
 end
 return true
@@ -82,8 +82,8 @@ return true
 or throw an exception if the value can't be changed:
 
 ```kahuna
-let elected = set `election/leader` "node-A" cmprev 0
-if not elected then
+set `election/leader` "node-A" cmprev 0
+if not set then
   throw "election failed"
 end
 return true

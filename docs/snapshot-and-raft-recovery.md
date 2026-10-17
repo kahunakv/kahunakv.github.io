@@ -1,9 +1,29 @@
 # Snapshot Installation and Raft Recovery
 
-Kahuna registers whole-partition state transfer with Kommander. A replica that needs history below the
+A replica normally stays current by receiving each new Raft log entry from its partition leader. That
+only works while the leader still has the entries the replica is missing. Leaders compact (discard)
+old log entries to bound disk use, so some replicas cannot catch up from the log alone:
+
+- A new node that joins the cluster and starts empty.
+- A node that was offline longer than the leader's retained log history.
+- A replica that the [placement controller](/docs/replica-placement/) moves to a different node.
+- A replica that must be repaired because its state diverged.
+
+In these cases the leader sends a **snapshot**: a complete copy of the partition's state. The replica
+installs it and then replays the log entries that follow. This happens automatically; you do not
+trigger it.
+
+**Read this page if** you operate a cluster with large partitions, run nodes with limited memory, or
+investigate a node that is slow to catch up or stays a learner. It explains what a snapshot contains,
+how much memory and disk it uses, which timeouts apply, and how to read the install outcomes and
+metrics. If your cluster joins and recovers nodes without problems, the defaults are usually
+sufficient.
+
+Kahuna registers whole-partition state transfer with Kommander, its Raft library. A replica that needs history below the
 available Raft log floor can be seeded from its leader's snapshot and replay the retained tail. This
 supports catch-up and repair under both full replication and per-partition placement; it is separate
-from operator-triggered [backups and PITR](/docs/backups-and-point-in-time-recovery/).
+from operator-triggered [backups and PITR](/docs/backups-and-point-in-time-recovery/). To seed a joining node
+from a backup instead of a leader snapshot, see [PITR Bootstrap](/docs/pitr-bootstrap/).
 
 For replica moves and staging-cap sizing, see the
 [replication factor guide](/docs/replica-placement/). For detection and
@@ -140,7 +160,7 @@ kahuna-server \
 
 ## Replication scheduling and log retention
 
-The following settings describe Kahuna's pinned **Kommander 1.9.6** behavior. These **server** options are passed to `RaftConfiguration`. They do not have matching
+The following settings describe Kahuna's pinned **Kommander 1.10.11** behavior. These **server** options are passed to `RaftConfiguration`. They do not have matching
 properties on `EmbeddedKahunaOptions` today; do not assume server/embedded configuration parity.
 
 | Flag | Default | Semantics |
@@ -185,3 +205,9 @@ Embedded hosts can query `node.Raft.GetSnapshotStatuses(partitionId)` for sender
 | `raft.snapshot.receive_in_memory_bytes` | Resident portion of assembling and installing bytes; spill bytes are excluded. |
 | `raft.snapshot.install_duration_ms` | Receiver install duration from terminal chunk to outcome. |
 | `raft.snapshot.install_peak_heap_bytes` | Sampled managed-heap high-water mark around installation; it does not fall when an install ends and is not a precise per-partition allocation measurement. |
+
+## Export Ordering and Catch-Up Grace
+
+Whole-partition export captures prepared intents and the committed-head ledger before draining persistence, then scans rows and locks. This order ensures a captured head without its intent has its materialized row flushed before the scan. A by-reference replay already reflected by an installed snapshot verifies persisted row coverage; a ledger entry alone is not proof that the value exists. Missing reconstruction remains a containment condition, not a silently skipped write.
+
+Backfill progress accounts for the follower's reported frontiers rather than only its committed index. A recently snapshot-seeded follower can defer escalation for the no-progress pause cap plus an estimated catch-up duration. The estimate uses its gap at install and the leader's subsequent commit rate; `--raft-backfill-seeded-catch-up-grace-cap` caps that catch-up component at 180,000 ms (zero disables the grace). When the rate is not yet measurable, the component uses that cap. This is not proof that the follower is progressing. The grace delays escalation, not the stall warning, and does not postpone repair indefinitely.

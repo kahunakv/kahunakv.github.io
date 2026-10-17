@@ -270,7 +270,7 @@ If one replica is slow to apply prepared intents, Kahuna does not let that repli
 Each durable finalize freezes a decision deadline based on observed finalize latency:
 
 ```text
-commit timestamp + clamp(multiplier x observed finalize p99, floor, ceiling)
+commit timestamp + clamp(multiplier x max(finalize p99, per-intent p99 x intent count), floor, ceiling)
 ```
 
 The deadline prevents an `Undecided` record from blocking recovery forever if the live coordinator disappears. If a commit attempt arrives after the deadline, the late commit is rejected; finalization or recovery drives presumed abort and follows the canonical decision that wins the race. A rising `kahuna.durable_tx.late_commit_rejections` or `kahuna.durable_tx.deadline_expiry_aborts` rate means the deadline is probably too tight for current load.
@@ -363,7 +363,7 @@ Several bounds keep transaction coordination predictable:
 | `OnePhaseApplyTimeValidation` | `false` | Embedded/code-level option for one-phase apply-time validation in multi-process Raft groups. Enable only after every node supports the committed-head ledger. |
 | `DurableDecisionDeadlineFloorMs` | `5000` | Lower clamp for the durable decision-deadline margin. |
 | `DurableDecisionDeadlineCeilingMs` | `60000` | Upper clamp for the durable decision-deadline margin. |
-| `DurableDecisionDeadlineMultiplier` | `4` | Multiplier applied to observed finalize p99 before clamping the decision-deadline margin. |
+| `DurableDecisionDeadlineMultiplier` | `4` | Multiplier applied to the larger of total finalize p99 and per-intent p99 × manifest size, before clamping the decision-deadline margin. |
 | `TransactionOutcomeRetentionTtl` | `5 minutes` | Age window for terminal outcomes and completed durable decisions. A non-positive value disables age-based removal. |
 | `CollectionInterval` | `60 seconds` | Transaction reaper/range-lock renewal cadence and upper bound for durable maintenance cadence. |
 | Pending operations per session | `4096` | Safety bound for in-flight registered operations in one transaction. Additional registrations receive a retryable capacity rejection. |
@@ -478,4 +478,12 @@ A missing canonical record is not always proof of abort. Beyond the protected ou
 
 ## Commit-Time Lock Proof
 
-Point, prefix, and range grants carry their partition leadership term. Commit requires the recorded grants to remain under the same confirmed leadership and routing, including in read-only transactions. A regrant under a new term does not erase evidence of lost exclusion: the transaction aborts with `Lost lock: …`. This proof covers leadership changes, not same-term lease expiry; older nodes without term reporting cannot supply the evidence. See [lock proof semantics](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover).
+Point, prefix, and range grants carry their partition leadership term. Commit requires the recorded grants to remain under the same confirmed leadership and routing, including in read-only transactions. A regrant under a new term does not erase evidence of lost exclusion: the interactive transaction aborts with `Lost lock: …`; a script returns `MustRetry` for a new run. The proof also rejects recorded range-lock lease lapses within an unchanged term, and renewal does not clear the lapse record. Actor-held explicit range-lock leases use monotonic elapsed time; write-intent expiry and session-owned age ceilings remain HLC-based. Expiry between one-phase validation and apply is not covered; older nodes without term reporting cannot supply grant evidence. See [lock proof semantics](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover).
+
+## Lost Exclusion and Retryable Commit Checks
+
+An interactive transaction that loses a lock, staging, or the original write intent returns terminal `Aborted`; start a new session and recompute from new reads. A self-contained script maps this lost-exclusion abort to `MustRetry`, preserving its reason, so SDK retry handling can rerun the script as a new transaction. Detected data conflicts still return `Aborted`. This distinction does not turn a general `MustRetry` or a transport timeout into proof of rollback.
+
+Commit probes also fail closed with `MustRetry` when leadership, containment, or a peer response prevents proving a key clean or conflicting. An interactive durable finalize retains prepares for retry under the same transaction identity. Successful staged-intent probes hold the intent through commit instead of merely renewing its ordinary lease, and one-phase bundles fence the anchor leadership term before append. See [Staged Writes and Commit Probes](/docs/distributed-keyvalue-store/read-and-lock-semantics/#staged-writes-and-commit-probes) for semantics and metrics.
+
+The deadline estimator measures local elapsed duration, not distributed event order. It now sizes the margin for the current manifest as well as observed total latency. Samples with at least 64 intents feed the per-intent estimate; until such a sample exists in the window, all samples feed it conservatively. Estimates are usable from the first sample; before any sample, the floor applies. The configured ceiling still caps the margin, so this is adaptive headroom, not a promise arbitrarily large finalizes finish before their deadline.

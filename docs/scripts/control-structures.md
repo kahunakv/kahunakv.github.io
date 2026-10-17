@@ -108,13 +108,15 @@ However, if you need **finer control** over when a transaction should be committ
 begin
   let balance = get "wallet:user123"
   if balance < 100 then
-    rollback # Insufficient funds
+    rollback
   end
   let balance = balance - 100
   set "wallet:user123" balance
   commit
 end
 ```
+
+The script rolls back when the balance is less than 100.
 
 Using `begin` gives you full control over **when to finalize** or **cancel** a transaction based on your logic. Check the [transactions section](../distributed-keyvalue-store/transactions.md) for more information about the customization options.
 
@@ -141,7 +143,7 @@ Allows assigning values to variables. If the variable does not exist, it is **au
 **Example:**
 
 ```kahuna
-let score = 100 # temp score variable
+let score = 100
 let score = score + 50
 ```
 
@@ -156,8 +158,10 @@ If a value needs to be **persisted beyond the script's execution**, you must use
 
 ```kahuna
 let level = 5
-set `player:123:level` level  # Persist the value to disk
+set `player:123:level` level
 ```
+
+`set` persists the value to disk.
 
 These functions ensure that the data is stored in the key/value store and available after the script completes.
 
@@ -207,7 +211,9 @@ The `sleep` command instructs the script to **pause execution** for the specifie
 **Example:**
 
 ```kahuna
-sleep 200  # pauses execution for 200 milliseconds
+sleep 200
 ```
+
+This pauses execution for 200 milliseconds.
 
 Use with care, as **long sleep durations can impact performance** and increase the risk of timeouts, especially in high-throughput systems.

@@ -146,7 +146,7 @@ Non-transactional persistent writes skip transaction staging and go directly thr
 
 Latest transactional reads pin committed observations per key, including committed unsettled intents. `SET` and `DELETE` advance staged revisions; `EXTEND` changes expiry without advancing the revision. Before granting a point lock, Kahuna resolves committed predecessor work so the grant observes the correct committed base. That base becomes a coordinator read dependency. These checks still apply after failover.
 
-Leadership loss clears actor-local staging and locks, but the active session stays on its original coordinator node. Before durable finalization, the coordinator verifies the confirmed staged revision chain and reads of staged values. A broken chain terminates with `Aborted` and a `Lost staging: …` reason, rather than committing an incomplete write set. Process loss can lose the session entirely. Metrics include `kahuna.kv.staged_chain_breaks` and `kahuna.kv.staged_chain_break_aborts`.
+Leadership loss clears actor-local staging and locks, but the active session stays on its original coordinator node. Before durable finalization, the coordinator verifies the confirmed staged revision chain and reads of staged values. A broken chain terminates an interactive session with `Aborted` and a `Lost staging: …` reason; a script returns `MustRetry` so it can rerun with new reads. Process loss can lose the session entirely. Metrics include `kahuna.kv.staged_chain_breaks` and `kahuna.kv.staged_chain_break_aborts`.
 
 See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) and [Durable Settlement](/docs/internals/durable-settlement/) for visibility, settlement encodings, durability floors, and upgrade requirements.
 
@@ -243,7 +243,7 @@ The replica fence has a per-endpoint lag breaker. If a replica repeatedly cannot
 The decision deadline limits how long an undecided transaction can block recovery. It is separate from the timeout for the entire interactive session. Each durable finalize freezes this deadline:
 
 ```text
-commit timestamp + clamp(multiplier x observed finalize p99, floor, ceiling)
+commit timestamp + clamp(multiplier x max(finalize p99, per-intent p99 x intent count), floor, ceiling)
 ```
 
 The p99 is the estimated duration below which 99% of locally observed finalizations fall. `clamp` keeps the computed margin between configured minimum and maximum values. It gives healthy coordinators enough time to finish under current load, while bounding how long recovery waits before presuming an undecided transaction was abandoned.
@@ -411,6 +411,14 @@ For application development, use [Transactions](/docs/distributed-keyvalue-store
 
 ## Leadership Proof for Transaction Locks
 
-A successful lock grant reports its partition and Raft term (the leadership epoch). The coordinator retains the first term per partition. A grant or renewal under a different term marks lost exclusion, and commit checks leadership continuity even for a read-only transaction. A changed term, moved range, or unconfirmed proof returns terminal `Aborted` with `Lost lock: …`. Reacquiring the lock does not repair a computation based on earlier reads.
+A successful lock grant reports its partition and Raft term (the leadership epoch). The coordinator retains the first term per partition. A grant or renewal under a different term marks lost exclusion, and commit checks leadership continuity even for a read-only transaction. A changed term, moved range, or unconfirmed proof returns terminal `Aborted` with `Lost lock: …` for an interactive session, or `MustRetry` for a self-contained script. Reacquiring the lock does not repair a computation based on earlier reads.
 
-The proof does not detect lease expiry within an unchanged term, and older nodes without term reporting leave their grants unchecked. One-phase bundles with apply-time validation also check the grant term against the proposal term. See [Detecting Locks Lost During Failover](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover) for an example, rollout limits, and metrics.
+The leader also remembers a transaction whose range lock it observed lapsing; commit rejects that holder even within an unchanged term and after renewal. Explicit range-lock leases use monotonic elapsed time inside the actor. Write intents and session-owned lock ceilings still use HLC, and expiry between one-phase validation and apply is not covered. Older nodes without term reporting leave their grants unchecked. One-phase bundles with apply-time validation also check the grant term against the proposal term. See [Detecting Locks Lost During Failover](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover) for an example, rollout limits, and metrics.
+
+## Lost Exclusion and Retryable Commit Checks
+
+An interactive transaction that loses a lock, staging, or the original write intent returns terminal `Aborted`; start a new session and recompute from new reads. A self-contained script maps this lost-exclusion abort to `MustRetry`, preserving its reason, so SDK retry handling can rerun the script as a new transaction. Detected data conflicts still return `Aborted`. This distinction does not turn a general `MustRetry` or a transport timeout into proof of rollback.
+
+Commit probes also fail closed with `MustRetry` when leadership, containment, or a peer response prevents proving a key clean or conflicting. An interactive durable finalize retains prepares for retry under the same transaction identity. Successful staged-intent probes hold the intent through commit instead of merely renewing its ordinary lease, and one-phase bundles fence the anchor leadership term before append. See [Staged Writes and Commit Probes](/docs/distributed-keyvalue-store/read-and-lock-semantics/#staged-writes-and-commit-probes) for semantics and metrics.
+
+The deadline estimator measures local elapsed duration, not distributed event order. It now sizes the margin for the current manifest as well as observed total latency. Samples with at least 64 intents feed the per-intent estimate; until such a sample exists in the window, all samples feed it conservatively. Estimates are usable from the first sample; before any sample, the floor applies. The configured ceiling still caps the margin, so this is adaptive headroom, not a promise arbitrarily large finalizes finish before their deadline.
