@@ -1,1 +1,0 @@
-"use strict";(globalThis.webpackChunkkahunakv_docs||=[]).push([[2230],{4517(a){a.exports=JSON.parse('{"tag":{"label":"raft","permalink":"/blog/tags/raft","allTagsPath":"/blog/tags","count":1,"unlisted":false},"listMetadata":{"permalink":"/blog/tags/raft","page":1,"postsPerPage":10,"totalPages":1,"totalCount":1,"blogDescription":"Blog","blogTitle":"Blog"}}')}}]);

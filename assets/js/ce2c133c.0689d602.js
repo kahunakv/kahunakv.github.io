@@ -1,1 +1,0 @@
-"use strict";(globalThis.webpackChunkkahunakv_docs||=[]).push([[9524],{6670(a){a.exports=JSON.parse('{"tag":{"label":"kommander","permalink":"/blog/tags/kommander","allTagsPath":"/blog/tags","count":1,"unlisted":false},"listMetadata":{"permalink":"/blog/tags/kommander","page":1,"postsPerPage":10,"totalPages":1,"totalCount":1,"blogDescription":"Blog","blogTitle":"Blog"}}')}}]);

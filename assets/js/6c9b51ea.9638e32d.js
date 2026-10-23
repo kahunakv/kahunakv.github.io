@@ -1,1 +1,0 @@
-"use strict";(globalThis.webpackChunkkahunakv_docs||=[]).push([[5195],{347(t){t.exports=JSON.parse('{"tag":{"label":"testing","permalink":"/blog/tags/testing","allTagsPath":"/blog/tags","count":2,"unlisted":false},"listMetadata":{"permalink":"/blog/tags/testing","page":1,"postsPerPage":10,"totalPages":1,"totalCount":2,"blogDescription":"Blog","blogTitle":"Blog"}}')}}]);
