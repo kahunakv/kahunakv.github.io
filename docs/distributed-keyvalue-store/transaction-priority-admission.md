@@ -1,6 +1,10 @@
 # Transaction Priority Admission
 
-Transaction priority admission lets Kahuna decide which transaction starts next when a node is saturated.
+When a node receives more transactions than it can run well, all of them slow down together. A nightly backfill or analytics sweep that opens thousands of transactions can then delay the checkout or login transactions that users are waiting on.
+
+Transaction priority admission lets an operator cap how many transactions a node runs at once, and lets Kahuna decide which waiting transaction starts next. Each transaction carries a priority; when the node is at its limit, high-priority work starts before background work.
+
+Use it when the same cluster serves both latency-critical requests and bulk jobs, and bulk work slows down user-facing traffic. If your nodes are not overloaded, you do not need it: it is disabled by default and changes nothing until you set a limit. To also make bulk jobs give way to foreground writers on write conflicts, see [Yielding Transactions](/docs/distributed-keyvalue-store/yielding-transactions/).
 
 By default the feature is disabled. `MaxConcurrentTransactions` and `MaxConcurrentSessions` both default to `0`, which means every transaction starts immediately. In that pass-through mode, Kahuna still records priority for metrics, but priority does not queue, reorder, or throttle anything.
 

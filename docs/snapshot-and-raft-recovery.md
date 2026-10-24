@@ -160,7 +160,7 @@ kahuna-server \
 
 ## Replication scheduling and log retention
 
-The following settings describe Kahuna's pinned **Kommander 1.10.11** behavior. These **server** options are passed to `RaftConfiguration`. They do not have matching
+The following settings describe Kahuna's pinned **Kommander 1.11.3** behavior. These **server** options are passed to `RaftConfiguration`. They do not have matching
 properties on `EmbeddedKahunaOptions` today; do not assume server/embedded configuration parity.
 
 | Flag | Default | Semantics |

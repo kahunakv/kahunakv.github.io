@@ -1,12 +1,26 @@
-import Kahuna6 from '../assets/kahuna6.png';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
 # Tutorial: Distributed Sequencer
 
-<div style={{textAlign: 'center'}}>
-<img src={Kahuna6} height="350" />
-</div>
+A sequence gives several processes one shared source of increasing numbers, such as invoice, ticket, or order numbers, without duplicates, even when the processes run on different machines or retry after a timeout. See [Distributed Sequencer](/docs/distributed-sequencer/) for the concepts.
+
+<ArchDiagram
+  group="Sequence owner (partition leader)"
+  sources={[
+    {label: 'Worker A', icon: 'server'},
+    {label: 'Worker B', icon: 'server'},
+    {label: 'Worker C', icon: 'server'},
+  ]}
+  hub={{label: 'In-memory block 1..1000', icon: 'layers'}}
+  targets={[
+    {label: 'Raft commit', sub: 'Reserves 1..1000 once', icon: 'log'},
+    {label: 'Sequence record', sub: 'CurrentValue = 1000', icon: 'database'},
+  ]}
+  title="Workers A, B and C ask the sequence owner for values. The owner serves them from an in-memory block of 1 to 1000 that it reserved in one Raft commit, so the sequence record reports CurrentValue 1000."
+/>
+
+The node that owns the sequence reserves a block of values in one Raft commit and serves `next` calls from memory. `CurrentValue` therefore reports the end of the reserved block, not the last value handed out. See [Sequence Model and Allocation](/docs/distributed-sequencer/model/) for block sizes and gaps.
 
 This tutorial shows how to create a sequence, allocate individual values, reserve ranges, and use idempotency keys for safe retries.
 

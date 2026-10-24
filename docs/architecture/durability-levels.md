@@ -64,6 +64,17 @@ This process ensures that all read and write operations maintain consistency eve
 
 Both **Ephemeral** and **Persistent** durability modes maintain in-memory key/value entries to accelerate reads. Persistent entries can be reloaded from durable storage after eviction, while ephemeral entries are removed permanently because they have no durable backing store.
 
+<ArchDiagram
+  group="Kahuna Node"
+  sources={['Client A', 'Client B', 'Client C', '…', 'Client N']}
+  hub={{label: 'Cache', icon: 'layers'}}
+  targets={[
+    {label: 'Persistence', sub: '(RocksDB/SQLite)', icon: 'database'},
+    {label: 'Ephemeral', sub: '(Memory)', icon: 'chip'},
+  ]}
+  title="Clients A through N send requests to the in-memory cache of a Kahuna node. The cache is backed by persistent storage in RocksDB or SQLite, or by ephemeral memory only."
+/>
+
 Kahuna runs a bounded key/value collector independently on each actor. The collector first removes definite garbage such as deleted, undefined, and expired entries using tombstone and expiration indexes. If the actor is still above its entry or byte budget, it evicts cold live entries from an intrusive LRU list. Persistent entries whose latest change may not be flushed to disk are pinned until they are safe to reload from storage. Revision and MVCC metadata are trimmed inline where they grow.
 
 See [Keys Eviction](/docs/architecture/keys-eviction/) for the full algorithm and configuration details.

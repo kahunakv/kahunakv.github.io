@@ -36,6 +36,23 @@ For a typical persistent key/value write:
 7. Once Raft commits the log entry, the replicator applies it to the in-memory state machine.
 8. The background writer eventually flushes the materialized entry to the persistence backend.
 
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant N as Receiving node
+    participant L as Partition leader
+    participant F as Followers
+    participant D as Storage backend
+    C->>N: Write k
+    N->>L: Forward if this node is not the leader
+    L->>F: Replicate log entry
+    F-->>L: Quorum acknowledges
+    Note over L: Committed. Apply to actor memory
+    L-->>N: Committed
+    N-->>C: Success
+    L-)D: Background writer materializes state
+```
+
 Transactions add another layer: the `TransactionCoordinator` records confirmed reads, writes, locks, and cleanup state as the request runs. Commit and rollback close the session to new operations, drain already registered operations, freeze the server-owned working set, and then finalize from that snapshot. Persistent durable transactions commit by writing a canonical transaction record and prepared intents through Raft, then settlement can finish in the background while intent-aware reads preserve visibility.
 
 For the complete flow, including reads, scripts, interactive transaction operations, durable-intent two-phase commit, deferred settlement, and background recovery, see [Transaction Lifecycle](internals/transaction-lifecycle.md).

@@ -2,6 +2,16 @@
 
 Kahuna server options are passed as command-line flags to `kahuna-server`. The table below documents the options currently exposed by `KahunaCommandLineOptions`.
 
+Most options have safe defaults, and a typical deployment sets only a few groups:
+
+- **Node identity and cluster membership**: `--raft-nodename`, `--raft-host`, `--raft-port`, `--initial-cluster`, and `--join-existing` for a node that joins a running cluster. See [Cluster Identity and Discovery](#cluster-identity-and-discovery).
+- **Storage**: `--storage`, `--wal-storage`, `--storage-path`, and `--wal-path`. See [Storage and WAL](#storage-and-wal).
+- **Network and TLS**: listener ports and `--https-certificate`. See [Network and TLS](#network-and-tls).
+- **Replication factor**, for larger clusters: `--raft-replication-factor`. See [Replica Placement](#replica-placement).
+- **Backups**: `--pitr-backup-dir`. See [Backups and Point-in-Time Recovery](#backups-and-point-in-time-recovery).
+
+The remaining sections are for tuning. Change those options after you measure a specific problem, not in advance.
+
 See [Backend I/O Scheduler](/docs/backend-io-scheduler/) for how backend read/write pools relate to Raft WAL I/O.
 
 ## Network and TLS
@@ -167,6 +177,20 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--checkpoint-interval` | Period, in seconds, at which dirty partitions checkpoint after flushes so the Raft WAL retention floor can advance and old log entries can compact. | `30` |
 | `--fail-fast-on-oom` | Terminate the process on `OutOfMemoryException` so an orchestrator restarts the node with a clean heap. When disabled, Kahuna marks the process unhealthy through `/v1/cluster/health` after the first fatal fault. | enabled |
 
+## Key/Value Watch and History
+
+Persistent key/value watches work with the defaults. To resume from a progress watermark after a disconnect, enable the commit admission window on **every** node with the same value. This also bounds how far a commit timestamp may trail the log entry that carries it; entries outside the window receive a retryable refusal. Choose the bound with your transaction duration and clock skew in mind. See [Watch Key Changes](/docs/recipes/watch-key-changes/) for a consumer example.
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--commit-admission-lag-ms` | Maximum milliseconds a commit timestamp may trail its log entry. A positive value enables watch progress watermarks and resume. Nodes must run a version that understands this option and use the same value. | `0` (live watches only) |
+| `--history-hold-max-lease-ms` | Longest history hold lease, in milliseconds; `0` removes the bound. | `86400000` (one day) |
+| `--history-hold-max-per-holder` | Maximum history holds for one holder; `0` removes the bound. | `4096` |
+| `--history-hold-max-total` | Maximum history holds in the cluster; `0` removes the bound. | `65536` |
+| `--transaction-origin-tags` | Retain a transaction's origin label in its prepared intents and watch events. Enable only when every node understands it. | disabled |
+
+History holds keep the relevant partition WAL available for replay until the holds are advanced, released, or purged. They increase log retention and do not guarantee that a resume will succeed if a replica already lost the needed history.
+
 ## Key/Value Write Coalescing
 
 These options tune persistent partition writes before they are proposed to Raft. Kahuna can combine `SET`, `DELETE`, `EXTEND`, and durable transaction-finalization records for the same partition into one Raft call. See [Partition Write Coalescing](/docs/architecture/partition-write-coalescing/) for behavior, retry semantics, and metrics.
@@ -225,6 +249,8 @@ These options tune automatic splitting and merging for key spaces registered wit
 | `--backup-retention-max-age` | Delete chains whose newest backup is older than this many seconds. `0` is unbounded. | `0` |
 | `--backup-retention-max-bytes` | Keep the most-recent backup chains whose artifact bytes fit this budget. The newest chain is always kept. `0` is unbounded. | `0` |
 | `--backup-gc-interval` | Periodic backup GC cadence in seconds. A pass also runs after each backup. `0` disables the periodic pass only. | `3600` |
+| `--backup-capture-throttle-mbps` | Per-capture disk-work budget in decimal MB/s for the RocksDB as-of trim, hash/verify reads, and staged-image copy. Trades backup duration for lower foreground I/O contention; not a node-wide I/O or latency limit. `0` is unlimited. | `0` |
+| `--backup-apply-barrier-timeout-seconds` | Full-capture wait for committed writes to apply; timeout reports lagging partitions as retryable `PartitionCaptureFailed`. Non-positive values use 30 seconds. | `30` |
 | `--backup-restore-throttle-mbps` | Throughput budget for the restore checkpoint copy in MB/s. `0` is unlimited. | `0` |
 | `--pitr-bootstrap-fallback-to-join` | Skip an out-of-window seed or a `latest` selection with no valid chain and join through normal catch-up. Does not restore invalid candidates or ignore explicit-chain authentication/corruption failures. | `false` |
 | `--pitr-bootstrap-from` | Leaf backup GUID or `latest`. On an empty RocksDB/SQLite store, copy and verify the full base image before opening the backend, replay incrementals, certify WAL boundaries, then join. Requires `--join-existing`, `--initial-cluster`, and `--pitr-backup-dir`. See [PITR Bootstrap](/docs/pitr-bootstrap/). | none |

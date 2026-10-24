@@ -68,7 +68,7 @@ The marker is recovery state, not a request to overwrite an existing cluster. Ke
 
 ## Operational Limits
 
-- Restore/seed chains must cover the complete recorded cluster partition set. With replica placement, a node-local backup may return `RestrictedCoverage`; scheduling backups on one arbitrary pod is not sufficient for a complete seed.
+- Restore/seed chains must cover the complete recorded cluster partition set. With replica placement, a plain node-local full can return `RestrictedCoverage`. Current coordinated backups can compose complete coverage from hosting replicas; every stamped chain link must independently cover the cluster.
 - Membership changes and partition split/merge can invalidate incremental ancestry. The backup service substitutes a new full when topology has diverged; inspect `RequestedKind`, `ActualKind`, and `SubstitutionReason` rather than assuming every incremental request produced a segment.
 - Retention protects available WAL going forward; it cannot recreate already-compacted entries. Missing indexes in a claimed incremental range fail closed instead of publishing holes.
 - Join admission and initialization use `--raft-join-timeout`. Learner promotion has a separate no-progress timeout and may take longer while catch-up advances. See [join controls](/docs/server-configuration/#raft-membership-and-catch-up).

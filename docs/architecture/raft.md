@@ -3,9 +3,28 @@
 
 ## Overview
 
-Raft serves as the foundation for ensuring consistency and high availability in Kahuna's distributed data storage system. Operating at the core of Kahuna's architecture. Raft manages data replication across multiple nodes through a partition-based approach where each partition is independently governed by a dedicated Raft group. This document describes how Raft functions within the Kahuna ecosystem and the mechanisms that enable reliable distributed data management.
+A distributed system keeps copies of its data on several machines so it can survive losing one of them. The hard part is making every copy agree on the same changes, in the same order, even when machines crash or the network drops messages. A **consensus protocol** solves that problem.
+
+**Raft** is a widely used consensus protocol. One node is elected **leader** and orders every change. A change counts as committed only after a majority of nodes, called a **quorum**, has stored it. If the leader fails, the remaining nodes elect a new one, and no committed change is lost.
+
+For you as a Kahuna user, Raft is the reason that:
+
+- A committed persistent write survives the failure of a minority of replicas. In a group of three, one can fail; in a group of five, two can fail.
+- All clients observe changes to a key in the same order.
+- The cluster keeps serving after a leader fails, following a short election.
+
+You do not configure or call Raft directly in application code. The rest of this page explains how Kahuna uses it, for readers who want to understand availability, failover, and recovery behavior.
+
+Raft serves as the foundation for ensuring consistency and high availability in Kahuna's distributed data storage system, operating at the core of Kahuna's architecture. Raft manages data replication across multiple nodes through a partition-based approach where each partition is independently governed by a dedicated Raft group. This document describes how Raft functions within the Kahuna ecosystem and the mechanisms that enable reliable distributed data management.
 
 ## Consensus and Replication Mechanisms
+
+<ReplicaRing
+  center="Partition P (Raft group)"
+  client="Client"
+  nodes={['Kahuna 1', 'Kahuna 2', 'Kahuna 3']}
+  title="A client sends writes to Kahuna 1, the leader of the Raft group for partition P. The leader replicates each change to the followers Kahuna 2 and Kahuna 3."
+/>
 
 Raft implements a leader-based consensus protocol within each partition group. When client applications submit write requests, the designated leader node for that partition coordinates the operation across all replicas in the group.
 

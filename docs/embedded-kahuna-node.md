@@ -1,6 +1,14 @@
 # Embedded Kahuna Node
 
-`EmbeddedKahunaNode` starts a single-node Kahuna engine inside the current .NET process. It is useful for integration tests, local tools, and applications that need Kahuna's transaction engine without running the ASP.NET server, Kestrel, REST, or external gRPC endpoints.
+Kahuna normally runs as a separate server that applications reach over the network. An embedded node runs the same engine inside your own .NET process instead: there is no server to install, no port to open, and no network call per operation. Use it for:
+
+- **Integration tests** that need real Kahuna behavior, such as transactions, locks, scripts, and Raft, without Docker or a running cluster. [`EmbeddedKahunaCluster`](#in-memory-embedded-cluster) runs several nodes in one process so tests can also cover elections and failover.
+- **Local tools and single-process applications** that want Kahuna's transactional key/value engine as a library.
+- **Browser and WebAssembly hosts**, through the [thread-free build](#thread-free-browserwasm-mode).
+
+Do not use it as a cluster that other applications share. An embedded node exposes no REST or external gRPC endpoint, so other processes cannot connect to it. For that, run [Kahuna Server](/docs/server-installation/).
+
+`EmbeddedKahunaNode` starts a single-node Kahuna engine inside the current .NET process, without the ASP.NET server or Kestrel:
 
 ```csharp
 using System.Text;
@@ -253,6 +261,8 @@ Kahuna's REST and persistence JSON paths use source-generated metadata, so trimm
 | `BackupRetentionMaxAge` | `0` | Delete backup chains whose newest backup is older than this age. `TimeSpan.Zero` is unbounded. |
 | `BackupRetentionMaxBytes` | `0` | Keep the most-recent backup chains within this artifact byte budget. The newest chain is always kept. `0` is unbounded. |
 | `BackupGcInterval` | `1 hour` | Periodic backup garbage-collection cadence. `TimeSpan.Zero` disables the periodic pass, but GC still runs after backups. |
+| `BackupCaptureThrottleBytesPerSec` | `0` | Per-capture byte budget for RocksDB image trim/compaction, hash/verify, and staged copy. Non-positive is unlimited. |
+| `BackupApplyBarrierTimeout` | `30 seconds` | Full-capture apply wait; a lagging replica refuses with `PartitionCaptureFailed`. Non-positive uses the default. |
 | `BackupRestoreThrottleBytesPerSec` | `0` | Throughput budget for a restore checkpoint copy. `0` is unlimited. |
 | `RangeSplitThreshold` | `1000` | Sampled key count that triggers count-based range splitting. `0` disables this trigger. |
 | `RangeSplitMinRangeSize` | `10` | Minimum sampled keys required in each child range. |

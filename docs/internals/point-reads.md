@@ -1,6 +1,8 @@
 # Point Reads and Published Heads
 
-A latest point `Get` can now read a quiet resident key without a key/value actor mailbox round trip. This is an optimization of the existing leader-confirmed read path: it does not authorize follower reads, bypass transaction registration, or provide a new consistency mode.
+Reading one key by name is the most common Kahuna operation. For a key that is in memory and has no pending change, Kahuna can serve the latest value from a published in-memory record, without waiting in the key/value actor's mailbox behind other work. The result is lower latency for frequently read keys, with the same consistency as the normal path. It is on by default and needs no action; this page explains when the fast path applies and how to diagnose it.
+
+This is an optimization of the existing leader-confirmed read path: it does not authorize follower reads, bypass transaction registration, or provide a new consistency mode.
 
 ## Read Flow
 

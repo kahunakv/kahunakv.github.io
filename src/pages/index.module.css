@@ -87,3 +87,8 @@
 
 /* Let the example scroll within its grid cell on narrow screens. */
 .calloutCard { min-width: 0; }
+
+.footerActions :global(.button) { max-width: 100%; white-space: normal; }
+
+.heroSupport { max-width: 42rem; margin: 1rem 0 0; color: var(--graphite); font-size: 1rem; line-height: 1.65; }
+@media screen and (max-width: 996px) { .heroSupport { margin-right: auto; margin-left: auto; } }

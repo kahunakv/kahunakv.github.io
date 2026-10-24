@@ -5,6 +5,8 @@ Kahuna provides a .NET client for distributed key/value operations, locks, seque
 
 For Node.js and TypeScript applications, see [Client for TypeScript and Node.js](/docs/typescript-client/).
 
+For change notifications on persistent keys, see [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/).
+
 For shared fixed-window, sliding-window, token-bucket, and concurrency budgets, see [Distributed Rate Limiting](/docs/distributed-rate-limiting/), including ASP.NET Core policies and failure limits.
 
 ## Client Installation
@@ -575,6 +577,37 @@ await foreach (KahunaKeyValue item in client.ScanByRange(
 This keeps fetching server-side pages behind the async sequence while preserving one historical snapshot when `snapshotMs` is non-zero. Large range scans can read keys that currently live only on disk without forcing every scanned key back into the in-memory cache.
 
 If one server-side page keeps returning retryable state because a range is moving, leadership is changing, restore is in progress, or an undecided transaction intent blocks visibility, Kahuna fails the page with a retryable error instead of scanning forever. Back off briefly and retry the scan.
+
+## Watch Persistent Key Changes
+
+`WatchKeyValues` streams committed sets, deletes, and expiry extensions for a persistent key, prefix, or range. Open the watch before reading the initial state: the returned watch is registered, but does not include a snapshot of existing values.
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.KeyValue;
+
+await using KahunaWatch watch = await client.WatchKeyValues(
+    new KeyValueWatchRequest(
+        KeyValueWatchScope.ForPrefix("config/prod/search/"),
+        KeysOnly: true),
+    cancellationToken);
+
+await foreach (KeyValueWatchFrame frame in watch.ReadAllAsync(cancellationToken))
+{
+    if (frame.Event is { } change)
+    {
+        Console.WriteLine($"Refresh {change.Key} ({change.Kind})");
+    }
+    else if (frame.IsTerminal)
+    {
+        Console.WriteLine($"Watch ended: {frame.Type}");
+    }
+}
+```
+
+`KeysOnly: true` avoids sending value bytes when an event just triggers a cache refresh. Omit it to receive new values for sets. Dispose the watch to close its server streams. For a long-running consumer, treat a terminal frame as a possible gap: reopen the watch and refresh the state it covers. The [watch recipe](/docs/recipes/watch-key-changes/) shows that loop for a feature flag.
+
+With `WatchKeyValues(request, autoResume: true)`, the client can resume some interrupted streams from progress watermarks. This requires a positive `--commit-admission-lag-ms` on every server; without it, the watch has no resume cursor. A `HistoryUnavailable` frame still requires a new snapshot. See [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/) for delivery rules and history holds.
 
 ## Batch Key/Value Operations
 

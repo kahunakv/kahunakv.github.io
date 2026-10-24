@@ -3,6 +3,12 @@
 
 In Kahuna, a `revision` is a monotonic version number that tracks when a key was last modified. `SET` and `DELETE` advance the revision, including staged transactional mutations. `EXTEND` changes expiry without advancing it. The counter is per key; it does not establish an order across keys or replace the commit HLC.
 
+Revisions let you answer two questions about a key: *has it changed since I read it?* and *what did it look like before?* Use them to:
+
+- **Update safely under concurrency.** Write only if the key is still at the revision you read ([compare-and-swap](/docs/distributed-keyvalue-store/cas/)), so two clients cannot silently overwrite each other's changes.
+- **Detect changes cheaply.** Compare a stored revision number with the current one instead of comparing whole values.
+- **Look back in time.** Read earlier values of a key for audits, debugging, and rolling back a bad configuration change.
+
 ## Understanding revisions
 
 Keys are always created at revision `r0`:

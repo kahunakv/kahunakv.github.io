@@ -1,18 +1,90 @@
 # Kubernetes Operator
 
-Kubernetes knows how to start, restart, and replace containers, but it does not know how a Raft cluster must add or remove members. An **operator** is a program that runs inside Kubernetes and carries that application-specific knowledge: you describe the cluster you want in one resource, and the operator performs the steps needed to reach it and keep it there.
+**Run Kahuna in production with less day-to-day operational work.** The [Kahuna Kubernetes operator](https://github.com/kahunakv/kahuna-k8s-operator) handles the repeatable work of growing a cluster, scheduling backups, and rolling out new versions. You describe the result you want; it coordinates the steps across the cluster.
 
-The [Kahuna Kubernetes operator](https://github.com/kahunakv/kahuna-k8s-operator) does this for Kahuna. You declare a `KahunaCluster` resource with a node count, storage, TLS, and optional autoscaling limits. The operator then:
+| What you need | What you configure | What the operator handles |
+|---|---|---|
+| More capacity when traffic grows, less when it falls | An instance count, or autoscaling targets and limits | Adds nodes, waits for catch-up, and decommissions departing nodes before removing them. |
+| Regular, recoverable backups | Full and incremental schedules, shared storage, and retention | Finds the backup coordinator, maintains the chain, retries failed attempts, and reports results. |
+| A newer Kahuna version without shutting down the whole cluster | The server image version | Replaces instances one at a time and holds the rollout when membership is not ready. |
 
-- Creates the Services, StatefulSet, volumes, TLS resources, and disruption budget.
-- Adds and removes nodes one at a time, waiting for each Raft membership change to commit before the next step.
-- Optionally scales the cluster up and down from Kahuna's own write-rate and queue-depth metrics, without an external metrics stack.
+You do not have to run a separate membership script, maintain a backup cron job, or stop every server for an upgrade. Storage, TLS, and workload sizing remain deployment choices; the operator automates the cluster lifecycle around them.
 
-**Use it when** you run Kahuna on Kubernetes and want safe scaling and less manual membership work. **You do not need it when** you run Kahuna on virtual machines, bare metal, or plain Docker; use [Server Installation](/docs/server-installation/) instead.
+## Scale to the Capacity You Need
 
-Why not edit a StatefulSet's replica count directly? Adding a pod is not the same as admitting a Raft member, and removing a pod is not the same as committing its departure. If those steps get out of order, the cluster can lose quorum or keep waiting for a node that no longer exists. The operator waits for each membership transition before it continues.
+Choose a fixed number of instances or let Kahuna's write traffic and queue pressure drive scaling within your limits. The operator handles joining, catch-up, and removal in both cases, one node at a time. Its built-in autoscaler does not require a separate metrics stack.
 
-The operator is currently **alpha**, with API version `kahuna.kahunakv.io/v1alpha1`.
+For example, this configuration lets a cluster grow from four to nine instances and shrink when demand subsides:
+
+```yaml
+spec:
+  replicas: 4
+  replication:
+    factor: 3
+  autoscaling:
+    minReplicas: 4
+    maxReplicas: 9
+    targetWritesPerSecond: 2000
+    targetQueueDepth: 32
+```
+
+These are fields to add to the complete cluster definition below. Starting with more instances than the replication factor avoids an initial conversion step: four instances with three data replicas is a suitable starting topology. Set traffic targets from your workload; they are not throughput guarantees.
+
+Prefer a fixed size? Set `spec.replicas` with autoscaling disabled. [Switching back to manual control](#scale-manually-or-pause-autoscaling) takes one patch. The operator still performs the membership work; you do not resize individual containers or remove cluster members yourself.
+
+## Scheduled Full and Incremental Backups
+
+**Set the backup policy once and let the operator run it.** Full backups establish a coordinated recovery point; incrementals capture subsequent changes without requiring another full copy each time.
+
+Add this to your cluster definition, replacing `shared-files` with a StorageClass that supports a shared ReadWriteMany volume:
+
+```yaml
+spec:
+  backup:
+    schedule: "0 2 * * *"                 # Full backup daily at 02:00 UTC
+    incrementalSchedule: "*/15 * * * *"   # Incremental every 15 minutes
+    volume:
+      claim:
+        size: 100Gi
+        storageClassName: shared-files
+    retention:
+      maxChains: 7
+```
+
+The operator creates and mounts the shared backup volume, configures the servers, and generates a manifest-signing key unless you provide one. After the cluster finishes its configuration rollout, the first full backup starts without waiting for the next daily slot. Subsequent full and incremental runs follow their schedules. Status shows the last successful backup and any failures; failed attempts remain due and are retried.
+
+This removes the work of picking the coordinator, finding the latest parent, and wiring up a recurring backup job. Retention keeps whole recovery chains together, and the newest chain is always retained. Keep the backup volume **and signing-key Secret**: both outlive deletion of the cluster resource and are needed for recovery. Restore remains a separate, deliberate operation; see [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/).
+
+<details>
+<summary>Backup storage, version requirements, and failure handling</summary>
+
+- Multi-node clusters need shared ReadWriteMany storage. You can use an existing claim with `volume.claimName` instead. A default block-storage class may not support shared mounts; `BackupVolumeReady` reports binding failures.
+- Backups with replica placement require Kahuna **1.12.5 or later**. Those servers compose the coordinated image from all partitions even when no single node holds the whole dataset. The operator rejects recognized older release tags for this topology; an unknown image tag is not a compatibility check. The example below pins 1.12.8.
+- A backup starts only once the cluster is ready on its requested image/configuration. It runs in the background; scaling and upgrades are not blocked for its duration. A topology change or unavailable partition capture can require a retry.
+- Full schedules and optional incremental schedules use UTC unless prefixed with `CRON_TZ=<zone>`. Missed slots collapse into one run. Keep incrementals within the server's retained WAL window; the server can substitute a full if a chain can no longer be extended.
+- Failures back off from one minute up to 30 minutes. Temporary refusals where no node takes the backup retry after 15 seconds; if they persist for five minutes they count as failures. Inspect `BackupFailing` and `status.backup` rather than assuming every scheduled slot produced an artifact.
+- If an incremental parent is missing, the operator starts a new full chain. The operator disables periodic server GC on the shared catalog to avoid deleting another node's in-progress artifacts; cleanup still runs after backups.
+- `backup.suspend: true` pauses new scheduled runs; it does not cancel an existing run. The backup target is shared volume storage, not a built-in GCS integration. Automatic restore and seed-on-scale workflows are separate from scheduled backup support.
+
+</details>
+
+## Rolling Upgrades Without a Cluster-Wide Shutdown
+
+**Change the image version; the operator coordinates the rollout.** It replaces instances one at a time, allowing the remaining replicas to serve, and pauses when the committed membership is unreadable or has not converged. You do not need to stop the entire cluster, upgrade every machine manually, and bring it back in order.
+
+For example, to request the current pinned version:
+
+```bash
+kubectl -n kahuna patch kahunacluster kahuna --type=merge \
+  -p '{"spec":{"image":"kahunakv/kahuna:1.12.8"}}'
+kubectl -n kahuna rollout status statefulset/kahuna --timeout=15m
+```
+
+This supports upgrades while a healthy replicated cluster stays available, provided the remaining replicas can form each partition's quorum and the versions support a rolling transition. Applications should retry transient failures during leader handoff or connection replacement; it is not a guarantee that every individual request completes uninterrupted. A standalone instance or a partition with only one replica cannot stay available while that replica restarts. Check the target version's compatibility notes before upgrading.
+
+## Get Running
+
+The operator is currently **alpha** (`kahuna.kahunakv.io/v1alpha1`). The following setup creates the operator and a cluster; the later reference sections explain the safeguards and troubleshooting details.
 
 ## Install the Operator
 
@@ -30,7 +102,7 @@ The chart defaults to one operator instance with leader election. `watchNamespac
 
 ## Create a Cluster Ready for Autoscaling
 
-Start with **more nodes than the data replication factor**. For factor 3, use at least four founding nodes. Kahuna creates placed replica sets only when node count exceeds the factor at partition creation; the current operator cannot convert a fully replicated partition later. A cluster founded at three nodes with factor 3 is therefore unsuitable for autoscaling above three.
+This example starts with **four nodes and a replication factor of three**, so initial placement can distribute partitions immediately. Current Kahuna servers can also convert legacy fully replicated partitions when a positive factor and the placement rebalancer are enabled; the operator enables rebalancing with `spec.replication`. Growth may wait while conversion and replica movement settle. Older server versions lacked this conversion path. See [Migration Notes](/docs/replica-placement/#migration-notes).
 
 First supply a PKCS#12 keystore in the cluster's namespace:
 
@@ -51,7 +123,7 @@ metadata:
   namespace: kahuna
 spec:
   replicas: 4
-  image: kahunakv/kahuna:1.12.2
+  image: kahunakv/kahuna:1.12.8
   partitions: 16
   replication:
     factor: 3
@@ -105,6 +177,9 @@ curl http://127.0.0.1:2070/v1/cluster/placement
 
 A client Service can route to any ready node; Kahuna forwards requests to the partition leader. For direct client routing, advertise and map reachable **client** endpoints rather than the peer Raft port. Pod DNS/IP hints generally cannot be followed from outside Kubernetes. See [Client Leader-Aware Routing](/docs/client-routing/).
 
+<details>
+<summary>Scaling reference: signals, timing, and safeguards</summary>
+
 ## How Traffic-Based Scaling Works
 
 The controller polls `GET /v1/dashboard/metrics` on all eligible ready pods, with a steady autoscaling resync of 15 seconds. Keep the dashboard enabled and reachable. No metrics-server, external HPA, or Prometheus adapter is needed for these signals.
@@ -114,15 +189,17 @@ The controller polls `GET /v1/dashboard/metrics` on all eligible ready pods, wit
 | `targetWritesPerSecond` | Average per-node rate of `kahuna.kv.write.admitted`, a cumulative **direct** key/value write admission counter. It is not total successful requests or transactional write throughput. |
 | `targetQueueDepth` | Average per-node sum of `raft.executor.client_queue_depth` across partition executors: pending client proposals, including transactional pressure. It does not measure read latency or CPU utilization. |
 
-At least one positive target is required. The controller computes the largest available signal-to-target ratio. Outside the tolerance band, it recommends `ceil(current desired replicas × ratio)`, clamped to `minReplicas` and `maxReplicas`. For example, four nodes averaging 4,000 writes/s against a 2,000 target recommend eight. After the scale-up window it requests **five**, waits for membership and readiness convergence, then measures again. It does not jump straight to eight.
+At least one positive target is required. The controller computes the largest available signal-to-target ratio. Outside the tolerance band, it recommends `ceil(current desired replicas × ratio)`, clamped to `minReplicas` and `maxReplicas`. For example, four nodes averaging 4,000 writes/s against a 2,000 target recommend eight. After the scale-up window it requests **five**, waits for membership, readiness, and replica-placement convergence, then measures again. It does not jump straight to eight.
 
 The scale-up and scale-down windows default to 60 and 300 seconds; tolerance defaults to 10%. These are continuous **observed direction** windows, not a historical maximum-recommendation algorithm. A return to the band, a direction change, or a nonconverged cluster clears the corresponding streak. Each step restarts stabilization. Catch-up, placement, scheduling, and draining add time beyond the window, so the window is not a scaling completion deadline.
 
 Write rates need two accepted samples at least ten seconds apart. Counter/time resets or a new pod UID require a new baseline; an operator restart also loses rate baselines, while desired count and stabilization timestamps remain in status. Missing metric rows in an otherwise successful response count as zero. Unknown write-rate baselines are different: another known signal can justify growth, but a missing configured signal prevents traffic-driven shrink. If any metrics request fails, the traffic decision holds. Read-only saturation may not trigger either signal; this is not a general CPU, memory, latency, or read-QPS autoscaler.
 
-Before growing, the operator reads replica placement. An unreadable placement view prevents growth. Any fully replicated active data partition caps autoscaled growth at **three nodes**, independent of the configured factor; the operator never creates more than three data copies through autoscaled growth. `AutoscalingLimited` explains the block. With placed partitions, `replication.factor` can be 1–3; factor 1 sacrifices replica fault tolerance.
+Before growing, the operator reads replica placement. An unreadable placement view prevents growth. While any active data partition still reports legacy full replication, the operator caps autoscaled growth at **three nodes**, independent of the configured factor; the operator never creates more than three data copies through autoscaled growth. `AutoscalingLimited` explains the block; current servers can clear pending conversion through the placement rebalancer. With placed partitions, `replication.factor` can be 1–3; factor 1 sacrifices replica fault tolerance.
 
 While autoscaling is enabled, `spec.replicas` only initializes the target, clamped to the bounds. Later edits to it do not override the autoscaler. Bounds edits clamp the desired count immediately, while actual membership still changes one node at a time; a traffic sampling failure does not undo that explicit clamp. `status.autoscaling.recommendedReplicas` is already clamped to the bounds; it is not the uncapped demand.
+
+</details>
 
 ## Scale Manually or Pause Autoscaling
 
@@ -135,7 +212,7 @@ kubectl -n kahuna patch kahunacluster kahuna --type=merge \
 
 Removing autoscaling without updating `replicas` hands control back to its old value and can start an unexpected scale. Do not attach an HPA to the managed StatefulSet or edit its count directly: the operator reconciles that object from the custom resource.
 
-Scale-up creates one joining node at a time and waits for the expected roster to contain all target endpoints as Voters. Scale-down asks the highest-ordinal node to leave through `POST /v1/cluster/leave`; only a committed removal/already-absent response permits removal of its reachable pod. A refusal or HTTP error holds the current size. If the departing pod is already missing or has no IP, the controller cannot ask it to leave and relies on membership eviction; it will not take another step until the roster converges.
+Scale-up creates one joining node at a time and waits for the expected roster to contain all target endpoints as Voters. Further scaling also waits for replica placement to settle; committed membership alone does not prove data movement has finished. Scale-down asks the highest-ordinal node to leave through `POST /v1/cluster/leave`; only a committed removal/already-absent response permits removal of its reachable pod. A refusal or HTTP error holds the current size. If the departing pod is already missing or has no IP, the controller cannot ask it to leave and relies on membership eviction; it will not take another step until the roster converges.
 
 `replicas: 2` is rejected. A standalone one-node resource cannot transition to or from a multi-node cluster; create a separate resource and migrate. Counts of four or six are valid intermediate/target sizes, but an even-sized fully replicated group has the same failure tolerance as the preceding odd size.
 
@@ -158,6 +235,7 @@ kubectl -n kahuna logs kahuna-0 --tail=100
 | `recommendedReplicas` exceeds `desiredReplicas` | Stabilization, one-node stepping, or a ceiling may be holding the next step. Inspect window timestamps and conditions. |
 | A new node stays `Learner` | Catch-up progress, snapshot transfer, placement, and join timeout logs. Readiness alone does not certify roster convergence. |
 | Scale-down holds | Departing pod reachability, leave response, remaining replica placement, and decommission drain timeout. Keep the pod until removal is confirmed. |
+| Backups wait or fail | `BackupVolumeReady`, `BackupFailing`, and `status.backup`: shared storage binding, image compatibility, rollout readiness, and the latest attempt outcome. |
 
 Recent Kahuna servers distinguish join admission/initialization (`--raft-join-timeout`, default 60,000 ms) from the promotion **no-progress** timeout (`--raft-join-promotion-stall-timeout`, default 300,000 ms). Promotion can take longer while commit indexes, new partitions, or snapshot receipt/install show progress. The stall timeout must exceed the promotion stable window plus node-update interval. These have no typed operator fields yet; use `spec.extraArgs` when adjustment is justified:
 
@@ -172,6 +250,9 @@ spec:
 
 A post-admission join failure attempts withdrawal from the roster; withdrawal is best-effort and caller cancellation does not invoke it. Verify membership rather than assuming an exception removed a learner.
 
+<details>
+<summary>Deployment reference: updates, storage, and recovery limits</summary>
+
 ## Updates, Storage, and Recovery Limits
 
 Configuration/image changes update the pod template and cause rolling updates; the controller holds updates when membership is unreadable or nonconverged. Scaling changes topology outside the template so it does not restart existing nodes merely to change the peer list. TLS Secret contents alone do not change the generated script hash: do not assume certificate rotation automatically rolls pods.
@@ -185,4 +266,6 @@ kubectl apply -f charts/kahuna-operator/crds/kahunaclusters.yaml
 helm upgrade kahuna-operator ./charts/kahuna-operator --namespace kahuna-system
 ```
 
-The operator has no backup/scheduled-backup CRD and does not seed new pods from backups automatically. New nodes normally use Raft snapshot plus log catch-up. Current Kahuna servers can copy and verify a full backup base image before replay and join, but the operator still lacks backup storage mounts/provider setup and per-join bootstrap orchestration. `extraArgs` cannot add mounts or register a GCS provider. See [PITR Bootstrap](/docs/pitr-bootstrap/) for the server workflow and [Backups](/docs/backups-and-point-in-time-recovery/) for full-cluster coverage requirements under replica placement.
+Scheduled backups are configured through `spec.backup`, including shared storage mounts and signing-key setup. The operator does not automatically restore a cluster or seed new pods from those backups. New nodes normally use Raft snapshot plus log catch-up. Current Kahuna servers can copy and verify a full backup base image before replay and join, but that still requires explicit bootstrap orchestration. The stock server does not register a GCS provider merely through `extraArgs`. See [PITR Bootstrap](/docs/pitr-bootstrap/) for the server workflow and [Backups](/docs/backups-and-point-in-time-recovery/) for recovery semantics.
+
+</details>

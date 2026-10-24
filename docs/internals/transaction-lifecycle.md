@@ -232,6 +232,31 @@ The durable finalizer runs this sequence:
 7. Atomically change the canonical record from `Undecided` to `Commit` only when every prepare succeeded and validation passed. Otherwise attempt the same conditional change to `Abort`.
 8. Resolve prepared intents from the record outcome.
 
+```mermaid
+sequenceDiagram
+    participant Cl as Client
+    participant Co as Coordinator
+    participant An as Anchor partition
+    participant P as Other participants
+    participant R as Replicas
+    Note over Co: Freeze the finalize input<br/>commit timestamp, deadline, manifest, intents
+    Co->>An: Record Undecided and prepare anchor intents (one proposal)
+    Co->>P: Prepare intents (all partitions concurrently)
+    Note over Co: Validate staged bases and the read set
+    Co->>R: Ask for staged-base fence verdicts
+    R-->>Co: OK, StaleBase, or no answer
+    alt Every prepare succeeded, validation passed, no StaleBase verdict
+        Co->>An: Compare-and-set record to Commit
+        Note over An: Point of no return
+        Co-->>Cl: Committed
+    else Any prepare or check failed
+        Co->>An: Compare-and-set record to Abort
+        Co-->>Cl: Aborted
+    end
+    Co-)P: Resolve intents from the record outcome
+    Note over P: With deferred settlement this runs in the background
+```
+
 The decision record is the point of no return. Once it commits as `Commit`, Kahuna must not later report a definite abort for that transaction. If a concurrent recovery pass wins the record as `Abort`, the finalizer reports the record's actual outcome, not the outcome it hoped to write.
 
 A write's base is the committed revision from which it was derived. A lost update would occur if a transaction overwrote a competing change using that outdated base. Validated-base writes get a second check after prepare. The leader checks the current committed base before prepare, each replica remembers the committed head it saw while applying the prepare, and the finalizer asks replicas for those verdicts before writing `Commit`. A `StaleBase` verdict aborts the transaction as a conflict. Missing or unreachable verdicts are counted as unattested and do not by themselves block commit; the canonical decision still follows the ordered record path.

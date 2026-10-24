@@ -1,12 +1,27 @@
-import Cache from '../assets/cache.png';
-
 # Keys Eviction
+
+Kahuna serves hot keys from memory, but memory is limited. Eviction is how each node keeps its memory use bounded: it first removes expired and deleted entries, and if that is not enough, it drops the least recently used entries.
+
+What this means for you:
+
+- **Persistent keys are safe.** Eviction drops only the in-memory copy. The next read loads the value from disk, which is slower but returns the same data.
+- **Ephemeral keys can disappear.** Their only copy is in memory, so an evicted ephemeral key is gone, even before its expiration time. Use [ephemeral durability](/docs/architecture/durability-levels/) only for data you can rebuild, such as caches and counters.
+- **The budget is configurable.** If a node uses too much memory, or evicts hot data too often, see [Configuration Surface](#configuration-surface).
+
+Most deployments do not need to change anything. The rest of this page describes the algorithm.
 
 Kahuna keeps key/value state in memory inside each `KeyValueActor`. Persistent keys also have durable storage behind them, but the in-memory copy avoids disk reads for hot data. Ephemeral keys live only in memory, so eviction of an ephemeral key removes the value from the node.
 
-<div style={{textAlign: 'center'}}>
-<img src={Cache} height="350" />
-</div>
+<ArchDiagram
+  group="Kahuna Node"
+  sources={['Client A', 'Client B', 'Client C', '…', 'Client N']}
+  hub={{label: 'Cache', icon: 'layers'}}
+  targets={[
+    {label: 'Persistence', sub: '(RocksDB/SQLite)', icon: 'database'},
+    {label: 'Ephemeral', sub: '(Memory)', icon: 'chip'},
+  ]}
+  title="Clients A through N send requests to the in-memory cache of a Kahuna node. The cache is backed by persistent storage in RocksDB or SQLite, or by ephemeral memory only."
+/>
 
 The current key/value eviction algorithm is a bounded collector. It reclaims definite garbage first, then uses true least-recently-used ordering only when the actor is over its configured entry or byte budget. Revision and MVCC metadata are trimmed where they grow so hot keys with large histories do not grow without bound.
 

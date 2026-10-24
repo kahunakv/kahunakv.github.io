@@ -1,7 +1,9 @@
 
 # Command: Set
 
-Allows to create or update a key/value in a persistent durable way.
+Creates or updates a key with **persistent** durability. The value is replicated through Raft and stored on disk, so it survives node restarts and leader changes. Use it for data you cannot lose, such as configuration, job state, or balances.
+
+For temporary data such as caches, sessions, or counters, [`eset`](/docs/scripts/commands/eset/) is faster. See [Durability Levels](/docs/architecture/durability-levels/) to choose.
 
 ```kahuna
 set `services/email/instance-3` '{"ip": "10.1.1.22", "port": 9090}'

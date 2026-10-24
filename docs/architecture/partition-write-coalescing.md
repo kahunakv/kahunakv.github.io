@@ -2,6 +2,8 @@
 
 Kahuna coalesces persistent partition writes before proposing them to Raft. This reduces the number of WAL appends, quorum round trips, and synchronous disk flushes needed when many clients write to the same partition at the same time.
 
+For you, this means higher write throughput for workloads such as bulk imports, batch writes, and busy buckets, with no change to application code. Coalescing is on by default, and the defaults are designed not to add visible latency to most writes. Most deployments keep them; see [When It Helps](#when-it-helps) and [Tuning](#tuning) if you measure a write bottleneck on one partition.
+
 A direct write is a non-transactional persistent key/value mutation:
 
 - `SET`, including conditional and `NOREV` variants

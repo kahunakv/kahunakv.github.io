@@ -63,7 +63,7 @@ Capturing `M` before the flush is essential. If the code flushed first and read 
 
 Writes may still commit after `M` but before the checkpoint. The checkpoint can therefore contain more state than its manifest claims. This is safe because later replay uses revision-keyed upserts and is idempotent.
 
-The apply barrier is equally important. A committed write may still be waiting to apply to in-memory state, and the flush can only persist what has already applied. If the barrier times out or the backend cannot durably flush, backup fails closed with `ExactCheckpointUnavailable` instead of publishing a checkpoint that might omit committed data.
+The apply barrier is equally important. A committed write may still be waiting to apply to in-memory state, and the flush can only persist what has already applied. If the barrier times out, capture reports all lagging partitions as retryable `PartitionCaptureFailed`; a backend that cannot durably flush or produce an exact image fails with `ExactCheckpointUnavailable`. Neither publishes a checkpoint that might omit committed data.
 
 Active partitions contribute a `PartitionBackupRange` from index `1` through their captured committed index. Draining and removed partitions are skipped.
 
@@ -124,7 +124,7 @@ The chain must satisfy these rules:
 
 A missing manifest or index gap is an error. Restore does not attempt to produce a partial result from a broken chain.
 
-Under replica placement, a node may host only some partitions. Backup manifests record both the cluster partition set and the partitions covered by that artifact. Before restore or PITR bootstrap, Kahuna validates that the chain's covered partitions reach every cluster partition. If not, it fails with `RestrictedCoverage` rather than producing a partial cluster image.
+Under replica placement, a node may host only some partitions. Backup manifests record both the cluster partition set and the partitions covered by that artifact. Before restore or PITR bootstrap, Kahuna validates that every stamped manifest independently covers every cluster partition; coverage cannot be assembled from the union of different links. If not, it fails with `RestrictedCoverage` rather than producing a partial cluster image.
 
 Artifact validation is separate from structural chain validation. Before restore trusts bytes, `BackupArtifactVerifier` checks:
 
@@ -249,3 +249,9 @@ Readers must support these encodings before producers enable them. Disabling an 
 The full's optional `intent_frontier.pb` supplies prepares whose values would otherwise be absent from incremental replay. `BackupDriver` copies live intents and applied positions before recording range ends; `IntentFrontier` folds the WAL into live and settled reconstruction state at those ends and checks the existing tail with restore's expansion rules. Missing sources refuse publication with retryable `CutUnverified`. Restore verifies the artifact and seeds prepares and settled identities before segment replay. Recognized duplicate by-reference records after settlement are harmless; unknown references fail closed.
 
 For coordinated capture, `BackupService` opens a prepared-intent observation before choosing a cut. After checkpoint creation it confirms local application on every covered partition and verifies the observation's minimum commit timestamp is strictly above the cut. A failed check discards the image; after three attempts it reports `CutUnverified`. This verifies durable transactions, not every participant's actor-only ticket-path staging. See [Coordinated Cluster Snapshots](/docs/backups-and-point-in-time-recovery/#coordinated-cluster-snapshots) for scope and operational behavior.
+
+## Composed Captures
+
+`BackupService.Composed` assigns partition shares to materialized voters, captures them at an agreed cut, and merges checkpoint images plus intent frontiers into one backup. Learners and removing replicas are not capture sources. The driver reports `LaggingPartitions` when its apply barrier expires; coordinated retries can reassign those `(node, partition)` pairs to other voters. A plain full remains local, while a composed incremental continues whole-cluster coverage and falls back to a coordinated full if necessary. Coverage validation checks each stamped link, not their union.
+
+See [Capture Cost and Lagging Replicas](/docs/backups-and-point-in-time-recovery/#capture-cost-and-lagging-replicas) for barrier timeouts, scratch placement, staging fallback, and the capture I/O budget.

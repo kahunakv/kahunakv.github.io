@@ -1,8 +1,6 @@
 # Buckets
 
-Buckets are Kahuna's simplest way to keep a related group of keys on the same partition.
-
-If several keys share the same key space prefix, Kahuna routes them together. That is why keys such as:
+A **bucket** is a group of keys that share a prefix, such as:
 
 ```text
 services/auth
@@ -10,7 +8,12 @@ services/matchmaking
 services/inventory
 ```
 
-can be read with one consistent `get by bucket "services"` operation.
+Kahuna stores all keys of one bucket on the same partition. Keys spread across different partitions cannot give you the following two things, but a bucket does:
+
+- **One consistent read of the whole group.** `get by bucket "services"` returns every key in the bucket from one partition in one operation, instead of several separate reads that can each see a different moment.
+- **Local multi-key transactions.** A transaction that only touches keys in one bucket stays on one partition instead of spanning several.
+
+You get buckets automatically from how you name keys; there is nothing to configure. They are Kahuna's simplest way to group related keys, and they fit small, related sets such as service discovery entries, a tenant's settings, or a group of feature flags. For large or growing key spaces, see [When Buckets Are Not Enough](#when-buckets-are-not-enough).
 
 ## What a Bucket Means
 

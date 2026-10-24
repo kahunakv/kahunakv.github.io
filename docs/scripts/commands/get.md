@@ -1,7 +1,9 @@
 
 # Command: Get
 
-Get the value of key from the persistent durable storage. If the key does not exist `null` is returned.
+Reads the current value of a persistent key, written with [`set`](/docs/scripts/commands/set/). If the key does not exist, `null` is returned.
+
+Persistent and ephemeral keys are separate: to read a key written with `eset`, use [`eget`](/docs/scripts/commands/eget/).
 
 ```kahuna
 set `config/limits/max-connections` 1000

@@ -35,11 +35,22 @@ Both workers now believe they own the resource.
 
 Kahuna issues a **fencing token** with every lock acquisition. The token always increases, allowing the protected resource to reject late operations from an older owner.
 
-```text
-Worker A -> token 41
-lease expires
-Worker B -> token 42
-resource rejects later writes using token 41
+```mermaid
+sequenceDiagram
+    participant A as Worker A
+    participant K as Kahuna
+    participant B as Worker B
+    participant R as Resource
+    A->>K: Acquire lock
+    K-->>A: Fencing token 41
+    Note over A: Pauses
+    Note over K: Lease expires
+    B->>K: Acquire lock
+    K-->>B: Fencing token 42
+    B->>R: Write with token 42
+    Note over A: Resumes
+    A->>R: Write with token 41
+    R--xA: Rejected, 41 is lower than 42
 ```
 
 ### Atomic Counters Are Not Retry-Safe

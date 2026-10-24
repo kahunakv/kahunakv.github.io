@@ -1,0 +1,193 @@
+/* Palette built from the logo greens: bright #1bbc49, deep #02874c,
+   lime #6bd54f and ink #00241a. Light fills are tints of bright; dark-mode
+   fills are deep mixed into ink. Shared with src/theme/Mermaid/index.js.
+   Font sizes set here are defaults; wrapped labels set their fitted size
+   inline. */
+.figure {
+  --dg-group: #f1fbf4;
+  --dg-group-border: #1bbc49;
+  --dg-card: #e4f7e9;
+  --dg-card-border: #1bbc49;
+  --dg-target: #edfaf0;
+  --dg-target-border: #98e1ad;
+  --dg-text: #00241a;
+  --dg-muted: #5a7168;
+  --dg-edge: #02874c;
+  --dg-hub-top: #02874c;
+  --dg-hub-bottom: #026e40;
+  --dg-hub-border: #00241a;
+  --dg-hub-text: #ffffff;
+  --dg-hub-sub: #bcecb0;
+  --dg-i1: #02874c;
+  --dg-i2: #1bbc49;
+  --dg-i3: #daf4d3;
+  --dg-cut: var(--dg-target);
+  margin: 0 0 var(--ifm-leading);
+}
+
+[data-theme='dark'] .figure {
+  --dg-group: #00241a;
+  --dg-group-border: #02874c;
+  --dg-card: #003824;
+  --dg-card-border: #1bbc49;
+  --dg-target: #002e1f;
+  --dg-target-border: #015a36;
+  --dg-text: #f1fbf4;
+  --dg-muted: #9dc3a9;
+  --dg-edge: #6bd54f;
+  --dg-hub-top: #02874c;
+  --dg-hub-bottom: #026e40;
+  --dg-hub-border: #1bbc49;
+  --dg-i1: #6bd54f;
+  --dg-i2: #1bbc49;
+  --dg-i3: #014229;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  min-width: 560px;
+  height: auto;
+  font-family: var(--ifm-font-family-base);
+}
+
+.group {
+  fill: var(--dg-group);
+  stroke: var(--dg-group-border);
+  stroke-width: 2;
+}
+
+.groupTitle {
+  fill: var(--dg-text);
+  font-size: 32px;
+  font-weight: 800;
+  dominant-baseline: central;
+}
+
+.source {
+  fill: var(--dg-card);
+  stroke: var(--dg-card-border);
+  stroke-width: 2;
+}
+
+.sourceLabel {
+  fill: var(--dg-text);
+  font-size: 24px;
+  font-weight: 700;
+  dominant-baseline: central;
+}
+
+.dots {
+  fill: var(--dg-edge);
+}
+
+.edge {
+  fill: none;
+  stroke: var(--dg-edge);
+  stroke-width: 2.5;
+}
+
+.arrowHead {
+  fill: var(--dg-edge);
+}
+
+.hub {
+  stroke: var(--dg-hub-border);
+  stroke-width: 2;
+}
+
+.hubStopTop {
+  stop-color: var(--dg-hub-top);
+}
+
+.hubStopBottom {
+  stop-color: var(--dg-hub-bottom);
+}
+
+.hubLabel {
+  fill: var(--dg-hub-text);
+  font-size: 26px;
+  font-weight: 700;
+  dominant-baseline: central;
+}
+
+.leaderSub {
+  fill: var(--dg-hub-sub);
+  font-size: 17px;
+  dominant-baseline: central;
+}
+
+.ring {
+  fill: none;
+  stroke: var(--dg-target-border);
+  stroke-width: 2;
+  stroke-dasharray: 6 8;
+}
+
+.pill {
+  fill: var(--dg-group);
+  stroke: var(--dg-group-border);
+  stroke-width: 2;
+}
+
+.pillLabel {
+  fill: var(--dg-text);
+  font-size: 20px;
+  font-weight: 700;
+  dominant-baseline: central;
+}
+
+/* Icons drawn on the dark hub. */
+.inverse {
+  --dg-i1: #ffffff;
+  --dg-i2: #6bd54f;
+  --dg-i3: #1bbc49;
+}
+
+.target {
+  fill: var(--dg-target);
+  stroke: var(--dg-target-border);
+  stroke-width: 2;
+}
+
+.targetLabel {
+  fill: var(--dg-text);
+  font-size: 26px;
+  font-weight: 700;
+  dominant-baseline: central;
+}
+
+.targetSub {
+  fill: var(--dg-muted);
+  font-size: 20px;
+  dominant-baseline: central;
+}
+
+.i1 {
+  fill: var(--dg-i1);
+}
+
+.i2 {
+  fill: var(--dg-i2);
+}
+
+.i3 {
+  fill: var(--dg-i3);
+}
+
+.iCut {
+  fill: none;
+  stroke: var(--dg-cut);
+  stroke-width: 1.6;
+}
+
+.iPins {
+  fill: none;
+  stroke: var(--dg-i1);
+  stroke-width: 2;
+  stroke-linecap: round;
+}

@@ -48,6 +48,7 @@ const sidebars = {
         'distributed-keyvalue-store/load-based-range-splitting',
         'distributed-keyvalue-store/cas',
         'distributed-keyvalue-store/revisions',
+        'distributed-keyvalue-store/watches',
         'distributed-keyvalue-store/transactions',
         'distributed-keyvalue-store/read-and-lock-semantics',
         'distributed-keyvalue-store/yielding-transactions',
@@ -144,6 +145,7 @@ const sidebars = {
         'internals/request-flow',
         'internals/point-reads',
         'internals/range-scan-observations',
+        'internals/batched-probes',
         'internals/transaction-lifecycle',
         'internals/durable-settlement',
         'internals/actor-model',
@@ -169,6 +171,7 @@ const sidebars = {
         'recipes/idempotent-jobs',
         'recipes/distributed-circuit-breaker',
         'recipes/feature-flags',
+        'recipes/watch-key-changes',
         'recipes/ordered-ids',
         'recipes/inventory-reservation'
       ],

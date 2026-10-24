@@ -2,7 +2,7 @@
 
 # Command: Edelete
 
-Deletes an ephemeral key/value. The key is ignored if it doesn't exist.
+Deletes an ephemeral key. The key is ignored if it doesn't exist. For persistent keys, use [`delete`](/docs/scripts/commands/delete/).
 
 ```kahuna
 eset `cache_server_dev` '10.1.1.22:9090'

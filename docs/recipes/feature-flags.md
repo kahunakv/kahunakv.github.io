@@ -3,7 +3,11 @@ import TabItem from '@theme/TabItem';
 
 # Feature Flags and Configuration
 
+A feature flag turns a feature on or off at runtime, without a deploy. Runtime configuration changes values such as limits or timeouts in the same way. When many instances of a service read the same flag, they must all see the same value, and a bad change must be easy to find and undo.
+
 Kahuna can store feature flags and runtime configuration with strong consistency, revisions, compare-and-set updates, and historical snapshot reads.
+
+To refresh a local copy when a persistent flag changes, see [Watch Key Changes](/docs/recipes/watch-key-changes/).
 
 Use a predictable key layout:
 

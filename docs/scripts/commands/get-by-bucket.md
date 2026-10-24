@@ -1,6 +1,8 @@
 # Command: Get By Bucket
 
-Returns persistent key/value pairs that belong to the same bucket. A bucket is the first path segment before `/`, so keys such as `services/auth`, `services/payments`, and `services/search` all belong to the `services` bucket.
+Returns persistent key/value pairs that belong to the same bucket. A bucket is the part of the key before the last `/`, so keys such as `services/auth`, `services/payments`, and `services/search` all belong to the `services` bucket.
+
+All keys of a bucket live on one partition, so this command reads the whole group in one consistent operation. Use it for small groups of related keys, such as the instances of a service or a tenant's settings. See [Buckets](/docs/distributed-keyvalue-store/buckets/). For ephemeral keys, use [`eget by bucket`](/docs/scripts/commands/eget-by-bucket/).
 
 ```kahuna
 set `services/auth` "localhost:8081"

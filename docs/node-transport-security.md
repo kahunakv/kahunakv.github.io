@@ -1,5 +1,7 @@
 # Node Transport Security
 
+Kahuna nodes trust each other: they replicate Raft log entries, forward client requests, and take part in each other's transactions. Without node authentication, any process that can reach a node's internal ports could pose as a peer and send it forged replication or transaction messages. Node transport security makes each node prove its identity before peers accept its traffic.
+
 Kahuna can authenticate node-to-node traffic with mutual TLS. In `MutualTls` mode, each node presents a certificate to peers and verifies the peer certificate thumbprint before accepting internal traffic.
 
 Use this for production clusters where the Raft port or internal Kahuna gRPC calls could be reached by anything other than trusted nodes.

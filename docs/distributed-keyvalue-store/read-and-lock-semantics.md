@@ -1,5 +1,25 @@
 # Transaction reads and locks
 
+This is an advanced reference. It defines exactly what a transaction sees when it reads, and exactly
+when two transactions conflict, including the edge cases around leader failover and background settlement.
+
+**Read this page if** you need to reason precisely about isolation in your application: for example,
+to decide whether a read-then-write pattern is safe without a lock, to choose between latest and
+historical reads, to protect a scan with range or prefix locks, or to understand an unexpected
+`Aborted` or `MustRetry`. If you are new to Kahuna transactions, start with
+[Transactions](/docs/distributed-keyvalue-store/transactions/).
+
+The main rules in short:
+
+- A transaction's first read of each key pins that key's committed value. Reads of different keys can
+  observe different moments; they do not share one snapshot.
+- With read validation, if a key you read changes before you commit, a later operation or the commit
+  returns `Aborted`.
+  Start a new transaction and repeat the work.
+- Historical reads at a fixed `ReadTimestamp` use a separate, read-only path.
+- Transaction locks live in the partition leader's memory. A leader change drops them, and the
+  commit then refuses with a `Lost lock` reason instead of committing unprotected work.
+
 Kahuna has two distinct read paths: latest reads under a transaction identity, and historical reads
 at a fixed `ReadTimestamp`. MVCC does not make every transaction a single historical snapshot.
 This guide describes their visibility and conflict rules, including the deferred-settlement window.
@@ -22,10 +42,17 @@ read dependencies; early detection does not replace final validation.
 
 For example, with optimistic locking:
 
-```text
-A: GET k       -> revision 7 (pinned)
-B: SET k; COMMIT -> revision 8
-A: GET k       -> Aborted
+```mermaid
+sequenceDiagram
+    participant A as Transaction A
+    participant K as Kahuna
+    participant B as Transaction B
+    A->>K: GET k
+    K-->>A: revision 7 (pinned)
+    B->>K: SET k, then COMMIT
+    K-->>B: Committed, revision 8
+    A->>K: GET k
+    K-->>A: Aborted (revision moved past the pin)
 ```
 
 Reading `x` and then `y` for the first time can observe commits from different moments. The pins are

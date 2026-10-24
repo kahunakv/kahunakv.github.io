@@ -1,7 +1,7 @@
 
 # Command: Delete
 
-Deletes a persistent key/value. The key is ignored if it doesn't exist.
+Deletes a persistent key. The key is ignored if it doesn't exist. The delete is recorded as a new [revision](/docs/distributed-keyvalue-store/revisions/), so historical reads from before the delete can still find the old value. For ephemeral keys, use [`edelete`](/docs/scripts/commands/edelete/).
 
 ```kahuna
 set `services/email/instance-3` '{"ip": "10.1.1.22", "port": 9090}'

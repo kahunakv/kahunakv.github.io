@@ -1,7 +1,7 @@
 
 # Command: Eexists
 
-Checks if a key exists in the volatile storage. If the key does not exist `false` is returned.
+Checks whether an ephemeral key exists. If the key does not exist, `false` is returned. For keys written with `set`, use [`exists`](/docs/scripts/commands/exists/).
 
 ```kahuna
 eexists `config/limits/max-connections`

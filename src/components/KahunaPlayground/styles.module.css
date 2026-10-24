@@ -14,7 +14,7 @@
   --console-muted: #8fb3a4;
   --console-dim: #5d8576;
   --console-error: #ff8e95;
-  --code-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --code-font: var(--ifm-font-family-monospace);
   display: flex;
   flex-direction: column;
   gap: 1.5rem;

@@ -73,4 +73,8 @@ Arrays are useful for grouping values, iterating over elements, or returning str
 let statuses = ["active", "inactive"]
 ```
 
+Write an array literal with square brackets: `[]` is an empty array, and each element can be any expression, including another array. A trailing comma is a syntax error. Commands and operators also make arrays: `get by bucket`, `scan by prefix`, the range operator (`1..10`), and `split`.
+
+When a script returns an array, each element is one value in the result. An array inside the returned array is sent as its JSON text, so `return [[1], [2, 3]]` returns the two values `[1]` and `[2,3]`. See [Script Semantics](semantics.md) for the limits on array literals.
+
 Values are stored by the key/value engine as byte streams and converted to Kahuna Script values when commands read them into a script. Use the type-checking and casting functions when a script needs to validate or coerce a value before using it.

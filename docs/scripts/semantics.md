@@ -66,6 +66,25 @@ let ids = 1..10
 
 That range contains `1` through `10`. If the start is greater than the end, the result is an empty array. Ranges are materialized when evaluated and are capped at 100000 elements.
 
+## Array Literals
+
+Square brackets around a comma-separated list of expressions make a new array. The elements are evaluated in source order, and each evaluation makes a new array:
+
+```kahuna
+let empty = []
+let mixed = ["hello", false, 100.2, null]
+let computed = [a, a * 2, upper(name)]
+let nested = [[1], [2, 3]]
+```
+
+A bracket at the start of an expression is a literal. A bracket after a complete expression is an index, so `[10, 20, 30][2]` returns `30`.
+
+A trailing comma, an empty element, and an unclosed bracket are syntax errors: `[1,]`, `[,]`, `[1, , 2]` and `[1, 2` are all refused.
+
+Each element is one level in the parsed script, so a literal holds at most about 250 elements with the default `MaxScriptDepth` of 256. A longer literal is refused with a "nested too deeply" error. Use a range or `split` to make a long array.
+
+A literal is capped at 100000 values in total. The count includes every value of the arrays nested in it, so `[1..100000]` is refused. This also stops a loop that puts the same array into a literal two times on each iteration, because each iteration doubles the total.
+
 ## Strings and Escapes
 
 Double-quoted, single-quoted, and backtick identifier literals decode escapes. Common escapes include `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, octal escapes, `\xHH`, `\uHHHH`, and `\UHHHHHHHH`.
@@ -185,3 +204,7 @@ end
 ```
 
 This returns `"matched"` without dividing by zero. Numeric strings can compare with numbers, bytes compare with strings through UTF-8 encoding, and `null` matches only `null`. Incompatible comparisons are script errors: `switch 1 case "abc" then return true end` cannot parse `"abc"` as a number. String comparisons remain ordinal and case-sensitive. See [Switch/Case](control-structures.md#switchcase) for syntax and locking behavior.
+
+## Array JSON Encoding
+
+`to_json` and nested-array result conversion use an iterative array encoder, so deeply nested arrays do not depend on recursive serialization. Non-finite numeric values are encoded as the JSON strings `"NaN"`, `"Infinity"`, or `"-Infinity"`; unpaired UTF-16 surrogates become U+FFFD. This does not make a scalar arithmetic error valid or remove array/depth limits. Top-level returned arrays still become a list of result values, with any nested array represented by its JSON text.

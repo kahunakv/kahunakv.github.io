@@ -1,7 +1,9 @@
 
 # Command: ESet
 
-Allows to create or update a key/value in volatile storage (memory).
+Creates or updates a key with **ephemeral** durability. The value lives only in the memory of the partition leader. Writes are faster than with [`set`](/docs/scripts/commands/set/), but the value is lost on a node restart, a leader change, or memory eviction. Use it for data you can rebuild, such as caches, sessions, and rate-limit counters.
+
+For data you must keep, use `set`. See [Durability Levels](/docs/architecture/durability-levels/) to choose.
 
 ```sql
 eset `config/db-connection/dev` 'jdbc:mysql://localhost/test?user=mint'

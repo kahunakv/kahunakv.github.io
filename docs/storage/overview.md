@@ -9,6 +9,8 @@ There are two independent storage choices in a Kahuna server:
 
 Both options can use `rocksdb` or `sqlite`. The materialized state backend can also use `memory` for embedded or test deployments where restart durability is not required. RocksDB is Kahuna's default backend for both Raft WAL storage and materialized persistent state.
 
+If you are unsure, keep the default: RocksDB for both. Choose SQLite for small deployments, development, or when you want to inspect data with standard SQLite tools. Choose `memory` only for tests and embedded nodes where losing persistent state on restart is acceptable. See [Choosing an Adapter](#choosing-an-adapter) for a full comparison.
+
 ## What the Storage Backend Stores
 
 The `IPersistenceBackend` contract stores the latest state and historical revisions needed by Kahuna's persistent objects:

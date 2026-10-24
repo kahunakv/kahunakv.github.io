@@ -1,6 +1,10 @@
 # Range-Scan Observations
 
-A paginated range scan can inspect many more entries than it returns. Tombstones, expiry filtering, historical versions, and durable intents all contribute to that cost. Each page can now carry a `KeyValueScanObservation`, exposed as `KeyValueGetByRangeResult.Observation` in the server/embedded API and `GrpcScanObservation` on the range-scan gRPC responses.
+A range scan that returns a hundred rows may have to look at thousands of entries to find them. Deleted keys (tombstones), expired keys, old revisions for historical reads, and committed transaction writes not yet settled all cost work, but they never appear in the result. When a scan is slower than its result size suggests, this hidden work is usually the cause.
+
+Range-scan observations report that hidden work for each page. They show why a scan is slow: for example, many dead entries in the scanned range, deep revision history, retries, or pages served from disk or from another node. They are diagnostic data for operators and embedding hosts, and they do not change what the scan returns.
+
+Each page of a paginated range scan can carry a `KeyValueScanObservation`, exposed as `KeyValueGetByRangeResult.Observation` in the server/embedded API and `GrpcScanObservation` on the range-scan gRPC responses.
 
 These are advisory measurements. They do not change visibility, cursor progression, retry decisions, or returned rows. They are not a new high-level .NET or TypeScript client scan API.
 
@@ -50,3 +54,5 @@ Console.WriteLine($"Inspected: {observations.Total.EntriesInspected}");
 ```
 
 The sink records served pages and retry counts. `Total` is complete only when `PagesUnobserved == 0`; early termination also leaves only the work accumulated so far. Use inspected/returned-row ratios to investigate read amplification, with backend, timestamp, retries, and unknown-page counts held in view. Per-page observations complement process-wide metrics; they do not establish a latency guarantee.
+
+Bounded range reads now pass inclusive/exclusive end keys into the backend and pending-write overlay, avoiding reads past the requested interval. The extra sentinel row is merged with the page rather than forcing a separate look-ahead disk read. Memory-backed pages can execute inline within an inspection budget; use `kahuna.scan.pages_read_on_actor_total` and `kahuna.scan.pages_read_on_scheduler_total` to distinguish execution paths. For many bounded seeks, see [Batched Probes](/docs/internals/batched-probes/).

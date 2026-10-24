@@ -1,6 +1,8 @@
 # Command: EGet By Bucket
 
-Returns ephemeral key/value pairs that belong to the same bucket. A bucket is the first path segment before `/`, so keys such as `sessions/user-1`, `sessions/user-2`, and `sessions/user-3` all belong to the `sessions` bucket.
+Returns ephemeral key/value pairs that belong to the same bucket. A bucket is the part of the key before the last `/`, so keys such as `sessions/user-1`, `sessions/user-2`, and `sessions/user-3` all belong to the `sessions` bucket.
+
+All keys of a bucket live on one partition, so this command reads the whole group in one consistent operation. Use it for small groups of related temporary keys, such as active sessions. See [Buckets](/docs/distributed-keyvalue-store/buckets/). For persistent keys, use [`get by bucket`](/docs/scripts/commands/get-by-bucket/).
 
 ```kahuna
 eset `sessions/user-1` "active"

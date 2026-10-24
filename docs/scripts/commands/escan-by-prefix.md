@@ -2,6 +2,8 @@
 
 Scans ephemeral storage across the cluster and returns key/value pairs whose keys start with the specified prefix.
 
+Use it when the keys you want can belong to more than one bucket. Because a scan can visit several partitions, it costs more than [`eget by bucket`](/docs/scripts/commands/eget-by-bucket/), which reads one. Results are capped, so use it for small, bounded prefixes. For persistent keys, use [`scan by prefix`](/docs/scripts/commands/scan-by-prefix/).
+
 ```kahuna
 eset `cache/product/1` "ready"
 r0 set 4ms

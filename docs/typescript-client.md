@@ -1,6 +1,6 @@
 # Client for TypeScript and Node.js
 
-Kahuna provides an ESM TypeScript client for Node.js applications. It supports distributed locks, key/value operations, batch operations, range scans, transaction scripts, interactive transactions, distributed sequences, routing, snapshot holds, backups, restore, and cluster/range administration.
+Kahuna provides an ESM TypeScript client for Node.js applications. It supports distributed locks, key/value operations, watches, batch operations, range scans, transaction scripts, interactive transactions, distributed sequences, routing, snapshot holds, backups, restore, and cluster/range administration.
 
 ## Installation
 
@@ -101,6 +101,29 @@ await client.setNoRevision("cache/product/42", JSON.stringify(product), {
 ```
 
 The current revision still advances, but Kahuna skips the archived historical revision record for that write.
+
+## Watch Key Changes
+
+Use a watch to refresh local state when persistent keys change. It can cover one key, a prefix, or a range. Open it before reading the current value so later changes are queued while that read runs:
+
+```ts
+import { watchPrefix, isTerminalWatchFrame } from "kahuna-client";
+
+await using watch = await client.watchKeyValues({
+  scope: watchPrefix("config/prod/search/"),
+  keysOnly: true
+});
+
+for await (const frame of watch) {
+  if (frame.type === "event") {
+    console.log(`Refresh ${frame.event!.key} (${frame.event!.kind})`);
+  } else if (isTerminalWatchFrame(frame)) {
+    console.log(`Watch ended: ${frame.type}`);
+  }
+}
+```
+
+`keysOnly: true` omits value bytes. The watch is an async iterable; `await using` closes its server streams, or you can call `await watch.close()` yourself. A terminal frame can mean missed changes. Reopen the watch and refresh its covered state. For a complete change feed, `client.watchKeyValues(request, { autoResume: true })` can replay from progress watermarks when the cluster enables the commit admission window and retains the needed log. See [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/) for its delivery contract and the [watch recipe](/docs/recipes/watch-key-changes/) for a refresh loop.
 
 ## Batch Operations
 

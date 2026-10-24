@@ -1,7 +1,7 @@
 
 # Command: Exists
 
-Checks if a key exists in the persistent storage. If the key does not exist `false` is returned.
+Checks whether a persistent key exists. If the key does not exist, `false` is returned. For keys written with `eset`, use [`eexists`](/docs/scripts/commands/eexists/).
 
 ```kahuna
 exists `config/limits/max-connections`

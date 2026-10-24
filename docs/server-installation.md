@@ -11,6 +11,12 @@ Kahuna is distributed in two supported ways:
 
 No repository files are required to run a server.
 
+Which one to choose:
+
+- **Docker** is the fastest way to try Kahuna and the usual choice for container-based deployments. It does not need .NET on the host.
+- **The .NET global tool** runs the server directly on a machine with the .NET SDK, without containers. Choose it if you already use .NET tooling or deploy to virtual machines without Docker.
+- **On Kubernetes**, use the [Kubernetes Operator](/docs/kubernetes-operator/), which also manages cluster membership when you scale.
+
 ## Docker
 
 For the quickest container-based setup, run the published Kahuna image with HTTP, HTTPS, cleartext gRPC, and a named Docker volume for persistent data:

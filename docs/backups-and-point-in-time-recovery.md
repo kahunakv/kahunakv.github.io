@@ -12,7 +12,7 @@ Raft replication protects Kahuna against losing a node, but it does not protect 
 - Inspect the state of the data at an earlier time, in a separate directory, without touching the live cluster.
 - Seed a new node from a backup instead of a full transfer from its leader. See [PITR Bootstrap](/docs/pitr-bootstrap/).
 
-Kahuna's backup design combines storage-engine checkpoints with the committed Raft write-ahead log (WAL), the ordered log of every committed change. This supports full backups, incremental backups, and recovery to a selected Hybrid Logical Clock (HLC) timestamp. Kahuna does not schedule backups by itself: you trigger them from the CLI, a client, or the REST and gRPC APIs, usually from a scheduled job.
+Kahuna's backup design combines storage-engine checkpoints with the committed Raft write-ahead log (WAL), the ordered log of every committed change. This supports full backups, incremental backups, and recovery to a selected Hybrid Logical Clock (HLC) timestamp. Kahuna does not schedule backups by itself: you trigger them from the CLI, a client, or the REST and gRPC APIs, usually from a scheduled job. On Kubernetes, the [operator can schedule full and incremental backups](/docs/kubernetes-operator/#scheduled-full-and-incremental-backups) and manage their shared storage and retention.
 
 :::caution Restore scope
 
@@ -34,9 +34,9 @@ The three recovery operations use the same two artifacts:
 
 A full backup is the root of a chain. Each incremental backup references its immediate parent and records a contiguous WAL range for every included partition.
 
-```text
-full checkpoint -> incremental -> incremental -> incremental
-                    WAL delta      WAL delta      WAL delta
+```mermaid
+flowchart LR
+    F[(Full checkpoint)] --> I1[Incremental<br/>WAL delta] --> I2[Incremental<br/>WAL delta] --> I3[Incremental<br/>WAL delta]
 ```
 
 Kahuna validates the complete chain before restore. It rejects missing parents, cycles, a chain that does not begin with a full backup, unexpected full backups in the middle of a chain, and gaps between partition WAL ranges.
@@ -274,7 +274,7 @@ Listing responses include `ClusterId` and `CoordinatorNode` when available. Use 
 
 ### Coordinator and Catalog Placement
 
-`POST /v1/backups/coordinated` creates the cluster-wide backup. Kahuna accepts it only on the node that currently leads the meta partition. A request sent to another node is rejected with `NotBackupCoordinator`; retry against the current coordinator.
+`POST /v1/backups/coordinated` creates the cluster-wide backup. Kahuna accepts it only on the node that currently leads the meta partition. A request sent to another node is rejected with `NotBackupCoordinator`; retry against the current coordinator. Under replica placement, the coordinator can obtain remote partition shares rather than requiring every partition locally.
 
 `ListBackups`, chain resolution, parent lookup, and restore read whatever is present in the receiving node's `BackupDir`. To make those operations node-independent, use shared durable storage for `BackupDir` across all nodes. With node-local directories, coordinated backups are scattered across whichever node was coordinator at the time they were taken.
 
@@ -298,9 +298,9 @@ A full or coordinated backup can fail with `TopologyChanged` if partition owners
 
 With the default full-replication topology, any voter has every partition locally and can produce a backup covering the whole cluster.
 
-With a positive [replication factor](/docs/replica-placement/), a node stores only the partitions it hosts. A backup taken on that node records both the complete cluster partition set and the subset actually covered by the artifact. Restore, chain validation, and PITR bootstrap reject a chain with `RestrictedCoverage` if the union of its artifacts does not cover every cluster partition.
+With a positive [replication factor](/docs/replica-placement/), a node stores only the partitions it hosts. Kahuna **1.12.5 and later** compose coordinated backups from the hosting nodes' partition shares at one cut, so the result can cover the whole cluster without every node storing every partition. The [Kubernetes operator](/docs/kubernetes-operator/#scheduled-full-and-incremental-backups) schedules these backups and requires compatible release tags when placement is configured.
 
-Kahuna does not currently compose one cluster-wide backup from per-node artifacts. If whole-cluster backup and restore are required, keep full replication enabled or use a replication factor equal to the voter count.
+Older node-local backup paths may produce restricted coverage. Manifests record the cluster partition set and the covered subset; restore, chain validation, and PITR bootstrap reject a chain with `RestrictedCoverage` if any stamped link fails to cover every cluster partition. A coordinated capture that cannot obtain a required share publishes nothing and returns `PartitionCaptureFailed`; retry after availability or topology settles.
 
 ### Root Safety
 
@@ -326,7 +326,7 @@ A full backup performs these operations in order for active partitions:
 
 Recording the committed position before the flush is important. It guarantees the checkpoint contains at least every mutation promised by the manifest, including mutations that were committed but still waiting in the background persistence queue.
 
-If Kahuna cannot prove that the checkpoint exactly covers the requested cut, the full backup fails closed with `ExactCheckpointUnavailable` and publishes no manifest. This includes an apply barrier timeout, a backend flush failure, a cut below the durable pruned-history floor, or a no-revision key modified after the requested cut.
+If Kahuna cannot prove that the checkpoint exactly covers the requested cut, the full backup fails closed with `ExactCheckpointUnavailable` and publishes no manifest. This includes a backend flush failure, a cut below the durable pruned-history floor, or a no-revision key modified after the requested cut. An apply-barrier timeout instead reports retryable `PartitionCaptureFailed` with the lagging partitions; see [Capture Cost and Lagging Replicas](#capture-cost-and-lagging-replicas).
 
 Checkpoint behavior depends on the storage adapter:
 
@@ -372,7 +372,7 @@ Durable participants share one coordinator-minted commit HLC; their partition-lo
 
 The coordinator chooses `T` below the lowest in-flight commit timestamp it sees in live prepared intents and prepared actor intents. It starts observing prepared intents before that choice. After checkpoint capture it confirms local application of the committed frontier on every covered partition, then rejects the image if the observation saw an intent with commit timestamp at or below `T`. It tries up to three cuts, then returns `CutUnverified` (HTTP 503 / gRPC `Unavailable`) without publishing a backup. Retry after the workload or replication catches up.
 
-This verification covers durable prepared-intent transactions. Persistent transactions using the ticket path, such as extend-only transactions, keep pending state on participant actors; the coordinator sees only its own actors. A plain full backup and an incremental do not perform this coordinated cut verification. Coverage under replica placement remains limited to the captured partitions.
+This verification covers durable prepared-intent transactions. Persistent transactions using the ticket path, such as extend-only transactions, keep pending state on participant actors; the coordinator sees only its own actors. A plain full backup does not perform coordinated cut verification and remains limited to hosted partitions. A composed coordinated full checks its shares at a common cut; incrementals extend that chain without choosing a new coordinated cut.
 
 ## Backup Retention and Garbage Collection
 
@@ -414,6 +414,7 @@ Backup and restore failures expose stable outcome names so automation does not n
 | `TargetConflict` | Restore target already exists, escapes the restore root, or overlaps a protected path. |
 | `TargetOutsideCoverage` | Requested restore time is outside the selected chain coverage. |
 | `RetryableLeadershipLoss` | Leadership changed during the operation; retry on the current leader. |
+| `PartitionCaptureFailed` | Retryable: a required share could not be captured or partitions did not apply in time. No final backup is published; retry can use another voter. HTTP 503 / gRPC `Unavailable`. |
 | `ExactCheckpointUnavailable` | Kahuna cannot prove the base checkpoint exactly represents the requested cut. |
 | `CutUnverified` | Retryable: coordinated cut verification failed, or a full backup cannot supply prepared intents needed by its chain. No backup is published. HTTP 503 / gRPC `Unavailable`. |
 | `UnsupportedFormat` | A legacy or unsupported manifest was found. |
@@ -452,3 +453,26 @@ A full backup writes `intent_frontier.pb` when reconstruction state is nonempty.
 Capture copies live intents before reading range ends, then folds WAL history to those ends. It also verifies records already present beyond each end, including entries not yet marked committed, using restore's reconstruction rules. If compaction removed a necessary prepare and neither the copy nor the fold supplies it, the full fails with `CutUnverified`. The check is fail-closed, not permission to ignore missing source data.
 
 Restore verifies and stages the frontier, seeds live prepares and settled history, then replays incrementals. A recognized duplicate by-reference materialization after settlement is skipped; an unknown materialization without a source fails restore. Old fulls without a frontier retain their previous behavior and do not gain missing reconstruction data. Upgrade restore readers before using fulls with a frontier: older artifact verifiers reject the additional file.
+
+## Capture Cost and Lagging Replicas
+
+A full capture waits for committed writes above each partition's persisted application-durability floor to reach applied state before draining persistence. The floor avoids waiting again for state already durably recovered after restart. `--backup-apply-barrier-timeout-seconds` defaults to 30 seconds; non-positive values select that default. A timeout reports all lagging partition IDs and returns retryable `PartitionCaptureFailed` (HTTP 503 / gRPC `Unavailable`), rather than treating a slow replica as an incapable checkpoint backend.
+
+Coordinated captures assign a partition only to a materialized voter: hosting it as a learner or as a replica being removed is not enough. On bounded retries, unreachable or lagging `(node, partition)` pairs are avoided when another voter is available. Only the affected partitions move to another source; a preferred source is not guaranteed to be caught up. If the required shares cannot be captured, no final backup is published. A partition unable to confirm its committed state can still refuse the cut with `CutUnverified` until leadership recovers.
+
+Coordinated fulls merge per-node checkpoint shares and prepared-intent frontiers at one agreed cut. Incrementals extending such a chain are also composed; if that chain needs a new base, the fallback is a coordinated full. A plain `/v1/backups/full` remains node-local and can have restricted coverage. Every stamped full and incremental link must cover the cluster partition set independently: coverage spread across different links is insufficient. All participating nodes need backup configuration and the same storage engine. Private share scratch defaults to `--pitr-backup-scratch-dir`, otherwise system temporary storage; shares are not separately published backups. Taking a composed backup does not require a shared target, but other nodes still need access to its catalog and artifacts for later restore or chain operations.
+
+### Limit Capture I/O
+
+A RocksDB as-of image involves checkpoint creation, WAL replay/trim and compaction of the copy, hashing, and verification. It can compete with foreground commits on the same disk even though backend and Raft scheduler threads are separate.
+
+```bash
+kahuna-server \
+  --pitr-backup-dir /var/lib/kahuna/backups \
+  --backup-capture-throttle-mbps 50 \
+  --backup-apply-barrier-timeout-seconds 60
+```
+
+`--backup-capture-throttle-mbps` defaults to `0` (unlimited); a positive value is decimal MB/s (`1,000,000` bytes/s). It applies a RocksDB rate limiter to the copied image's work and paces hash/verification reads and staged-image copying. It is a budget for individual capture stages, not a global limit on all filesystem traffic or a guarantee of foreground latency. Concurrent captures can add load. Increasing the budget shortens backups at the cost of more potential contention; lowering it can require a longer overall backup request timeout. `--backup-restore-throttle-mbps` remains a separate restore-copy setting.
+
+When the backup target is on another filesystem, capture can first stage under `<storage-path>/backup-staging`, using hard links on the store's filesystem, then copy the finished image to the target. The copy is synced and published by rename. Staging needs free space for approximately the live store size plus 256 MB. If staging cannot be used, RocksDB's direct checkpoint copy can copy SSTs across filesystems without this pacing; the budget does not cover every possible path. Staged leftovers are reclaimed by backup GC. Plan local staging space as well as backup-volume capacity.

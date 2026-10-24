@@ -1,7 +1,9 @@
 
-# Command: Eextends
+# Command: EExtend
 
-Allows to extend a key/value expiration for ephemeral keys:
+Changes the expiration time of an ephemeral key without changing its value. Use it to keep a temporary key alive while its owner is still active, such as a session token that stays valid while the user is active. For persistent keys, use [`extend`](/docs/scripts/commands/extend/).
+
+Example:
 
 ```kahuna
 eset `session_token_user1` 'a69eacd410aa'

@@ -8,7 +8,17 @@ import TabItem from '@theme/TabItem';
 <img src={Kahuna4} height="350" />
 </div>
 
-A **distributed key/value store** is a type of **database system** designed to store, retrieve, and manage data across multiple nodes in a cluster or distributed environment. It follows a simple **key-value data model**, where **keys** are unique identifiers, and **values** are arbitrary byte stream associated data objects.
+Kahuna's **distributed key/value store** lets many application instances share state safely. Each entry is a **key**, a unique name such as `config/prod/payments/max-refund`, and a **value**, which can be any bytes: a string, a number, or a JSON document. Any instance can read or write any key from any machine, and every reader sees the latest committed value, even while some cluster nodes are down.
+
+Use it for state that several processes must agree on:
+
+- Configuration and feature flags that every instance must see the same way.
+- Watches that notify services when persistent keys change.
+- Service discovery entries that appear and expire with the instances they describe.
+- Job, workflow, and reservation state, where two workers must not both act on the same item.
+- Counters, quotas, and session data shared by a fleet of servers.
+
+Compared with keeping this state in each process or in a single-node cache, Kahuna adds replication across nodes, strongly consistent reads, revision history, compare-and-swap updates, and multi-key transactions. It is not a general-purpose database: it has no SQL or secondary indexes, and it works best with small values and small transactional working sets.
 
 ## Key Characteristics
 
@@ -18,6 +28,15 @@ A **distributed key/value store** is a type of **database system** designed to s
 4. **Strong Consistency**: Partition leaders serialize writes through Raft-backed ordering.
 5. **Low Latency**: Hot state is served from actor-owned memory, with background persistence for materialized state.
 6. **Distributed Transactions**: Supports multi-node transactions with MVCC, pessimistic or optimistic locking, server-owned working sets, operation retry deduplication, two-phase commit, and optional durable commit decisions.
+
+Each key belongs to one partition. The partition leader orders every write to the key and replicates it to the followers before the write succeeds:
+
+<ReplicaRing
+  center="Partition for key k"
+  client="Client"
+  nodes={['Kahuna 1', 'Kahuna 2', 'Kahuna 3']}
+  title="A client writes key k through Kahuna 1, the leader of the partition that owns k. The leader replicates the write to the followers Kahuna 2 and Kahuna 3."
+/>
 
 ## Use Cases
 
@@ -55,6 +74,8 @@ Kahuna supports two routing models for key/value data:
 For grouped prefixes such as `services/auth` and `services/payments`, Kahuna can keep the whole bucket on one partition and serve it with `get by bucket`. For larger ordered spaces such as `users/000001` or `orders/2026/000001`, key-range routing allows the space to split into contiguous ranges over time instead of forcing the whole prefix to stay on one partition forever.
 
 Learn more in [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) and [Buckets](/docs/distributed-keyvalue-store/buckets/).
+
+To react to persistent key changes, see [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/).
 
 ## API
 

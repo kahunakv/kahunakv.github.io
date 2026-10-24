@@ -1,7 +1,9 @@
 
-# Command: Extends
+# Command: Extend
 
-Allows to extend a key/value expiration for persistent keys:
+Changes the expiration time of a persistent key without changing its value or revision. Use it to keep a key alive while its owner is still active, for example a service registration that a heartbeat renews, or to remove an expiration by setting it to zero. For ephemeral keys, use [`eextend`](/docs/scripts/commands/eextend/).
+
+Example:
 
 ```kahuna
 set `services/email/instance-3` '{"ip": "10.1.1.22", "port": 9090}'

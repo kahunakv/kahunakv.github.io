@@ -1,10 +1,12 @@
-import HLC from '../assets/hlc.png';
-
 # Hybrid Logical Clocks (HLC)
 
 ## Overview
 
 Kahuna uses **Hybrid Logical Clocks (HLCs)** for causally ordered timestamps across a distributed cluster. HLCs combine physical time with a logical counter, giving Kahuna timestamps that move forward even when several events happen in the same millisecond or when clocks are slightly skewed.
+
+Why this matters: every node has its own clock, and clocks drift apart. If Kahuna ordered events by each node's wall clock alone, a later write on a node with a slow clock could look older than an earlier write on another node. HLC timestamps stay close to real time, but they always move forward and respect cause and effect, so they can order events across nodes safely.
+
+You meet HLC timestamps directly when you use historical `AS OF` reads, snapshot holds, point-in-time restore targets, and the `hlc()` script function. Their physical part is Unix epoch milliseconds, so you can use a wall-clock time as a target.
 
 HLCs are used for:
 
@@ -106,9 +108,21 @@ HLCs help Kahuna reason about time-based behavior without depending on perfectly
 
 ## HLC Timeline
 
-<div style={{textAlign: 'center'}}>
-<img src={HLC} height="350" />
-</div>
+The example below shows why a receiving node does not simply use its own wall clock. Node 2's clock runs 2 ms behind Node 1. Timestamps are shown as `(physical, logical)`; the node component is omitted.
+
+```mermaid
+sequenceDiagram
+    participant N1 as Node 1 (wall clock 1000)
+    participant N2 as Node 2 (wall clock 998)
+    Note over N2: Last local event (995, 0)
+    Note over N1: Local write gets (1000, 0)
+    N1->>N2: Replicate with (1000, 0)
+    Note over N2: Receive takes the max of own (995), message (1000)<br/>and wall clock (998), then bumps the counter. Result (1000, 1)
+    Note over N2: Next local event at wall clock 999 gets (1000, 2)
+    Note over N2: Wall clock reaches 1001. Next event gets (1001, 0)
+```
+
+Node 2 never issues a timestamp lower than one it has already seen, so the replicated write stays ordered before everything Node 2 does next, even though Node 2's wall clock is behind.
 
 ## Conclusion
 

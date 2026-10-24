@@ -2,6 +2,8 @@
 
 Scans persistent storage across the cluster and returns key/value pairs whose keys start with the specified prefix.
 
+Use it when the keys you want can belong to more than one bucket: for example, the prefix `services/` matches both `services/auth/instance-1` and `services/payments/instance-1`. Because a scan can visit several partitions, it costs more than [`get by bucket`](/docs/scripts/commands/get-by-bucket/), which reads one. Results are capped, so use it for small, bounded prefixes. For ephemeral keys, use [`escan by prefix`](/docs/scripts/commands/escan-by-prefix/).
+
 ```kahuna
 set `services/auth/instance-1` "node1"
 r0 set 8ms

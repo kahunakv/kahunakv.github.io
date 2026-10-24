@@ -54,20 +54,28 @@ This split lets Kahuna distribute ownership across the cluster while keeping eac
 
 A normal persistent key/value write follows this path:
 
-```text
-client
-  -> REST, gRPC, or embedded API
-  -> KahunaManager
-  -> KeyValuesManager
-  -> KeyValueLocator
-  -> partition leader
-  -> key/value actor
-  -> partition write aggregator
-  -> Raft ReplicateEntries and commit
-  -> KeyValueReplicator
-  -> in-memory state
-  -> BackgroundWriterActor
-  -> RocksDB, SQLite, or memory backend
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant R as Receiving node
+    participant L as Partition leader
+    participant F as Followers
+    participant W as Background writer
+    participant D as Backend
+    C->>R: SET k over REST, gRPC or the embedded API
+    Note over R: KahunaManager → KeyValuesManager<br/>KeyValueLocator finds the partition leader
+    opt Receiving node is not the leader
+        R->>L: Forward, spending one hop of the hop budget
+    end
+    Note over L: Key/value actor validates the write<br/>Partition write aggregator batches it
+    L->>F: Raft ReplicateEntries
+    F-->>L: Acknowledge (quorum)
+    Note over L,F: Raft commit. The write is now durable
+    Note over L: KeyValueReplicator applies the entry<br/>to in-memory state
+    L-->>R: Committed
+    R-->>C: Success
+    L-)W: Queue the dirty entry for BackgroundWriterActor
+    W->>D: Flush to RocksDB, SQLite or memory
 ```
 
 The important boundary is Raft commit. A persistent write is not durable just because the local actor accepted it. The mutation becomes committed only after the partition's Raft group commits the log entry.

@@ -13,14 +13,13 @@ const clusterNodes = [
   ['copyB', 'Kahuna 3', 'Replica · keeps a copy', 500, 285],
 ];
 const nodeRoles = {appA: 'app', appB: 'app', app: 'app', leader: 'leader', copyA: 'replica', copyB: 'replica', counter: 'sequence', requests: 'replica'};
-const clusterPositions = [[20, 20], [220, 20], [120, 200], [20, 380], [220, 380]];
 const stories = [
   {
     id: 'locks', label: 'Locking', title: 'Two apps. One lock. One winner.',
     intro: 'Both app nodes want to process the same invoice. A lock lets only one own the job at a time.',
     takeaway: 'The lock’s owner is copied across Kahuna servers. Both apps get an answer from the same leader.',
     link: '/docs/distributed-locks', linkLabel: 'Learn about locks',
-    nodes: clusterNodes, positions: clusterPositions,
+    nodes: clusterNodes,
     steps: [
       {title: 'Both apps ask for the same lock', text: 'App A and App B both ask to lock “invoice-2048”. Their requests reach the Kahuna server in charge of that lock: its leader.', active: ['appA', 'appB', 'leader'], messages: [['appA', 'leader', 'Lock invoice-2048'], ['appB', 'leader', 'Lock invoice-2048']], values: ['Asking for lock', 'Asking for lock', 'Lock is free', 'Lock is free', 'Lock is free'], code: 'Same lock: invoice-2048'},
       {title: 'Kahuna copies the winning claim', text: 'In this example, A’s request is handled first. The leader copies “owner = A” to the replicas before confirming the lock.', active: ['leader', 'copyA', 'copyB'], messages: [['leader', 'copyA', 'Save owner = A'], ['leader', 'copyB', 'Save owner = A']], values: ['Waiting for reply', 'Waiting for reply', 'Saving owner: A', 'Saving owner: A', 'Saving owner: A'], code: 'The leader and at least one replica must save the claim.'},
@@ -35,7 +34,7 @@ const stories = [
     intro: 'App A saves a color. App B asks for that same key through a different Kahuna server.',
     takeaway: 'SET saves a value with copies on other servers. GET reaches the leader for that same key to read it.',
     link: '/docs/distributed-keyvalue-store', linkLabel: 'Learn about the key/value store',
-    nodes: clusterNodes, positions: clusterPositions,
+    nodes: clusterNodes,
     steps: [
       {title: 'A saves “color = mint”', text: 'App A sends SET color = “mint” to the leader for the key “color”. SET means “save this value under this name”.', active: ['appA', 'leader'], messages: [['appA', 'leader', 'SET color = mint']], values: ['SET color', 'Ready to read', 'Receiving SET', 'No value yet', 'No value yet'], code: 'Key: color     Value: mint'},
       {title: 'Kahuna replicates the value', text: 'The leader sends the write to the other Kahuna servers. It waits until a majority has saved it: at least two of these three servers.', active: ['leader', 'copyA', 'copyB'], messages: [['leader', 'copyA', 'Save color = mint'], ['leader', 'copyB', 'Save color = mint']], values: ['Waiting for reply', 'Ready to read', 'Saving: mint', 'Saving: mint', 'Saving: mint'], code: 'Replication means keeping copies on other servers.'},
@@ -51,7 +50,6 @@ const stories = [
     takeaway: 'An idempotency key is a name for one request. Reusing it returns the saved result instead of consuming another ID.',
     link: '/docs/tutorials/distributed-sequencer', linkLabel: 'Learn about sequences',
     nodes: [['app', 'Your app', 'Creates invoices', 20, 175], ['counter', 'Invoice sequence', 'Increases by 1', 260, 175], ['requests', 'Saved requests', 'Remembered results', 500, 175]],
-    positions: [[120, 20], [120, 200], [120, 380]],
     steps: [
       {title: 'Ask for an invoice number', text: 'Your app asks for the next number and labels this request “order-A”. The sequence currently holds 20.', active: ['app', 'counter'], messages: [['app', 'counter', 'Next ID · order-A']], values: ['Request: order-A', 'Current: 20', 'No saved requests'], code: 'Sequence: invoices     Request key: order-A'},
       {title: 'Increase 20 to 21 and remember it', text: 'Kahuna increases the sequence to 21 and saves “order-A → 21” with the sequence state. The number and its request key are stored together.', active: ['counter', 'requests'], messages: [['counter', 'requests', 'Remember order-A = 21']], values: ['Waiting for reply', '20 → 21', 'order-A → 21'], code: 'Current value: 21     Saved result: order-A → 21'},
@@ -63,12 +61,13 @@ const stories = [
   },
 ];
 
-function Diagram({story, step, compact = false}) {
-  const layout = story.nodes.map((node, index) => compact ? [...node.slice(0, 3), ...story.positions[index]] : node);
+function Diagram({story, step}) {
+  const isSequence = story.id === 'sequences';
+  const layout = isSequence ? story.nodes.map(([id, title, subtitle, x]) => [id, title, subtitle, x, 20]) : story.nodes;
   const nodes = Object.fromEntries(layout.map(([id, , , x, y]) => [id, {x: x + 90, y: y + 52}]));
-  const markerId = `${story.id}-${compact ? 'small' : 'wide'}-arrow`;
+  const markerId = `${story.id}-arrow`;
   return (
-    <svg className={styles.diagram} viewBox={compact ? '0 0 420 510' : '0 0 700 440'} role="img" aria-label={`${story.label}: ${step.title}. ${step.text}`}>
+    <svg className={styles.diagram} viewBox={isSequence ? '0 0 700 155' : '0 0 700 440'} role="img" aria-label={`${story.label}: ${step.title}. ${step.text}`}>
       <defs><marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#53e9ab" /></marker></defs>
       <g aria-hidden="true">
         {step.messages.map(([from, to, label], index) => {
@@ -79,7 +78,7 @@ function Diagram({story, step, compact = false}) {
           // Clip each line to the card edges so its arrowhead stays visible.
           const scale = Math.min(dx ? 96 / Math.abs(dx) : Infinity, dy ? 58 / Math.abs(dy) : Infinity);
           const d = `M ${a.x + dx * scale} ${a.y + dy * scale} L ${b.x - dx * scale} ${b.y - dy * scale}`;
-          return <g key={`${from}-${to}`}><path d={d} className={styles.wire} markerEnd={`url(#${markerId})`} /><path d={d} className={styles.signal} /><title>{label}</title></g>;
+          return <g key={`${from}-${to}`}><path d={d} className={styles.wire} markerEnd={`url(#${markerId})`} /><path d={d} className={styles.signal} /><circle cx={(a.x + b.x) / 2} cy={(a.y + b.y) / 2} r="12" className={styles.messageMarker} /><text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 + 4} className={styles.messageNumber}>{index + 1}</text><title>{label}</title></g>;
         })}
         {layout.map(([id, title, subtitle, x, y], index) => (
           <g key={id} data-role={nodeRoles[id]} transform={`translate(${x} ${y})`} className={clsx(styles.node, step.active.includes(id) && styles.activeNode)}>
@@ -90,7 +89,7 @@ function Diagram({story, step, compact = false}) {
             <text x="18" y="83" className={styles.nodeValue}>{step.values[index]}</text>
           </g>
         ))}
-        <text x="20" y={compact ? 504 : 428} className={styles.diagramNote}>{story.id === 'sequences' ? 'SAVED REQUESTS ARE PART OF THE SEQUENCE STATE' : 'TWO APP NODES · THREE KAHUNA SERVERS'}</text>
+        <text x="20" y={isSequence ? 148 : 428} className={styles.diagramNote}>{story.id === 'sequences' ? 'SAVED REQUESTS ARE PART OF THE SEQUENCE STATE' : 'TWO APP NODES · THREE KAHUNA SERVERS'}</text>
       </g>
     </svg>
   );
@@ -102,23 +101,14 @@ export default function InternalsExplorer() {
   const [playing, setPlaying] = useState(false);
   const [visible, setVisible] = useState(false);
   const [pageVisible, setPageVisible] = useState(true);
-  const [compact, setCompact] = useState(false);
   const sectionRef = useRef(null);
+  const controlsRef = useRef(null);
   const story = stories[storyIndex];
   const step = story.steps[stepIndex];
 
   useEffect(() => {
-    const viewport = window.matchMedia('(max-width: 540px)');
-    const onViewport = () => setCompact(viewport.matches);
-    onViewport();
-    viewport.addEventListener('change', onViewport);
-    return () => viewport.removeEventListener('change', onViewport);
-  }, []);
-
-  useEffect(() => {
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setPlaying(!motion.matches);
-    const onMotion = () => setPlaying(!motion.matches);
+    const onMotion = () => {if (motion.matches) setPlaying(false);};
     const onVisibility = () => setPageVisible(!document.hidden);
     motion.addEventListener('change', onMotion);
     document.addEventListener('visibilitychange', onVisibility);
@@ -137,7 +127,7 @@ export default function InternalsExplorer() {
     const timer = window.setTimeout(() => {
       if (stepIndex === story.steps.length - 1) setPlaying(false);
       else setStepIndex((index) => index + 1);
-    }, 6500);
+    }, 9000);
     return () => window.clearTimeout(timer);
   }, [playing, visible, pageVisible, stepIndex, storyIndex, story.steps.length]);
 
@@ -151,46 +141,56 @@ export default function InternalsExplorer() {
       <div className="container">
         <div className={styles.heading}>
           <p className={styles.eyebrow}>Inside Kahuna</p>
-          <Heading as="h2" id="inside-kahuna">Coordination, in motion.</Heading>
-          <p>Start with three everyday tasks: claim a job, save a value, and get the next invoice number. Follow each request to see what Kahuna does.</p>
+          <Heading as="h2" id="inside-kahuna">Follow one request, step by step.</Heading>
+          <p>Choose a task, then use Next step to follow it at your own pace. Each numbered message shows who sends what. These are illustrated examples of persistent operations, not a live cluster.</p>
         </div>
         <div className={styles.explorer}>
           <div className={styles.topbar}>
-            <div className={styles.choices} role="group" aria-label="Choose an animation">
+            <div className={styles.choices} role="group" aria-label="Choose a walkthrough">
               {stories.map((item, index) => <button type="button" key={item.id} aria-pressed={index === storyIndex} onClick={() => {setStoryIndex(index); setStepIndex(0); setPlaying(false);}}><span>0{index + 1}</span>{item.label}</button>)}
             </div>
             <span className={styles.exampleLabel}>INTERACTIVE WALKTHROUGH</span>
+          </div>
+          <div className={styles.storyHeader}>
+            <Heading as="h3">{story.title}</Heading>
+            <p>{story.intro}</p>
+          </div>
+          <div ref={controlsRef} className={styles.controls} aria-label="Walkthrough controls" role="group">
+            <button type="button" disabled={stepIndex === 0} onClick={() => selectStep(stepIndex - 1)}>← Back</button>
+            <span className={styles.counter}>Step {stepIndex + 1} of {story.steps.length}</span>
+            <button type="button" className={styles.nextButton} onClick={() => selectStep(stepIndex === story.steps.length - 1 ? 0 : stepIndex + 1)}>{stepIndex === story.steps.length - 1 ? 'Restart ↺' : 'Next step →'}</button>
+            <button type="button" className={styles.playButton} onClick={() => {if (!playing && stepIndex === story.steps.length - 1) setStepIndex(0); setPlaying(!playing);}}><span aria-hidden="true">{playing ? 'Ⅱ' : '▷'}</span>{playing ? 'Pause autoplay' : 'Autoplay'}</button>
           </div>
           <div className={styles.body}>
             <div className={styles.visual} data-running={playing && visible && pageVisible}>
               <div className={styles.visualHeader}><span className={styles.statusDot} />STEP {stepIndex + 1} OF {story.steps.length}<span className={styles.sceneName}>{story.label}</span></div>
               <div className={styles.sceneCaption} aria-live={playing ? 'off' : 'polite'} aria-atomic="true">
-                <Heading as="h4">{step.title}</Heading>
+                <Heading as="h4">{stepIndex + 1}. {step.title}</Heading>
                 <p>{step.text}</p>
               </div>
-              <Diagram story={story} step={step} compact={compact} />
-              <ul className={styles.messages} aria-label="Messages in this step">
-                {step.messages.map(([from, to, label]) => <li key={`${from}-${to}`}><span>{story.nodes.find(([id]) => id === from)[1]} → {story.nodes.find(([id]) => id === to)[1]}</span><strong>{label}</strong></li>)}
-              </ul>
+              <p className={styles.diagramLegend}>{story.id === 'sequences' ? 'The sequence and saved requests belong to Kahuna.' : 'Leader = server handling this key. Replicas = servers keeping copies.'}<span className={styles.diagramHint}> Highlighted cards take part in this step.</span></p>
+              <Diagram story={story} step={step} />
+              <details className={styles.mobileState}>
+                <summary>Inspect state on each node</summary>
+                <dl>{story.nodes.map(([id, title], index) => <div key={id}><dt>{title}</dt><dd>{step.values[index]}</dd></div>)}</dl>
+              </details>
+              <ol className={styles.messages} aria-label="Messages in this step">
+                {step.messages.map(([from, to, label], index) => <li key={`${from}-${to}`}><span className={styles.messageBadge} aria-hidden="true">{index + 1}</span><span>{story.nodes.find(([id]) => id === from)[1]} → {story.nodes.find(([id]) => id === to)[1]}</span><strong>{label}</strong></li>)}
+              </ol>
               <div className={styles.console}><span aria-hidden="true">›</span><code>{step.code}</code></div>
             </div>
             <div className={styles.narrative}>
-              <Heading as="h3">{story.title}</Heading>
-              <p className={styles.intro}>{story.intro}</p>
+              <details className={styles.stepPicker} open>
+              <summary>Jump to a step</summary>
               <ol className={styles.steps}>
-                {story.steps.map((item, index) => <li key={item.title}><button type="button" aria-current={index === stepIndex ? 'step' : undefined} onClick={() => selectStep(index)}><span className={styles.stepNumber}>{index < stepIndex ? '✓' : index + 1}</span>{item.title}</button></li>)}
+                {story.steps.map((item, index) => <li key={item.title}><button type="button" aria-current={index === stepIndex ? 'step' : undefined} onClick={() => {selectStep(index); if (window.matchMedia('(max-width: 996px)').matches) controlsRef.current.scrollIntoView({block: 'start'});}}><span className={styles.stepNumber}>{index + 1}</span>{item.title}</button></li>)}
               </ol>
+              </details>
               <p className={styles.description}>{story.takeaway}</p>
               <Link className={styles.docsLink} to={story.link}>{story.linkLabel} <span aria-hidden="true">↗</span></Link>
             </div>
           </div>
-          <div className={styles.controls}>
-            <button type="button" className={styles.playButton} onClick={() => {if (!playing && stepIndex === story.steps.length - 1) setStepIndex(0); setPlaying(!playing);}}><span aria-hidden="true">{playing ? 'Ⅱ' : '▷'}</span>{playing ? 'Pause' : stepIndex === story.steps.length - 1 ? 'Replay' : 'Play'}</button>
-            <span className={styles.counter}>Step {stepIndex + 1} of {story.steps.length}</span>
-            <div className={styles.progress} aria-hidden="true">{story.steps.map((item, index) => <span key={item.title} data-complete={index <= stepIndex} />)}</div>
-            <button type="button" disabled={stepIndex === 0} onClick={() => selectStep(stepIndex - 1)} aria-label="Previous step">←</button>
-            <button type="button" disabled={stepIndex === story.steps.length - 1} onClick={() => selectStep(stepIndex + 1)} aria-label="Next step">→</button>
-          </div>
+
         </div>
       </div>
     </section>

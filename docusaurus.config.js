@@ -42,6 +42,16 @@ const config = {
     locales: ['en'],
   },
 
+  headTags: [
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'algolia-site-verification',
+        content: 'CCAE52A1C7A7537A',
+      },
+    },
+  ],
+
   presets: [
     [
       'classic',
@@ -72,6 +82,17 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       image: 'img/kahuna-social-card.png',
+      // The crawler config lives in algolia/crawler-config.js.
+      algolia: {
+        appId: 'SPBBUBI3JT',
+        // Search-only key. Safe to commit; never put the crawler key here.
+        apiKey: '4bce7f90e4896c3f699731e08db06a09',
+        indexName: 'kahuna_docs',
+        // The site is single-locale and unversioned, and docs and blog share
+        // one index, so contextual filtering by docusaurus_tag would only
+        // ever exclude valid results.
+        contextualSearch: false,
+      },
       navbar: {
         title: 'Kahuna',
         logo: {
@@ -155,7 +176,28 @@ const config = {
             ],
           },
         ],
-        copyright: 'Copyright © 2026 Kahuna.',
+        copyright: 'Copyright © 2024-2026 Kahuna.',
+      },
+      // Colors per color mode live in src/theme/Mermaid/index.js.
+      mermaid: {
+        theme: {light: 'base', dark: 'base'},
+        options: {
+          // Flat boxes without the drop shadows of Mermaid 12's default 'neo' look.
+          look: 'classic',
+          // Mermaid 12 wraps node labels at 120px; keep short labels on one line.
+          flowchart: {padding: 16, wrappingWidth: 220},
+          // Narrow, wrapped sequence diagrams keep their text legible when
+          // scaled to the content column.
+          sequence: {
+            wrap: true,
+            width: 130,
+            actorMargin: 40,
+            mirrorActors: false,
+            actorFontSize: 15,
+            messageFontSize: 15,
+            noteFontSize: 14,
+          },
+        },
       },
       prism: {
         theme: prismThemes.github,

@@ -24,6 +24,21 @@ For a persistent mutation:
 6. Kahuna's replicator applies the committed entry to the in-memory state.
 7. The materialized state is queued for background persistence.
 
+```mermaid
+sequenceDiagram
+    participant A as Leader actor
+    participant R as Raft leader
+    participant F as Followers
+    participant P as Replicator
+    participant Q as Background persistence
+    A->>R: Proposal serialized as a log entry
+    R->>F: Replicate entry
+    F-->>R: Acknowledge (quorum)
+    R->>P: OnReplicationReceived
+    Note over P: Apply to in-memory state
+    P-)Q: Queue materialized state
+```
+
 This is why a local actor accepting a request is not enough. The committed Raft log is the source of truth for ordering and durability.
 
 ## Log Types

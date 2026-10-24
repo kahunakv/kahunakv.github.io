@@ -10,9 +10,9 @@ import InternalsExplorer from '../components/InternalsExplorer';
 import styles from './index.module.css';
 
 const proofPoints = [
-  {icon: 'shield', label: 'Fenced locks & ordered IDs'},
-  {icon: 'database', label: 'Durable & temporary state'},
-  {icon: 'code', label: 'Custom C# functions'},
+  {icon: 'shield', label: 'Distributed locks'},
+  {icon: 'database', label: 'Consistent key/value store'},
+  {icon: 'hash', label: 'Ordered ID sequences'},
   {icon: 'check', label: 'Jepsen-tested'},
 ];
 
@@ -36,10 +36,36 @@ const advantageCards = [
       'Allocate numbers and ranges across nodes without races, with idempotent retries.',
   },
   {
+    icon: 'shield',
+    title: 'Built for 24/7 applications',
+    description:
+      'Replicate persistent state through Raft and recover automatically from a leader failure. A three-replica partition can tolerate one failed replica and resume work after election while a majority remains available.',
+    link: '/docs/architecture/raft',
+    linkLabel: 'Explore failure recovery →',
+  },
+  {
+    icon: 'layers',
+    title: 'Grow your cluster online',
+    description:
+      'Add nodes to a running cluster. With replica placement and rebalancing enabled, Kahuna copies partitions to new nodes in the background, then promotes replicas once they catch up.',
+    link: '/docs/replica-placement',
+    linkLabel: 'Explore horizontal scaling →',
+  },
+  {
+    icon: 'database',
+    title: 'Less coordination glue to maintain',
+    description:
+      'Keep critical locks, shared state, and sequences in one consistent system, instead of maintaining coordination logic across Redis and an RDBMS. Keep your relational database for business data and queries.',
+    link: '/blog/redis-postgres-and-kahuna',
+    linkLabel: 'Why choose Kahuna? →',
+  },
+  {
     icon: 'code',
     title: 'Custom C# logic',
     description:
       'Run trusted C# functions inside Kahuna Script transactions for validation and business rules.',
+    link: '/docs/scripts/user-defined-functions',
+    linkLabel: 'Learn about user-defined functions →',
   },
   {
     icon: 'cpu',
@@ -62,6 +88,8 @@ const fitCards = [
     title: 'Good fit',
     icon: 'check',
     items: [
+      'Mission-critical services that run around the clock',
+      'Growing workloads that need online cluster expansion',
       'Distributed locking for critical sections',
       'Reliable shared configuration and metadata',
       'Ordered ID allocation across nodes',
@@ -204,13 +232,17 @@ function HomepageHeader() {
         <div className={styles.heroContent}>
           <p className={styles.heroEyebrow}>Open source · .NET · self-hosted cluster</p>
           <Heading as="h1" className={styles.heroTitle}>
-            The distributed coordination layer for .NET
+            Coordinate work across your services
           </Heading>
           <p className={styles.heroSubtitle}>
-            Like etcd or ZooKeeper, built for .NET: distributed <strong>locks</strong>, a consistent{' '}
-            <strong>key/value store</strong>, and ordered <strong>ID sequences</strong>.
-            Self-hosted, with safe failover and trusted C# functions inside Kahuna Script
-            transactions.
+            An easy-to-use distributed systems toolkit. Give one worker ownership of a job,
+            keep shared data consistent, and allocate IDs safely across services with
+            <strong> distributed locks</strong>, a <strong>consistent key/value store</strong>,
+            and <strong>ordered ID sequences</strong>.
+          </p>
+          <p className={styles.heroSupport}>
+            Built for mission-critical applications, with automatic failover and online scaling.
+            One coordination layer for .NET and TypeScript, with less glue code to maintain across Redis and an RDBMS.
           </p>
           <div className={styles.buttons}>
             <Link className="button button--primary button--lg" to="/docs/getting-started">
@@ -248,16 +280,15 @@ export default function Home() {
   return (
     <Layout
       title={`${siteConfig.title} documentation`}
-      description="Documentation for Kahuna, a distributed locking, key/value, and sequencing platform for .NET and TypeScript">
+      description="Coordinate workers, share consistent state, and allocate ordered IDs with Kahuna. Distributed locks, a key/value store, and sequences with automatic failover and online scaling.">
       <HomepageHeader />
       <main>
-        <InternalsExplorer />
         <section className={styles.primarySection}>
           <div className="container">
             <SectionHeading
               eyebrow="Why Kahuna"
-              title="Simplify coordination"
-              subtitle="One owner, consistent state, and ordered IDs for your distributed workflows."
+              title="Give your services a shared source of truth"
+              subtitle="When multiple workers act on the same data, they need to agree on ownership, updates, and retries. Kahuna provides those building blocks—and keeps them replicated as your application grows."
             />
             <div className={styles.cardGrid}>
               {advantageCards.map((card) => (
@@ -277,6 +308,8 @@ export default function Home() {
             </div>
           </div>
         </section>
+
+        <InternalsExplorer />
 
         <section className={styles.bandSection}>
           <div className="container">

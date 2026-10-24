@@ -1,5 +1,3 @@
-import Architecture2 from '../assets/architecture2.png';
-import Architecture3 from '../assets/architecture3.png';
 
 # Distributed Transactions
 
@@ -33,9 +31,31 @@ set robots_sa1 sa1_amount + @amount_to_incr
 
 The coordinator uses routing metadata to find the leader partition for each key. In this example, the transaction touches four partitions distributed across three nodes:
 
-<div style={{textAlign: 'center'}}>
-<img src={Architecture2} height="350" />
-</div>
+```mermaid
+flowchart LR
+    subgraph TC[Transaction coordinator]
+        direction TB
+        US1["hash(robots_us1) = 14"]
+        EU1["hash(robots_eu1) = 27"]
+        SA1["hash(robots_sa1) = 32"]
+        US2["hash(robots_us2) = 39"]
+    end
+    subgraph N1[kahuna-1]
+        P14[Partition 14]:::leader
+    end
+    subgraph N2[kahuna-2]
+        P27[Partition 27]:::leader
+        P32[Partition 32]:::leader
+    end
+    subgraph N3[kahuna-3]
+        P39[Partition 39]:::leader
+    end
+    US1 --> P14
+    EU1 --> P27
+    SA1 --> P32
+    US2 --> P39
+    classDef leader fill:#02874c,color:#ffffff,stroke:#00241a
+```
 
 The coordinator can dispatch participant operations in parallel, but it still owns the transaction-wide decision. Participant locking and unprepared MVCC staging are actor-local. Persistent prepare, canonical decision, materialization, and settlement use Raft-backed ordering.
 
@@ -251,6 +271,31 @@ Durable mode uses **durable-intent 2PC**:
 7. Compare-and-set the canonical record to `Commit` or `Abort`.
 8. Resolve every prepared intent from that canonical decision.
 
+```mermaid
+sequenceDiagram
+    participant Cl as Client
+    participant Co as Coordinator
+    participant An as Anchor partition
+    participant P as Other participants
+    participant R as Replicas
+    Note over Co: Freeze the finalize input<br/>commit timestamp, deadline, manifest, intents
+    Co->>An: Record Undecided and prepare anchor intents (one proposal)
+    Co->>P: Prepare intents (all partitions concurrently)
+    Note over Co: Validate staged bases and the read set
+    Co->>R: Ask for staged-base fence verdicts
+    R-->>Co: OK, StaleBase, or no answer
+    alt Every prepare succeeded, validation passed, no StaleBase verdict
+        Co->>An: Compare-and-set record to Commit
+        Note over An: Point of no return
+        Co-->>Cl: Committed
+    else Any prepare or check failed
+        Co->>An: Compare-and-set record to Abort
+        Co-->>Cl: Aborted
+    end
+    Co-)P: Resolve intents from the record outcome
+    Note over P: With deferred settlement this runs in the background
+```
+
 The canonical record is the point of no return. Once it moves to `Commit`, the system must not report a definite abort. If a participant cannot be resolved immediately, the transaction remains retryable and recovery continues from the canonical record and prepared intents.
 
 By default, durable settlement is deferred. A durable commit can return `Committed` once the canonical decision record is durable. Materializing committed values and settling intents then runs in the background, and recovery finishes it if the background task is lost. Reads, scans, and writes that meet a committed-but-unsettled intent resolve it through the canonical record so they do not serve a stale value. Snapshot reads fail safe and retry when they meet a live foreign intent whose commit timestamp is still unknown instead of guessing around it. Set `DurableDeferredSettlement` to `false` in embedded/code-level configuration when a deployment needs settlement awaited inline before success is returned.
@@ -408,9 +453,23 @@ set `data-centers/robots_sa1` sa1_amount + @amount_to_incr
 
 The shared `data-centers/` bucket routes those keys as one single-partition group:
 
-<div style={{textAlign: 'center'}}>
-<img src={Architecture3} height="350" />
-</div>
+```mermaid
+flowchart LR
+    subgraph TC[Transaction coordinator]
+        direction TB
+        US1[data-centers/robots_us1]
+        EU1[data-centers/robots_eu1]
+        SA1[data-centers/robots_sa1]
+        US2[data-centers/robots_us2]
+        B{{"bucket data-centers/<br/>hash = 14"}}
+        US1 & EU1 & SA1 & US2 --> B
+    end
+    subgraph N1[kahuna-1]
+        P14[Partition 14]:::leader
+    end
+    B --> P14
+    classDef leader fill:#02874c,color:#ffffff,stroke:#00241a
+```
 
 This reduces cross-partition coordination and can improve transaction latency. For large ordered key spaces that may need to split over time, use [key-range sharding](/docs/distributed-keyvalue-store/key-range-sharding/) instead.
 

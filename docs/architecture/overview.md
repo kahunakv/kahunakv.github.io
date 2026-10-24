@@ -1,12 +1,40 @@
-import Architecture1 from '../assets/architecture.png';
-
 # Architecture Overview
 
 Kahuna is a partitioned cluster for [distributed locks](/docs/distributed-locks), [key/value storage](/docs/distributed-keyvalue-store), and [sequences](/docs/distributed-sequencer). Each partition is a Raft group with one leader and multiple replicas. Clients can talk to any node; Kahuna routes or forwards each request to the leader that owns the target key, lock, or sequence. New clients can also use [leader-aware routing](/docs/client-routing/) to learn owners and skip many forwarding hops.
 
-<div style={{textAlign: 'center'}}>
-<img src={Architecture1} height="350" />
-</div>
+```mermaid
+flowchart TB
+    C([Client])
+    subgraph K1[Kahuna 1]
+        direction TB
+        K1A[Partition A · leader]:::leader
+        K1B[Partition B]
+        K1C[Partition C]
+        K1D[Partition D]
+        K1S[(RocksDB/SQLite)]
+        K1A ~~~ K1B ~~~ K1C ~~~ K1D ~~~ K1S
+    end
+    subgraph K2[Kahuna 2]
+        direction TB
+        K2A[Partition A]
+        K2B[Partition B]
+        K2C[Partition C · leader]:::leader
+        K2D[Partition D]
+        K2S[(RocksDB/SQLite)]
+        K2A ~~~ K2B ~~~ K2C ~~~ K2D ~~~ K2S
+    end
+    subgraph K3[Kahuna 3]
+        direction TB
+        K3A[Partition A]
+        K3B[Partition B · leader]:::leader
+        K3C[Partition C]
+        K3D[Partition D · leader]:::leader
+        K3S[(RocksDB/SQLite)]
+        K3A ~~~ K3B ~~~ K3C ~~~ K3D ~~~ K3S
+    end
+    C <--> K1 & K2 & K3
+    classDef leader fill:#02874c,color:#ffffff,stroke:#00241a
+```
 
 The diagram shows three nodes and four partitions. A node can lead some partitions while replicating others, so leadership and work are spread across the cluster.
 
@@ -34,6 +62,23 @@ For persistent data, the normal path is:
 3. Raft replicates the log entry to a quorum.
 4. The committed entry is applied to actor-owned memory.
 5. Background writers materialize state to RocksDB, SQLite, or memory.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant N as Receiving node
+    participant L as Partition leader
+    participant F as Followers
+    participant D as Storage backend
+    C->>N: Write k
+    N->>L: Forward if this node is not the leader
+    L->>F: Replicate log entry
+    F-->>L: Quorum acknowledges
+    Note over L: Committed. Apply to actor memory
+    L-->>N: Committed
+    N-->>C: Success
+    L-)D: Background writer materializes state
+```
 
 This keeps the client API simple while preserving one committed history per partition.
 

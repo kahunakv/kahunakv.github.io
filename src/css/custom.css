@@ -1,3 +1,8 @@
+@import '@fontsource-variable/inter/standard.css';
+@import '@fontsource-variable/inter/standard-italic.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght-italic.css';
+
 /**
  * Any CSS included here will be global. The classic template
  * bundles Infima by default. Infima is a CSS framework designed to
@@ -6,6 +11,8 @@
 
 /* You can override the default Infima variables here. */
 :root {
+  --ifm-font-family-base: 'Inter Variable', system-ui, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --ifm-color-primary: #1ca64b;
   --ifm-color-primary-dark: #198f41;
   --ifm-color-primary-darker: #17873d;

@@ -24,3 +24,23 @@ While Kahuna leases help in expiring keys and releasing locks if a client fails,
 
 - A client pauses (e.g., due to a long GC pause or network partition) and later resumes, believing it still holds the lock, even though the lease has expired.
 - This could lead to split-brain where two clients believe they own the same lock.
+
+```mermaid
+sequenceDiagram
+    participant A as Client A
+    participant K as Kahuna
+    participant B as Client B
+    participant S as Storage
+    A->>K: Lock with a 10 s lease
+    K-->>A: Acquired
+    Note over A: GC pause longer than the lease
+    Note over K: Lease expires
+    B->>K: Lock
+    K-->>B: Acquired
+    B->>S: Write
+    Note over A: Resumes and still believes it holds the lock
+    A->>S: Write
+    Note over S: Two owners wrote to the same resource
+```
+
+[Fencing tokens](/docs/distributed-locks/fencing-tokens/) close this gap: the protected resource rejects writes that carry an older token.

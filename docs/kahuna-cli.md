@@ -1,7 +1,16 @@
 
 # Kahuna CLI
 
-**Kahuna CLI** is an **interactive command-line tool** that allows sending **commands**, executing **transactions** in a **Kahuna cluster** and viewing the results.
+**Kahuna CLI** (`kahuna-cli`) is an **interactive command-line tool** for working with a **Kahuna cluster** from a terminal. You type commands or [Kahuna Script](/docs/scripts/) and see the results immediately, without writing application code. Use it to:
+
+- Explore Kahuna and try commands while you learn, as the tutorials do.
+- Inspect data during development or an incident: read a key and its revision, scan a bucket, or acquire and release a lock by hand.
+- Test a script before you put it in an application.
+- Administer a cluster: membership, replica placement, key ranges, backups, and restore.
+- Watch persistent key changes while testing configuration or service behavior. See [Watch Key Changes](/docs/recipes/watch-key-changes/).
+- Automate operational tasks from shell scripts with [single-command mode](#single-command-mode).
+
+For application code, use the [.NET](/docs/dotnet-client/) or [TypeScript](/docs/typescript-client/) client instead.
 
 It can be installed in two ways:
 
@@ -132,6 +141,32 @@ kahuna-cli --delete-sequence orders
 ```
 
 Use `--format json` to request JSON output for commands that support it.
+
+## Watch Key Changes
+
+Use `watch` in the interactive shell to see committed changes to persistent keys under a prefix:
+
+```text
+kahuna-cli> watch config/prod/search/
+kahuna-cli> watch config/prod/search/ keys-only
+```
+
+The first command prints the new value for a `set` event. `keys-only` leaves out value bytes when you only need the key and revision. Press Ctrl+C or Esc to stop the watch and return to the prompt.
+
+Run the same watch directly from a terminal:
+
+```bash
+kahuna-cli --watch config/prod/search/ --watch-keys-only
+kahuna-cli --watch config/prod/search/ --format json
+```
+
+The command runs until Ctrl+C or the stream ends. It prints progress watermarks when the cluster enables `--commit-admission-lag-ms`. To replay retained changes above a watermark, pass the timestamp printed in a progress line to `--watch-from`:
+
+```bash
+kahuna-cli --watch config/prod/search/ --watch-from 1:1792504674003:0
+```
+
+Resume requires the commit admission window on every node and enough retained log history. A watch never takes a history hold automatically. If the stream reports `lagged` or `history unavailable`, do not assume every change was printed. See [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/) for recovery behavior and the [watch recipe](/docs/recipes/watch-key-changes/) for an application example.
 
 ## Cluster Membership
 

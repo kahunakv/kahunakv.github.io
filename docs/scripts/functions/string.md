@@ -19,6 +19,8 @@ Kahuna provides string helpers for formatting, validation, and parsing inside sc
 | `trim(str)` | Removes leading and trailing whitespace. | `trim(" hello ")` returns `"hello"` |
 | `to_json(value)` | Serializes a value to JSON. | `to_json([1, 2])` returns `"[1,2]"` |
 
+`to_json` writes each element of an array as its JSON value: numbers, strings, `true`, `false`, `null`, and nested arrays. For example, `to_json(["a", true, null, [1]])` returns `"[\"a\",true,null,[1]]"`. A byte value is written as a string, decoded as UTF-8.
+
 String comparisons are ordinal and culture-invariant. Every argument to the string-specific functions must be a string.
 
 Positions are zero-based. `substring` accepts a start equal to the string length and returns an empty string. Negative, fractional, or out-of-range positions are script errors.

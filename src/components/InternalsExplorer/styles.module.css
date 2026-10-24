@@ -85,3 +85,46 @@
   .messages li { flex-direction: column; gap: .15rem; }
   .messages li strong { text-align: left; }
 }
+
+.storyHeader { padding: 1.5rem 1.5rem 0; }
+.storyHeader h3 { color: #022c22; margin-bottom: .5rem; font-size: 1.5rem; }
+.storyHeader p { color: #52685d; margin-bottom: 1rem; }
+.controls { border-top: 0; border-bottom: 1px solid #dfebe4; flex-wrap: wrap; }
+.controls button { padding: .6rem .85rem; min-height: 44px; }
+.controls .nextButton { background: #07533d; color: #fff; border-color: #07533d; font-weight: 650; }
+.controls .nextButton:hover { background: #022c22; }
+.controls .playButton { margin-left: auto; }
+.diagramLegend { color: #b5d5c7; font-size: .78rem; line-height: 1.5; margin: 1rem 0 0; }
+.messageMarker { fill: #d4ffe8; stroke: #062e24; stroke-width: 2; }
+.messageNumber { fill: #022c22; text-anchor: middle; font: 700 12px var(--ifm-font-family-base); }
+.messages li { align-items: center; font-size: .83rem; }
+.messages li > span:nth-child(2) { flex: 1; }
+.messages li .messageBadge { display: grid; place-items: center; flex: 0 0 1.5rem; width: 1.5rem; height: 1.5rem; border-radius: 50%; background: #d4ffe8; color: #022c22; font-weight: 700; }
+.mobileState { display: none; }
+.stepPicker summary { color: #07533d; font-weight: 650; cursor: pointer; padding: .5rem 0; }
+.steps { margin-top: .75rem; }
+.steps button { min-height: 44px; }
+.section summary:focus-visible { outline: 3px solid #009b69; outline-offset: 3px; }
+@media (max-width: 996px) {
+  .sceneCaption { min-height: 0; }
+  .messages { min-height: 0; }
+}
+@media (max-width: 540px) {
+  .storyHeader { padding: 1rem 1rem 0; }
+  .controls { background: white; }
+  .controls .counter { flex: 1; text-align: center; font-size: .7rem; }
+  .controls .playButton { margin: 0; flex-basis: 100%; }
+  .diagram, .diagramHint { display: none; }
+  .diagramLegend { padding: 0 .6rem; }
+  .mobileState { display: block; margin: 1rem .6rem; border: 1px solid #436253; border-radius: .6rem; padding: .75rem; }
+  .mobileState summary { cursor: pointer; color: #d4ffe8; font-size: .85rem; }
+  .mobileState dl { margin: .75rem 0 0; font-size: .8rem; }
+  .mobileState dl > div { display: flex; justify-content: space-between; gap: .5rem; padding: .4rem 0; }
+  .mobileState dd { margin: 0; color: #f0fcf5; text-align: right; }
+  .messages { margin-top: 1rem; }
+  .messages li { display: grid; grid-template-columns: 1.5rem 1fr; column-gap: .6rem; padding: .7rem 0; }
+  .messages li .messageBadge { grid-row: span 2; }
+  .messages li strong { grid-column: 2; }
+}
+
+.controls { scroll-margin-top: calc(var(--ifm-navbar-height) + 1rem); }

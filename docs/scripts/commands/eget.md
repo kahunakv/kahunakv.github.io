@@ -1,7 +1,9 @@
 
 # Command: EGet
 
-Get the value of key from the volatile storage. If the key does not exist `null` is returned.
+Reads the current value of an ephemeral key, written with [`eset`](/docs/scripts/commands/eset/). If the key does not exist, `null` is returned. Ephemeral keys can disappear after a node restart, a leader change, or memory eviction, so treat `null` as a normal result.
+
+Persistent and ephemeral keys are separate: to read a key written with `set`, use [`get`](/docs/scripts/commands/get/).
 
 ```kahuna
 eset `config/limits/max-connections` 1000

@@ -1,5 +1,15 @@
 # Key-Range Sharding
 
+By default, Kahuna decides which partition stores a key by hashing the key's key space (the part before the last `/`). This spreads unrelated data evenly without any planning, but it keeps each key space on exactly one partition. For a large key space such as `users/...` or `orders/2026/...`, that one partition then holds all of its data and takes all of its writes, and it cannot be split.
+
+Key-range sharding removes that limit for the key spaces you choose. Keys stay in sorted order, the key space is cut into contiguous ranges that can live on different partitions, and Kahuna splits a range when it grows too large or too busy. Use it when:
+
+- A key space may outgrow one partition, in data size or in write rate.
+- You read keys in order or by range, such as all orders between two IDs, and want those reads to touch only the ranges they overlap.
+- Transactions on different parts of a large key space should not contend with each other.
+
+Keep the default hash routing for small key spaces, caches, configuration, and data you only access by exact key. If you only need a small group of related keys on one partition, [buckets](/docs/distributed-keyvalue-store/buckets/) are simpler.
+
 Kahuna supports two routing models for key/value data:
 
 - **Hash routing**: the default. A key space is mapped to a partition by hash.

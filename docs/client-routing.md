@@ -5,7 +5,25 @@ import TabItem from '@theme/TabItem';
 
 Kahuna accepts requests on every node. If a request lands on a node that does not lead the target partition, that node forwards the request to the current owner. Client leader-aware routing removes many of those extra hops by letting the client learn where a resource lives and send later requests there directly.
 
+The gain is lower latency and less work on the cluster. A request that goes straight to the partition leader skips one network hop between nodes, and nodes spend less effort forwarding traffic. Most applications get this without any change: the default `Auto` mode turns on learned routing when the client is configured with several endpoints. Change the mode only to turn routing off (`RoundRobin`), or to route even the first request for a resource directly (`Metadata`).
+
 Routing is advisory. The server still re-resolves the key, lock, or sequence when the request arrives, checks live range fences, and verifies leadership. A stale route costs a forward or retry, not a wrong result.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant N1 as Node 1
+    participant N2 as Node 2 (leader for k)
+    Note over C: No route for k yet, so pick an endpoint by rotation
+    C->>N1: GET k
+    N1->>N2: Forward (extra hop)
+    N2-->>N1: Value
+    N1-->>C: Value and route hint, k is on Node 2
+    Note over C: Remember k → Node 2
+    C->>N2: GET k
+    N2-->>C: Value, no forward
+    Note over C,N2: If the route goes stale, the server forwards or returns MustRetry
+```
 
 ## Modes
 
