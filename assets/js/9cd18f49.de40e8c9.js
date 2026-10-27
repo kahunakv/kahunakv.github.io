@@ -1,0 +1,1 @@
+"use strict";(globalThis.webpackChunkkahunakv_docs||=[]).push([[6817],{77468(a){a.exports=JSON.parse('{"tag":{"label":"rocksdb","permalink":"/blog/tags/rocksdb","allTagsPath":"/blog/tags","count":1,"unlisted":false},"listMetadata":{"permalink":"/blog/tags/rocksdb","page":1,"postsPerPage":10,"totalPages":1,"totalCount":1,"blogDescription":"Blog","blogTitle":"Blog"}}')}}]);
