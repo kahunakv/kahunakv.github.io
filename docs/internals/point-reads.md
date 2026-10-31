@@ -1,27 +1,27 @@
 # Point Reads and Published Heads
 
-Reading one key by name is the most common Kahuna operation. For a key that is in memory and has no pending change, Kahuna can serve the latest value from a published in-memory record, without waiting in the key/value actor's mailbox behind other work. The result is lower latency for frequently read keys, with the same consistency as the normal path. It is on by default and needs no action; this page explains when the fast path applies and how to diagnose it.
+Reading one key by name is the most common Kahuna operation. For a key that is in memory and has no pending change, Kahuna can serve the latest value from a published in-memory record, without waiting in the mailbox of the key's [actor](/docs/glossary/#actor) behind other work. The result is lower latency for frequently read keys, with the same consistency as the normal path. It is on by default and needs no action; this page explains when the fast path applies and how to diagnose it.
 
 This is an optimization of the existing leader-confirmed read path: it does not authorize follower reads, bypass transaction registration, or provide a new consistency mode.
 
 ## Read Flow
 
-A routed get resolves the current partition and confirms local leadership before reading. A transaction-scoped get also registers its operation on the coordinator and completes that registration with the observed value or absence. A forwarded batch read re-resolves every key on arrival; a hosting follower cannot serve its local copy on the sender's assurance. Exhausting the forwarding budget returns `MustRetry`, rather than a stale local answer.
+A routed get resolves the current [partition](/docs/glossary/#partition) and confirms local leadership before reading. A transaction-scoped get also registers its operation on the coordinator and completes that registration with the observed value or absence. A forwarded batch read re-resolves every key on arrival; a hosting follower cannot serve its local copy on the sender's assurance. Exhausting the forwarding budget returns `MustRetry`, rather than a stale local answer.
 
-After confirmation, the read tries an immutable `PublishedHead` belonging to the key's actor. The record contains value, revision, expiry, modification timestamp, state, and whether MVCC state exists. Entry setters retract the record before mutations; the actor publishes a new record at the end of its turn before replying. A concurrent retraction after a read has accepted a live record represents a concurrent write; it does not turn that accepted observation into a later read of the replacement.
+After confirmation, the read tries an immutable `PublishedHead` belonging to the key's actor. The record contains value, revision, expiry, modification timestamp, state, and whether [MVCC](/docs/glossary/#mvcc) state exists. Entry setters retract the record before mutations; the actor publishes a new record at the end of its turn before replying. A concurrent retraction after a read has accepted a live record represents a concurrent write; it does not turn that accepted observation into a later read of the replacement.
 
 ## Eligibility and Fallback
 
 The published path applies only to latest point gets: no requested revision, no fixed read timestamp, and no enclosing actor turn. It falls back to the actor when any guard fails:
 
-- No resident live-value record, or the record has been retracted (including tombstone paths).
+- No resident live-value record, or the record has been retracted (including [tombstone](/docs/glossary/#tombstone) paths).
 - The actor holds a prefix lock.
 - A newer committed head is pending for this key on the actor mailbox.
 - For persistent keys, the unflushed-write overlay has a newer head, or a durable prepared intent exists.
 - The head has expired and needs the actor's expiry handling.
 - A transaction-scoped read encounters a key with existing MVCC state, including a pin or staged write.
 
-The replicator notes per-key pending applies before advancing the applied frontier. This prevents a leadership confirmation from making an older published record appear current while its replacement is still queued. Durable intent visibility, cache misses, historical reads, expiry handling, and read-your-staged-write behavior continue through the actor path.
+The replicator notes per-key pending applies before advancing the applied frontier (the newest replicated log entry the node has applied to memory). This prevents a leadership confirmation from making an older published record appear current while its replacement is still queued. Durable intent visibility, cache misses, historical reads, expiry handling, and read-your-staged-write behavior continue through the actor path.
 
 A published transactional read sends a `RecordReadPin` control message before the session's next request for that key. The actor creates the same MVCC observation the ordinary read path would create. Subsequent operations therefore validate against the revision actually read; published reads do not turn per-key pins into a shared snapshot. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/).
 
@@ -38,7 +38,7 @@ Published reads update the record's usage timestamp. The collector folds that ti
 | `stage` | Measurement | Additional tags |
 |---|---|---|
 | `register` | Register a transaction-scoped operation on its coordinator. | None |
-| `confirm` | Confirm leadership and application coverage before a local get. | `lease=hit` for synchronous confirmation; `lease=miss` for an asynchronous answer, including an applied-frontier wait or a read-index round. |
+| `confirm` | Confirm leadership and application coverage before a local get. | `lease=hit` for synchronous confirmation; `lease=miss` for an asynchronous answer, including an applied-frontier wait or a read-index round (a quorum check that this node is still leader before it serves the read). |
 | `actor` | Obtain the value through a published record or actor mailbox. | `path=published` or `path=actor`. |
 | `complete` | Fold a transaction-scoped read observation into its working set. | None |
 | `total` | Whole get measured by the read facade. | `path=registered` for session reads, `path=direct` otherwise. |

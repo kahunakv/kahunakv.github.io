@@ -1,6 +1,6 @@
 # User-Defined Functions
 
-Kahuna Script can call deployment-specific functions written in C#. Use this when small domain logic should run inside the transaction, next to the data.
+Kahuna Script can call deployment-specific functions written in C#, much like a user-defined function in a SQL database. Use them when small domain logic, such as a checksum or a tax rule, should run inside the transaction, next to the data.
 
 ```kahuna
 let total = acme_price_with_tax(@amount, "ES")
@@ -90,7 +90,7 @@ Prefix names with an application tag, such as `acme_crc32`, so a future built-in
 
 Function registrations are not replicated. Every node that may coordinate scripts must load the same function set.
 
-A node without a function can still apply Raft entries, replay WAL, restore snapshots, serve values produced by another node, and receive backups or state transfer. It only fails when it coordinates a script that calls the missing function.
+A node that lacks a function still works as a replica: it replicates and recovers data, receives backups, and serves values that another node computed with the function. It fails only when it coordinates a script that calls the missing function.
 
 Each node reports a fingerprint of its registered function names and argument counts. The fingerprint appears in startup logs, metrics, and undefined-function errors:
 
@@ -108,7 +108,7 @@ Different fingerprints mean the nodes loaded different extension builds.
 - Keep captured state immutable and thread-safe.
 - Make functions idempotent because transactions can be retried.
 - Prefer deterministic results. Use `context.ReadTimestamp` or `hlc()` instead of wall-clock reads when ordering matters.
-- Bound returned strings and byte arrays because returned values can travel through Raft.
+- Bound returned strings and byte arrays because returned values can be replicated through [Raft](/docs/glossary/#raft).
 
 Functions cannot appear in key position. Build or choose key names in the client and pass them as placeholders.
 

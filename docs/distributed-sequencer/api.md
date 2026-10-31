@@ -1,10 +1,10 @@
 # REST and gRPC API
 
-Kahuna exposes sequence operations through REST and gRPC.
+Use the REST or gRPC API to call the sequencer from a language that has no Kahuna client, or from tools such as `curl`.
 
 ## REST API
 
-All sequence REST APIs use `POST`.
+All sequence REST APIs use `POST`. Enum fields are JSON numbers: send `"durability": 1` (persistent, the only sequence durability). A string such as `"Persistent"` is rejected with HTTP 400. The response `type` is also numeric; see [Response Types](#response-types).
 
 | Endpoint | Purpose |
 |----------|---------|
@@ -26,7 +26,7 @@ curl -X POST https://localhost:8082/v1/sequences/create \
     "increment": 1,
     "maxValue": null,
     "blockSize": null,
-    "durability": "Persistent"
+    "durability": 1
   }'
 ```
 
@@ -40,7 +40,7 @@ curl -X POST https://localhost:8082/v1/sequences/update \
     "currentValue": 5000,
     "increment": 1,
     "blockSize": 100,
-    "durability": "Persistent"
+    "durability": 1
   }'
 ```
 
@@ -53,7 +53,7 @@ curl -X POST https://localhost:8082/v1/sequences/get \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "orders",
-    "durability": "Persistent"
+    "durability": 1
   }'
 ```
 
@@ -65,7 +65,7 @@ curl -X POST https://localhost:8082/v1/sequences/next \
   -d '{
     "name": "orders",
     "idempotencyKey": "request-123",
-    "durability": "Persistent"
+    "durability": 1
   }'
 ```
 
@@ -73,15 +73,23 @@ Response allocation:
 
 ```json
 {
-  "type": "Success",
+  "servedFrom": null,
+  "type": 0,
+  "sequence": null,
   "allocation": {
     "name": "orders",
     "start": 1,
     "end": 1,
     "count": 1,
-    "revision": 1
+    "revision": 0
   },
-  "revision": 1
+  "revision": 0,
+  "route": {
+    "partitionId": 1,
+    "endpoint": "https://localhost:8082",
+    "provenance": 2,
+    "generation": 0
+  }
 }
 ```
 
@@ -94,7 +102,7 @@ curl -X POST https://localhost:8082/v1/sequences/reserve \
     "name": "orders",
     "count": 100,
     "idempotencyKey": "batch-456",
-    "durability": "Persistent"
+    "durability": 1
   }'
 ```
 
@@ -105,7 +113,7 @@ curl -X POST https://localhost:8082/v1/sequences/delete \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "orders",
-    "durability": "Persistent"
+    "durability": 1
   }'
 ```
 
@@ -126,13 +134,13 @@ service Sequencer {
 
 ## Response Types
 
-| Type | Meaning |
-|------|---------|
-| `Success` | The operation succeeded. |
-| `NotFound` | The sequence does not exist. |
-| `AlreadyExists` | Create was called for an existing sequence. |
-| `InvalidInput` | The name or request parameters were invalid. |
-| `MaxValueExceeded` | The requested allocation would exceed `MaxValue`. |
-| `MustRetry` | The operation should be retried. Allocations also return this while a sequence update is waiting out the block lease. |
-| `Aborted` | The operation was aborted. |
-| `Error` | An unexpected error occurred. |
+| REST `type` | Type | Meaning |
+|-------------|------|---------|
+| `0` | `Success` | The operation succeeded. |
+| `1` | `NotFound` | The sequence does not exist. |
+| `2` | `AlreadyExists` | Create was called for an existing sequence. |
+| `3` | `InvalidInput` | The name or request parameters were invalid. |
+| `4` | `MaxValueExceeded` | The requested allocation would exceed `MaxValue`. |
+| `5` | `MustRetry` | The operation should be retried. Allocations also return this while a sequence update is waiting out the block lease. |
+| `6` | `Aborted` | The operation was aborted. |
+| `99` | `Error` | An unexpected error occurred. |

@@ -4,18 +4,26 @@
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-A distributed lock is a mechanism that ensures that a specific resource is accessed by only one node or process at a time in a distributed environment. This is crucial when:
+In one process, a mutex or a `lock` statement guarantees that only one thread enters a critical section. Across several servers there is no shared memory to hold that mutex, and any server can pause or lose its network connection while it holds the lock. A distributed lock gives processes on different machines the same guarantee: one owner at a time, so they do not modify a shared resource concurrently.
 
-- **Preventing race conditions:** Ensuring that multiple processes do not modify shared resources simultaneously.
-- **Coordinating tasks:** Managing access to shared databases, files, or services across different nodes.
-- **Maintaining data durability:** Guaranteeing that concurrent operations do not result in inconsistent states.
+Kahuna adds what a single-process lock does not need:
 
-By partitioning locks among nodes controlled by Raft Groups, Kahuna offers:
+- **A [lease](/docs/distributed-locks/leases/):** every lock expires unless its owner extends it, so a crashed or disconnected owner cannot block it forever.
+- **A [fencing token](/docs/distributed-locks/fencing-tokens/):** a number that increases each time the lock changes hands, so the resource you protect can reject a late write from an owner whose lease already expired.
+- **Replication for persistent locks:** a persistent lock is stored by the replicas of its [partition](/docs/glossary/#partition) and committed by a [quorum](/docs/glossary/#quorum) through [Raft](/docs/glossary/#raft), so it stays consistent through node and network failures. Ephemeral locks are faster, but they live only in the partition leader's memory and are lost on a restart or leader change.
 
-- **Reliability:** Raft consensus ensures that partition data remains consistent even in the face of network failures.
-- **Simplicity:** A straightforward API based on leases makes it easy to integrate distributed locking into your applications.
+Kahuna batches persistent acquire, extend, and release operations per partition before proposing them to Raft. Bursts of requests that touch locks on the same partition therefore share fewer [WAL](/docs/glossary/#write-ahead-log-wal) appends and quorum round trips, with the same fencing-token and lease semantics.
 
-Persistent lock acquire, extend, and release operations are batched per partition before Raft proposal. Bursty workloads that touch locks on the same partition can therefore share fewer WAL appends and quorum round trips while keeping the same fencing-token and lease semantics.
+A lock is either free or held. Only the current owner can extend or unlock it; a lock request from another owner is refused until the lease ends:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Free
+    Free --> Held: lock, new fencing token
+    Held --> Held: owner extends lease, same token
+    Held --> Free: owner unlocks
+    Held --> Free: lease expires
+```
 
 ## Use Cases
 
@@ -24,18 +32,18 @@ Persistent lock acquire, extend, and release operations are batched per partitio
 - **Safe Deployment CI/CD Coordination**: Prevent multiple CI/CD pipelines from deploying the same environment simultaneously. Two deployment jobs could conflict and cause downtime. Use a lock to serialize deployments.
 - **Database Migration Coordination**: Ensure that only one service performs schema migration at startup. If multiple services run migrate up concurrently, it may corrupt the schema. Use a lock to ensure only the first instance runs migrations.
 - **Session Control / Login Exclusivity**: Allow only one active session per user. Used in banking apps, gaming, admin consoles, etc.
-- **Distributed Queue Consumer Coordination**: Ensure that a message from a queue is only processed once, even with multiple consumers.
-- **Throttling or Rate-Limiting Across Services**: Enforce a global rate limit across many service instances. 
+- **Distributed Queue Consumer Coordination**: Keep two consumers from processing the same message at the same time. A lock alone does not guarantee the message is processed only once, because a consumer can crash after doing the work and before recording it. Record completion too; see [Idempotent Jobs](/docs/recipes/idempotent-jobs/).
+- **Throttling or Rate-Limiting Across Services**: A global rate limit is a shared counter rather than a lock. Use the [distributed rate limiters](/docs/distributed-rate-limiting/), which also include lease-based concurrency limits.
 - **External System Coordination**: Ensure only one node writes to an external system (e.g., shared database, billing API, payment gateway) to avoid double charges or inconsistent writes.
 
 ## API
 
-Kahuna exposes a simple API for acquiring, releasing and extending locks. The main functions are:
+The lock API has four operations: lock, unlock, extend, and get.
 
 ### Lock
 
-<Tabs>
-<TabItem value="API">
+<Tabs groupId="client-examples">
+<TabItem value="api" label="API">
 
 ```csharp
 Task<KahunaLock> GetOrCreateLock(
@@ -53,26 +61,28 @@ Task<KahunaLock> GetOrCreateLock(
 - **IsAcquired:** `true` if the lock was successfully acquired.
 - **FencingToken:** A monotonically increasing token for that lock resource. Downstream systems can reject operations with an older token.
 </TabItem>
-<TabItem value="CLI">
+<TabItem value="cli" label="CLI">
 
 Acquire a lease on the resource `locks/tasks/123` for 10 seconds in the interactive shell:
 
-```kahuna
-kahuna-cli> lock locks/tasks/123 10000               
+```text
+kahuna-cli> lock locks/tasks/123 10000
 f1 acquired 786f947d8a6643f0b939865f72aa512a
 ```
 
 Acquire a lease using command line arguments:
 
 ```bash
-~> kahuna-cli --lock locks/tasks/123 --expires 10000
+kahuna-cli --lock locks/tasks/123 --expires 10000
+```
+```text
 f4 acquired 4e3c5d8ee76a4a1db268c81b048a002a
 ```
 
 </TabItem>
-<TabItem value="C#">
+<TabItem value="dotnet" label=".NET">
 
-Below is a basic example to demonstrate how to acquire a distributed lock in a C# project:
+Acquire a lock in C#:
 
 ```csharp
 await using KahunaLock myLock = await client.GetOrCreateLock(
@@ -88,7 +98,7 @@ if (myLock.IsAcquired)
 }
 ```
 </TabItem>
-<TabItem value="TypeScript">
+<TabItem value="typescript" label="TypeScript">
 
 ```ts
 const lock = await client.acquireLock("balance-" + userId, {
@@ -105,20 +115,22 @@ if (lock.acquired) {
 
 </TabItem>
 
-<TabItem value="Rest">
+<TabItem value="rest" label="REST">
 
-Acquiring a lock from the Rest API:
+Acquiring a lock from the REST API:
 
 ```bash
 curl --location 'https://kahuna-dev.company.internal/v1/locks/try-lock' \
     --header 'Content-Type: application/json' \
-    --data '{"resource":"locks/tasks/123", "owner":"e5943062358144b4b0bbff8868f7063d", "expiresMs":10000, "durability":0 }'
+    --data '{"resource":"locks/tasks/123", "owner":"ZTU5NDMwNjIzNTgxNDRiNGIwYmJmZjg4NjhmNzA2M2Q=", "expiresMs":10000, "durability":1 }'
 ```
 
-Response:
+`owner` is a byte array, so the REST API sends and returns it base64-encoded (here, the UTF-8 bytes of `e5943062358144b4b0bbff8868f7063d`). `durability` is numeric: `1` is persistent, `0` is ephemeral.
+
+Response (`type` `0` means locked):
 
 ```json
-{"type": 0, "fencingToken": 0}
+{"servedFrom":"","type":0,"fencingToken":0,"route":{"partitionId":1,"endpoint":"https://kahuna-dev.company.internal","provenance":2,"generation":0}}
 ```
 
 </TabItem>
@@ -129,8 +141,8 @@ Response:
 
 ### Unlock
 
-<Tabs>
-<TabItem value="API">
+<Tabs groupId="client-examples">
+<TabItem value="api" label="API">
 
 ```csharp
 Task<bool> Unlock(
@@ -148,11 +160,11 @@ Task<bool> Unlock(
 - **Unlocked:** `true` if the resource was successfully unlocked.
 
 </TabItem>
-<TabItem value="CLI">
+<TabItem value="cli" label="CLI">
 
 Unlock the acquired lease on the resource `locks/tasks/123` in the interactive shell:
 
-```kahuna
+```text
 kahuna-cli> lock locks/tasks/123 10000
 f1 acquired 786f947d8a6643f0b939865f72aa512a
 
@@ -163,17 +175,23 @@ f1 unlocked
 Unlock the acquired lease using command line arguments:
 
 ```bash
-$ kahuna-cli --lock locks/tasks/123 --expires 60000
+kahuna-cli --lock locks/tasks/123 --expires 60000
+```
+```text
 f4 acquired 4e3c5d8ee76a4a1db268c81b048a002a
+```
 
-$ kahuna-cli --unlock-lock locks/tasks/123 --owner 4e3c5d8ee76a4a1db268c81b048a002a
-f4 unlocked
+```bash
+kahuna-cli --unlock locks/tasks/123 --owner 4e3c5d8ee76a4a1db268c81b048a002a
+```
+```text
+unlocked
 ```
 
 </TabItem>
-<TabItem value="C#">
+<TabItem value="dotnet" label=".NET">
 
-Below is a basic example to demonstrate how to acquire a distributed lock in a C# project. 
+Acquire a lock and release it manually in C#:
 
 ```csharp
 KahunaLock myLock = await client.GetOrCreateLock(
@@ -189,10 +207,10 @@ if (myLock.IsAcquired)
 }
 
 // Manually release the lock
-await myLock.DisposeAsync();
+bool unlocked = await myLock.TryUnlock();
 ```
 </TabItem>
-<TabItem value="TypeScript">
+<TabItem value="typescript" label="TypeScript">
 
 ```ts
 const lock = await client.acquireLock("balance-" + userId, {
@@ -209,18 +227,18 @@ await lock.release();
 ```
 
 </TabItem>
-<TabItem value="Rest">
+<TabItem value="rest" label="REST">
 
 ```bash
 curl --location 'http://kahuna-dev.company.internal/v1/locks/try-unlock' \
     --header 'Content-Type: application/json' \
-    --data '{"resource":"locks/tasks/123", "owner":"e5943062358144b4b0bbff8868f7063d", "durability":0}'
+    --data '{"resource":"locks/tasks/123", "owner":"ZTU5NDMwNjIzNTgxNDRiNGIwYmJmZjg4NjhmNzA2M2Q=", "durability":1}'
 ```
 
-Response:
+Response (`type` `3` means unlocked):
 
-```
-{"type": 0, "fencingToken": 0}
+```json
+{"servedFrom":"","type":3,"fencingToken":0,"route":{"partitionId":1,"endpoint":"https://kahuna-dev.company.internal","provenance":2,"generation":0}}
 ```
 
 </TabItem>
@@ -230,11 +248,11 @@ Response:
 
 ### Extend
 
-<Tabs>
-<TabItem value="API">
+<Tabs groupId="client-examples">
+<TabItem value="api" label="API">
 
 ```csharp
-Task<(bool Extended, long FencingToken)> TryExtendLock(
+Task<(bool, long)> TryExtendLock(
     string resource,
     byte[] owner,
     TimeSpan duration,
@@ -248,15 +266,15 @@ Task<(bool Extended, long FencingToken)> TryExtendLock(
 - **durability:** Defines whether the lock durability is **Ephemeral** or **Persistent**.
 
 **Returns:**
-- **Extended:** `true` if the lock was successfully extended.
-- **FencingToken:** The current fencing token for that lock resource. Extending a lock keeps the same owner and token.
+- **Extended** (first item): `true` if the lock was successfully extended. If the lease already expired or another owner holds the lock, the call throws a `KahunaException` instead.
+- **FencingToken** (second item): The current fencing token for that lock resource. Extending a lock keeps the same owner and token.
 
 </TabItem>
-<TabItem value="CLI">
+<TabItem value="cli" label="CLI">
 
 Extends the acquired lease on the resource `locks/tasks/123` in the interactive shell:
 
-```kahuna
+```text
 kahuna-cli> lock locks/tasks/123 10000
 f1 acquired 449941a969f74f8eb3d81cc70e5ab2ae
 
@@ -267,16 +285,22 @@ f1 extended 449941a969f74f8eb3d81cc70e5ab2ae
 Extend the acquired lease using command line arguments:
 
 ```bash
-$ kahuna-cli --lock locks/tasks/123 --expires 60000
+kahuna-cli --lock locks/tasks/123 --expires 60000
+```
+```text
 f4 acquired 4e3c5d8ee76a4a1db268c81b048a002a
+```
 
-$ kahuna-cli --extend-lock locks/tasks/123 --owner 4e3c5d8ee76a4a1db268c81b048a002a --expires 60000 
-f4 extended 
+```bash
+kahuna-cli --extend-lock locks/tasks/123 --owner 4e3c5d8ee76a4a1db268c81b048a002a --expires 60000
+```
+```text
+f4 extended
 ```
 </TabItem>
-<TabItem value="C#">
+<TabItem value="dotnet" label=".NET">
 
-How to acquire a distributed lock and then extend it in a c# project:
+Acquire a lock and extend it in C#:
 
 ```csharp
 await using KahunaLock myLock = await client.GetOrCreateLock(
@@ -296,7 +320,7 @@ if (myLock.IsAcquired)
 
 ```
 </TabItem>
-<TabItem value="TypeScript">
+<TabItem value="typescript" label="TypeScript">
 
 ```ts
 await using lock = await client.acquireLock("balance-" + userId, {
@@ -310,18 +334,18 @@ if (lock.acquired) {
 ```
 
 </TabItem>
-<TabItem value="Rest">
+<TabItem value="rest" label="REST">
 
 ```bash
 curl --location 'http://kahuna-dev.company.internal/v1/locks/try-extend' \
     --header 'Content-Type: application/json' \
-    --data '{"resource": "locks/tasks/123", "owner": "e5943062358144b4b0bbff8868f7063d", "expiresMs": 60000, "durability": 0}'
+    --data '{"resource": "locks/tasks/123", "owner": "ZTU5NDMwNjIzNTgxNDRiNGIwYmJmZjg4NjhmNzA2M2Q=", "expiresMs": 60000, "durability": 1}'
 ```
 
-Response:
+Response (`type` `2` means extended):
 
 ```json
-{"type": 0, "fencingToken": 0}
+{"servedFrom":"","type":2,"fencingToken":0,"route":{"partitionId":1,"endpoint":"https://kahuna-dev.company.internal","provenance":2,"generation":0}}
 ```
 
 </TabItem>
@@ -332,8 +356,8 @@ Response:
 
 ### Get
 
-<Tabs>
-<TabItem value="API">
+<Tabs groupId="client-examples">
+<TabItem value="api" label="API">
 
 ```csharp
 Task<KahunaLockInfo?> GetLockInfo(
@@ -350,31 +374,23 @@ Task<KahunaLockInfo?> GetLockInfo(
 - **FencingToken:** The current fencing token for that lock resource.
 
 </TabItem>
-<TabItem value="CLI">
+<TabItem value="cli" label="CLI">
 
 Obtains information about the lock `locks/tasks/123` in the interactive shell:
 
-```kahuna
+```text
 kahuna-cli> lock locks/tasks/123 10000
 f1 acquired 449941a969f74f8eb3d81cc70e5ab2ae
 
 kahuna-cli> get-lock locks/tasks/123
-f9 fa020530242546798d7c349437665071
+f1 449941a969f74f8eb3d81cc70e5ab2ae
 ```
 
-Obtain information about the lock using command line arguments:
-
-```bash
-$ kahuna-cli --lock locks/tasks/123 --expires 60000
-f4 acquired 4e3c5d8ee76a4a1db268c81b048a002a
-
-$ kahuna-cli --get-lock locks/tasks/123
-f4 4e3c5d8ee76a4a1db268c81b048a002a
-```
+`get-lock` is available only in the interactive shell, and only for locks acquired in the same session. There is no single-command `kahuna-cli` option to read lock information; use a client or the REST API instead.
 </TabItem>
-<TabItem value="C#">
+<TabItem value="dotnet" label=".NET">
 
-Obtain information about a lock in a c# project:
+Read information about a lock in C#:
 
 ```csharp
 await using KahunaLock myLock = await client.GetOrCreateLock(
@@ -388,13 +404,16 @@ if (!myLock.IsAcquired)
 
     var lockInfo = await myLock.GetInfo();
 
-    Console.WriteLine($"Lock owner: {lockInfo.Owner}");
-    Console.WriteLine($"Expires: {lockInfo.Expires}");
+    if (lockInfo?.Owner is not null)
+    {
+        Console.WriteLine($"Lock owner: {Encoding.UTF8.GetString(lockInfo.Owner)}");
+        Console.WriteLine($"Expires: {lockInfo.Expires}");
+    }
 }
 
 ```
 </TabItem>
-<TabItem value="TypeScript">
+<TabItem value="typescript" label="TypeScript">
 
 ```ts
 await using lock = await client.acquireLock("group-leader-" + groupId, {
@@ -404,26 +423,33 @@ await using lock = await client.acquireLock("group-leader-" + groupId, {
 if (!lock.acquired) {
   const lockInfo = await client.getLockInfo("group-leader-" + groupId);
 
-  console.log(`Lock owner: ${lockInfo?.owner}`);
-  console.log(`Expires: ${lockInfo?.expires}`);
+  if (lockInfo?.owner) {
+    console.log(`Lock owner: ${new TextDecoder().decode(lockInfo.owner)}`);
+    console.log(`Expires: ${lockInfo.expires.physical}`);
+  }
 }
 ```
 
 </TabItem>
-<TabItem value="Rest">
+<TabItem value="rest" label="REST">
 
 ```bash
 curl --location 'https://kahuna-dev.company.internal/v1/locks/get-info' \
     --header 'Content-Type: application/json' \
-    --data '{"resource": "locks/tasks/123", "durability": 0}'
+    --data '{"resource": "locks/tasks/123", "durability": 1}'
 ```
 
-Response:
+Response (`type` `4` means the lock information was found; `expires` is a hybrid logical clock timestamp, with `l` in Unix milliseconds):
 
 ```json
-{"type": 0, "owner": "4e3c5d8ee76a4a1db268c81b048a002a", "fencingToken": 4}
+{"servedFrom":"","type":4,"owner":"ZTU5NDMwNjIzNTgxNDRiNGIwYmJmZjg4NjhmNzA2M2Q=","expires":{"n":3,"l":1792804089571,"c":0},"fencingToken":0,"route":{"partitionId":1,"endpoint":"https://kahuna-dev.company.internal","provenance":2,"generation":0}}
 ```
 
 </TabItem>
 
 </Tabs>
+
+## Important Considerations
+
+- **Choose the durability per lock.** A persistent lock survives node restarts and leader changes, and its fencing token always increases. An ephemeral lock is faster but lives only in the partition leader's memory. A node restart, a leader change, or eviction of an idle lock entry loses it: another worker can acquire it before the lease would have ended, and its fencing token count restarts at `0`. Use ephemeral locks only where a short overlap between two holders is acceptable. See [Durability Levels](/docs/architecture/durability-levels/) and [Leases During a Leader Change](/docs/distributed-locks/leases/#leases-during-a-leader-change).
+- **A lease can end while its owner is still working.** Extend the lease as you work and stop when an extend fails ([Renewing a Lease](/docs/distributed-locks/leases/#renewing-a-lease)). Send the [fencing token](/docs/distributed-locks/fencing-tokens/) with every write to the resource you protect, so a late writer is rejected.

@@ -1,6 +1,6 @@
 # Durable Transaction Settlement
 
-A persistent transaction can be **committed before all of its values have been copied into the normal key/value store**. This is possible because Kahuna records the proposed values and an authoritative commit decision separately. Reads can use that decision to find committed values while the remaining work finishes.
+A persistent transaction can be **committed before all of its values have been copied into the normal key/value store**. This is possible because Kahuna records the proposed values and an authoritative commit decision separately. Reads can use that decision to find committed values while the remaining work finishes, so commit does not have to wait for that work.
 
 That remaining work is called **settlement**. This page explains what it does, why it can run after commit returns, and how Kahuna preserves enough state to recover from a failure. Start with [Transaction Lifecycle](/docs/internals/transaction-lifecycle/) if transaction coordinators, participants, or preparation are new to you.
 
@@ -76,9 +76,11 @@ A **delta** is a record describing changes to replicated state, rather than a co
 
 By default, each `MaterializeIntent` record names the prepared intent instead of repeating its value bytes. Each replica obtains the value from its own prepared-intent store. This is **by-reference materialization**: the reference is to replicated transaction state, not to a value supplied later by the client.
 
-Setting `DurableMaterializeByReference = false` produces value-carrying materialization records instead. Both encodings are supported by normal application of new log records and by WAL replay after restart. By-reference records avoid copying the value through another log entry; that entry reduction alone does not establish a latency or throughput guarantee.
+Setting `DurableMaterializeByReference = false` produces value-carrying materialization records instead. Both encodings are supported by normal application of new log records and by WAL replay after restart. By-reference records avoid copying the value through another log entry; that entry reduction alone does not establish a latency or throughput guarantee. PITR reconstructs by-reference mutations from prepares in the replayed history.
 
-For compatibility with older logs, logged key/value type `30` is also decoded as by-reference materialization. The actor-only `DropLeaderState` message is never logged, despite sharing that value in an older build. PITR reconstructs by-reference mutations from prepares in the replayed history.
+### Compatibility details
+
+For compatibility with older logs, logged key/value type `30` is also decoded as by-reference materialization. The actor-only `DropLeaderState` message is never logged, despite sharing that value in an older build.
 
 ## Materialization at settlement apply (opt-in)
 
@@ -162,6 +164,8 @@ When materialization-on-resolve is enabled, separate materialization entries can
 For the overall transaction flow, continue with [Transaction Lifecycle](/docs/internals/transaction-lifecycle/). For visibility while settlement is pending, use [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/).
 
 ## Restart Replay and Missing-Value Alarms
+
+This section is for contributors and operators investigating a missing-value alarm.
 
 A prepared-intent snapshot records the applied position certified before its walk and the position reflected by its end. Restart replay treats entries already represented by that slice as history: an old prepare must not become a new live key holder simply because its original competing intent has since settled.
 

@@ -1,17 +1,15 @@
 
-# Client for .NET
+# .NET Client
 
-Kahuna provides a .NET client for distributed key/value operations, locks, sequencers, transactions, backups, and point-in-time restore. The client hides most routing and coordination details while still exposing the controls needed for consistency, durability, and retry behavior. Documentation and samples for the client can be found in the `docs/` folder or on our [GitHub repository](https://github.com/kahunakv/kahuna).
+The .NET client (`Kahuna.Client`) gives a C# application one typed API for the coordination work you would otherwise build yourself on Redis or a SQL table: [distributed locks](/docs/distributed-locks/), the [key/value store](/docs/distributed-keyvalue-store/), [Kahuna Script](/docs/scripts/) and multi-key [transactions](/docs/distributed-keyvalue-store/transactions/), and the [distributed sequencer](/docs/distributed-sequencer/). It also covers [cluster administration](/docs/dotnet-client/administration/), including backups and [point-in-time restore](/docs/glossary/#point-in-time-recovery-pitr).
 
-For Node.js and TypeScript applications, see [Client for TypeScript and Node.js](/docs/typescript-client/).
+The client talks to the cluster over gRPC by default, packs waiting key/value requests together under load, and can route point operations straight to the node that owns them. It hides most routing and coordination details while exposing the controls you need for consistency, durability, and retries. It works with ASP.NET Core: the [distributed rate limiters](/docs/distributed-rate-limiting/) plug into its rate-limiting middleware and share fixed-window, sliding-window, token-bucket, and concurrency budgets across application replicas. Documentation and samples are in the `docs/` folder and the [GitHub repository](https://github.com/kahunakv/kahuna).
 
-For change notifications on persistent keys, see [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/).
-
-For shared fixed-window, sliding-window, token-bucket, and concurrency budgets, see [Distributed Rate Limiting](/docs/distributed-rate-limiting/), including ASP.NET Core policies and failure limits.
+For change notifications on persistent keys, see [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/). For Node.js applications, see the [TypeScript Client](/docs/typescript-client/).
 
 ## Client Installation
 
-Kahuna Client for .NET is available as a NuGet package. You can install it via the .NET CLI:
+Install the NuGet package with the .NET CLI:
 
 ```bash
 dotnet add package Kahuna.Client
@@ -23,232 +21,33 @@ Or via the NuGet Package Manager:
 Install-Package Kahuna.Client
 ```
 
-## Locks: Usage & Examples
+## Connect
 
-### Single attempt to acquire a lock
-
-Below is a basic example to demonstrate how to use Kahuna Distributed Locks in a C# project:
+Create one client and reuse it (it can be a global instance):
 
 ```csharp
 using Kahuna.Client;
 
-// Create a Kahuna client (it can be a global instance)
 var client = new KahunaClient("https://localhost:8082");
-
-// ...
-
-public async Task UpdateBalance(KahunaClient client, string userId)
-{
-    // try to lock on a resource using a keyName composed of a prefix and the user's id,
-    // if acquired then automatically release the lock after 5 seconds (if not extended),
-    // it will give up immediately if the lock is not available,
-    // if the lock is acquired it will prevent the same user from changing the same data concurrently
-
-    await using KahunaLock myLock = await client.GetOrCreateLock(
-        "balance-" + userId,
-        TimeSpan.FromSeconds(5)
-    );
-
-    if (myLock.IsAcquired)
-    {
-        Console.WriteLine("Lock acquired!");
-
-        // implement exclusive logic here
-    }
-    else
-    {
-        Console.WriteLine("Someone else has the lock!");
-    }
-
-    // myLock is automatically released after leaving the method
-}
 ```
 
-### Multiple attempts to acquire a lock
-
-The following example shows how to make multiple attempts to acquire a lock (lease) for 10 seconds, retrying every 150 ms.
-
-Why Frequent Retries? Given that inventory updates are very short operations (typically milliseconds to a few seconds),
-each update releases the lock quickly. Still, with a massive volume of concurrent purchase attempts, the lock is rapidly cycled through many clients.
-As a result, individual servers might find that the lock is released often, but due to high contention,
-they need to retry multiple times until one of them succeeds.
+To configure a pool of Kahuna endpoints belonging to the same cluster, pass several URLs:
 
 ```csharp
-using Kahuna.Client;
-
-public async Task UpdateBalance(KahunaClient client, string userId)
-{
-    // try to lock on a resource using a keyName composed of a prefix (balance) and the user's id,
-    // if acquired then automatically release the lock after 5 seconds or when leaving the method (if not extended),
-    // if not acquired retry to acquire the lock every 150 milliseconds for 10 seconds,
-    // it will give up after 10 seconds if the lock is not available,
-    // if the lock is acquired it will prevent the same user from changing the balance concurrently
-
-    await using KahunaLock myLock = await client.GetOrCreateLock(
-        "balance-" + userId,
-        expiry: TimeSpan.FromSeconds(5),
-        wait: TimeSpan.FromSeconds(10),
-        retry: TimeSpan.FromMilliseconds(150)
-    );
-
-    if (myLock.IsAcquired)
-    {
-        Console.WriteLine("Lock acquired!");
-
-        // implement exclusive logic here
-    }
-    else
-    {
-        Console.WriteLine("Someone else has the lock!");
-    }
-
-    // myLock is automatically released after leaving the method
-}
-```
-
-### Fencing Tokens
-
-Whenever possible, it is also important to use the fencing tokens.
-Even if a client thinks it holds the lock post-lease expiration, fencing tokens prevent stale writes.
-In this example, the fencing token is used to perform optimistic locking:
-
-```csharp
-using Kahuna.Client;
-
-public async Task IncreaseBalance(KahunaClient client, string userId, long amount)
-{
-    // try to lock on a resource holding the lease for 5 seconds
-    // and prevent stale clients from modifying data after losing their lock.
-
-    await using KahunaLock myLock = await client.GetOrCreateLock(
-        "balance-" + userId,
-        expiry: TimeSpan.FromSeconds(5)
-    );
-
-    if (myLock.IsAcquired)
-    {
-        Console.WriteLine("Lock acquired!");
-
-        BalanceAccount account = await db.GetBalance(userId);
-
-        if (account.FencingToken > myLock.FencingToken)
-        {
-            // Write rejected: Stale fencing token
-
-            Console.WriteLine("Someone else had the lock!");
-            return;
-        }
-
-        // Write successful: New balance saved with new fencing token
-
-        account.Balance += amount;
-        account.FencingToken = myLock.FencingToken;
-
-        await db.Save(account);
-    }
-    else
-    {
-        Console.WriteLine("Someone else has the lock!");
-    }
-
-    // myLock is automatically released after leaving the method
-}
-```
-
-### Periodically extend a lock
-
-At times, it is useful to periodically extend the lock's expiration time while a client holds it, for example, in a leader election scenario.
-As long as the leader node is alive and healthy, it can extend the lock duration to signal that it can continue acting as the leader:
-
-```csharp
-using Kahuna.Client;
-
-public async Task TryChooseLeader(KahunaClient client, string groupId)
-{
-    await using KahunaLock myLock = await client.GetOrCreateLock(
-        "group-leader-" + groupId,
-        expiry: TimeSpan.FromSeconds(10)
-    );
-
-    if (!myLock.IsAcquired)
-    {
-        Console.WriteLine("Lock not acquired!");
-        return;
-    }
-
-    long acquireFencingToken = myLock.FencingToken;
-
-    while (true)
-    {
-        (bool isExtended, long fencingToken) = await myLock.TryExtend(TimeSpan.FromSeconds(10));
-        if (!isExtended)
-        {
-            Console.WriteLine("Lock extension failed!");
-            break;
-        }
-
-        if (fencingToken != acquireFencingToken)
-        {
-            Console.WriteLine("Lock fencing token changed! Someone else took the lock");
-            break;
-        }
-
-        // wait 5 seconds to extend the lock
-        await Task.Delay(5000);
-    }
-}
-```
-
-### Retrieve information about a lock
-
-You can also retrieve information about a lock, such as the current lock's owner and remaining time for the lock to expire:
-
-```csharp
-using Kahuna.Client;
-
-public async Task TryChooseLeader(KahunaClient client, string groupId)
-{
-    await using KahunaLock myLock = await client.GetOrCreateLock(
-        "group-leader-" + groupId,
-        expiry: TimeSpan.FromSeconds(5)
-    );
-
-    if (!myLock.IsAcquired)
-    {
-        Console.WriteLine("Lock not acquired!");
-
-        var lockInfo = await myLock.GetInfo();
-
-        Console.WriteLine($"Lock owner: {lockInfo.Owner}");
-        Console.WriteLine($"Expires: {lockInfo.Expires}");
-    }
-}
-```
-
-### Configure a pool of endpoints
-
-If you want to configure a pool of Kahuna endpoints belonging to the same cluster so that traffic is distributed in a round-robin manner:
-
-```csharp
-using Kahuna.Client;
-
-// Create a Kahuna client with a pool of endpoints
 var client = new KahunaClient([
     "https://localhost:8082",
     "https://localhost:8084",
     "https://localhost:8086"
 ]);
-
-// ...
 ```
 
 Using a pool of reachable endpoints lets the client avoid a load balancer and also enables leader-aware routing. With the default `KahunaRoutingMode.Auto`, a client configured with several endpoints learns route hints from responses and sends later point key/value, lock, and sequence operations directly to the node that owns the resource.
 
 Route hints are advisory. If leadership or placement changes, the receiving server re-resolves the resource and forwards or returns retryable state as needed.
 
-See [Client Leader-Aware Routing](/docs/client-routing/) for routing modes, endpoint mapping, server advertisement flags, metadata mode, and metrics.
+See [Client Leader-Aware Routing](/docs/client-routing/) for routing modes, endpoint mapping, server advertisement flags, metadata mode, and the routing counters published under the `Kahuna.Client.Routing` meter.
 
-### Configure client options
+## Client Options
 
 Pass `KahunaOptions` when you need to tune transport behavior:
 
@@ -299,8 +98,8 @@ Key `KahunaOptions` fields:
 | `RoutingMetadataLifetime` | `60 seconds` | How long metadata-mode routing maps are cached. |
 | `RoutingEndpointMap` | `null` | Maps server-advertised endpoints to URLs this client actually dials. |
 | `AllowUnlistedRoutingEndpoints` | `false` | Allows dialing advertised endpoints that were not configured or mapped. |
-| `MinConnections` | `1` | Lower bound for connection-related client setup. |
-| `MaxConnections` | `1` | Upper bound for connection-related client setup. |
+| `MinConnections` | `1` | Currently unused: the client does not read this option. |
+| `MaxConnections` | `1` | Currently unused: the client does not read this option. |
 | `DefaultOperationTimeout` | `30 seconds` | Timeout used when a call has no cancellation token deadline. |
 | `GrpcChannelPoolSize` | `2` | gRPC channels opened per configured endpoint. |
 | `GrpcRequestFrames` | `true` | Pack already-waiting key/value requests into one gRPC stream message when the server supports it. |
@@ -309,85 +108,132 @@ Key `KahunaOptions` fields:
 | `AllowInsecureCertificateValidation` | `false` | Skip TLS server certificate validation for local or test environments. |
 | `TrustedServerCertificateThumbprints` | empty | SHA-256 certificate thumbprints accepted for production pinning. |
 
-## Cluster Membership
+## Transport
 
-`GetClusterMembership()` returns the current roster, membership version, the contacted node's local role, and whether that node has completed cluster initialization:
-
-```csharp
-KahunaClusterMembershipResponse membership =
-    await client.GetClusterMembership();
-
-Console.WriteLine($"Initialized={membership.Initialized}");
-Console.WriteLine($"LocalRole={membership.LocalRole}");
-```
-
-Use the server readiness endpoint `GET /v1/cluster/health` for load balancer and orchestrator probes. Membership can be available before a node is initialized enough to serve key/value traffic.
-
-`GetClusterPlacement()` returns the committed per-partition replica map:
+The client uses gRPC by default. To use the REST API instead, pass a `RestCommunication` instance:
 
 ```csharp
-KahunaClusterPlacementResponse placement =
-    await client.GetClusterPlacement();
+using Kahuna.Client;
+using Kahuna.Client.Communication;
 
-Console.WriteLine($"RF={placement.ReplicationFactor}");
-Console.WriteLine($"HostedHere={placement.HostedPartitionCount}");
+KahunaOptions options = new();
+ILogger<KahunaClient>? logger = null; // or a logger from your DI container
+
+var client = new KahunaClient(
+    "https://localhost:8082",
+    logger,
+    communication: new RestCommunication(logger, options),
+    options: options
+);
 ```
 
-When you need to inspect one node's local hosting view, pass that endpoint explicitly:
+`RestCommunication` reads the TLS options (`AllowInsecureCertificateValidation`, `TrustedServerCertificateThumbprints`) from the options you pass to it. Those REST TLS settings are process-wide: the first non-default configuration wins.
 
-```csharp
-KahunaClusterPlacementResponse nodePlacement =
-    await client.GetClusterPlacement("https://kahuna-2:8082");
-```
+Both transports support key/value operations, scripts, interactive transaction sessions, watches, and key-range administration, and they return the same per-value script result shape. Differences to know:
 
-`SetReplicationFactor(...)` commits a per-partition replication-factor override. `0` clears the override so the partition inherits the server-wide replication factor:
+- `GetManyKeyValues(...)` and `ExistsManyKeyValues(...)` work over both REST and gRPC. Over REST, the server rejects a batch read that carries a transaction ID with `InvalidInput`, because that transport cannot register the batch in the transaction's read set.
+- REST encodes the difference between a `null` payload and a zero-byte payload as JSON `null` versus an empty base64 string. gRPC uses bytes-field presence.
+- `GrpcChannelPoolSize`, `GrpcRequestFrames`, `DefaultOperationTimeout`, and the batch coalescing options apply to the gRPC transport.
 
-```csharp
-KahunaSetReplicationFactorResponse response =
-    await client.SetReplicationFactor(
-        partitionId: 3,
-        replicationFactor: 5
-    );
+## Errors and Cancellation
 
-if (!response.Success)
-    Console.WriteLine(response.Reason);
-```
-
-The change adjusts the placement target. Replica movement happens later through the placement rebalancer.
-
-`LeaveCluster(...)` asks a running node to decommission itself by committing its removal from the roster:
-
-```csharp
-KahunaClusterLeaveResponse left =
-    await client.LeaveCluster("https://kahuna-3:8082");
-
-if (left.Left)
-    Console.WriteLine("Node can be stopped");
-
-if (left.Drained)
-    Console.WriteLine("Placed replicas were evacuated first");
-```
-
-When the client was created with multiple endpoints, `nodeUrl` is required so the call does not decommission an arbitrary round-robin target.
-
-See [Replication Factor and Replica Placement](/docs/replica-placement/) for the server-side behavior behind these APIs.
-
-## Snapshot Reads
-
-The .NET client supports **as-of snapshot reads** directly on top-level client methods through a `snapshotMs` parameter.
-
-For point reads:
+Protocol failures throw `KahunaException`. Read `ErrorDomain` first, then the code for that domain: `LockErrorCode`, `KeyValueErrorCode`, or `SequenceErrorCode`. `ErrorCodeName` gives the code's name for logs. Inspect the codes instead of matching exception text.
 
 ```csharp
 using Kahuna.Client;
 using Kahuna.Shared.KeyValue;
 
-var client = new KahunaClient("https://node1:8082");
+try
+{
+    await using KahunaTransactionSession session = await client.StartTransactionSession(
+        new KahunaTransactionOptions { AdmissionWaitMs = 2_000 }
+    );
+    // ...
+}
+catch (KahunaException ex) when (ex.ErrorDomain == KahunaErrorDomain.KeyValue
+                                  && ex.KeyValueErrorCode == KeyValueResponseType.AdmissionRefused)
+{
+    // No transaction was started: back off and retry.
+}
+```
 
-KahunaKeyValue latest = await client.GetKeyValue(
-    "users/000100",
-    KeyValueDurability.Persistent
-);
+Client methods accept a `CancellationToken`. On the gRPC transport, a batched call with no token deadline uses `DefaultOperationTimeout` and surfaces an `OperationCanceledException` when it expires. A timeout does not tell you whether the server applied the operation.
+
+## Locks
+
+`GetOrCreateLock` acquires a [lease](/docs/glossary/#lease) on a resource name and returns a `KahunaLock`. Dispose it with `await using` to release the lock when the method ends. Pass `wait` and `retry` to keep trying while the lock is held by someone else; frequent retries suit short critical sections under heavy contention, where the lock changes hands quickly:
+
+```csharp
+using Kahuna.Client;
+
+public async Task UpdateBalance(KahunaClient client, string userId)
+{
+    // hold the lease for 5 seconds (unless extended),
+    // retry every 150 milliseconds for up to 10 seconds if the lock is not available
+
+    await using KahunaLock myLock = await client.GetOrCreateLock(
+        "balance-" + userId,
+        expiry: TimeSpan.FromSeconds(5),
+        wait: TimeSpan.FromSeconds(10),
+        retry: TimeSpan.FromMilliseconds(150),
+        durability: LockDurability.Persistent
+    );
+
+    if (myLock.IsAcquired)
+    {
+        // implement exclusive logic here
+    }
+    else
+    {
+        Console.WriteLine("Someone else has the lock!");
+    }
+
+    // myLock is automatically released after leaving the method
+}
+```
+
+Without `wait` and `retry`, the call makes a single attempt and gives up immediately. `durability` defaults to `LockDurability.Persistent`: the lock state is committed by a [quorum](/docs/glossary/#quorum) (a majority) of the [partition](/docs/glossary/#partition)'s replicas, so it survives the loss of a minority of those replicas. See [durability levels](/docs/architecture/durability-levels/).
+
+Use `myLock.FencingToken` so that a client that lost its lease cannot overwrite newer work. The protected record stores the highest token it accepted, and the check and the write must happen in one step: reading the stored token in application code and saving afterwards leaves a gap in which another holder can write. When the protected record lives in Kahuna, pass the token to a [Kahuna Script](/docs/scripts/) that compares and writes in one transaction:
+
+```csharp
+KahunaTransactionScript fencedWrite = client.LoadTransactionScript("""
+begin
+  let fence = get @fence_key
+  if fence != null then
+    if to_int(@token) < to_int(fence) then
+      throw "stale token"
+    end
+  end
+  set @fence_key @token
+  set @data_key @value
+  commit
+end
+""");
+
+await fencedWrite.Run([
+    new() { Key = "@fence_key", Value = $"balance-{userId}/fence" },
+    new() { Key = "@data_key", Value = $"balance-{userId}" },
+    new() { Key = "@token", Value = myLock.FencingToken.ToString() },
+    new() { Key = "@value", Value = newBalance.ToString() }
+]);
+```
+
+A stale token makes `Run` throw a `KahunaException` (`KeyValueErrorCode == KeyValueResponseType.Errored`, message `stale token at line 5`), and neither key changes. See [Fencing Tokens](/docs/distributed-locks/fencing-tokens/) for when a resource outside Kahuna must do this check itself.
+
+`myLock.TryExtend(TimeSpan)` returns `(true, fencingToken)` when the lease was extended. The server extends only for the current owner and keeps the token unchanged, so a lost lock shows up as a failed extend: a `KahunaException` with a `LockErrorCode` such as `InvalidOwner` or `LockDoesNotExist`. Stop the protected work when it happens. `myLock.GetInfo()` returns the current owner and expiry. See [Distributed Locks](/docs/distributed-locks/) for the full API and the [leader election recipe](/docs/recipes/leader-election/) for a renewal loop.
+
+## Key/Value
+
+### Snapshot Reads
+
+Top-level read methods take a `snapshotMs` parameter for as-of snapshot reads:
+
+```csharp
+using Kahuna.Client;
+using Kahuna.Shared.KeyValue;
+
+KahunaKeyValue latest = await client.GetKeyValue("users/000100", KeyValueDurability.Persistent);
 
 KahunaKeyValue sameSnapshot = await client.GetKeyValue(
     "users/000100",
@@ -396,58 +242,15 @@ KahunaKeyValue sameSnapshot = await client.GetKeyValue(
 );
 ```
 
-`LastModified` is the Unix-epoch millisecond timestamp at which that revision was committed. It can be reused as a snapshot anchor for later reads.
+`LastModified` is the Unix-epoch millisecond timestamp at which that [revision](/docs/glossary/#revision) was committed. It can be reused as a snapshot anchor for later reads. The same parameter is available on `ExistsKeyValue(...)`, `GetByBucket(...)`, `ScanAllByPrefix(...)`, `GetByRange(...)`, and `ScanByRange(...)`.
 
-The same snapshot parameter is also available on:
+For exact archived revisions, use `GetKeyValueRevision(...)` when you know the precise revision number; use `snapshotMs` when you want the value visible at a specific historical time. When a historical view needs to stay readable for a long time, acquire a [snapshot hold](#snapshot-holds).
 
-- `ExistsKeyValue(...)`
-- `GetByBucket(...)`
-- `ScanAllByPrefix(...)`
-- `GetByRange(...)`
-- `ScanByRange(...)`
+### No-Revision Writes
 
-When a historical view needs to stay readable for a long time, acquire a [snapshot hold](/docs/distributed-keyvalue-store/snapshot-holds/) so persistent revision cleanup does not prune the versions needed by that timestamp.
+For cache-style keys that only need the latest value, set a key without archiving a historical revision entry:
 
 ```csharp
-using Kommander.Time;
-
-long snapshotMs = latest.LastModified;
-HLCTimestamp timestamp = new(0, snapshotMs, uint.MaxValue);
-
-(KeyValueResponseType type, string holdId, HLCTimestamp leaseExpiry) =
-    await client.AcquireSnapshotHold(
-        holderId: "analytics-branch",
-        timestamp,
-        leaseMs: 300_000
-    );
-
-if (type != KeyValueResponseType.Set)
-    throw new InvalidOperationException($"Could not acquire snapshot hold: {type}");
-
-try
-{
-    KahunaKeyValue historical = await client.GetKeyValue(
-        "users/000100",
-        KeyValueDurability.Persistent,
-        snapshotMs: snapshotMs
-    );
-}
-finally
-{
-    await client.ReleaseSnapshotHold(holdId);
-}
-```
-
-## No-Revision Writes
-
-For cache-style keys that only need the latest value, the client can set a key without archiving a historical revision entry:
-
-```csharp
-using Kahuna.Client;
-using Kahuna.Shared.KeyValue;
-
-var client = new KahunaClient("https://node1:8082");
-
 KahunaKeyValue result = await client.SetKeyValueNoRevision(
     "cache/user/1001",
     System.Text.Encoding.UTF8.GetBytes("""{"name":"Ada"}"""),
@@ -456,47 +259,26 @@ KahunaKeyValue result = await client.SetKeyValueNoRevision(
 );
 ```
 
-The current revision still advances and latest reads still work. What changes is the historical record: the revision created by this write is not available through `GetKeyValueRevision(...)` or snapshot reads that need that archived version.
+To compose it with other options, pass `flags: KeyValueFlags.SetIfNotExists | KeyValueFlags.SetNoRevision` to `SetKeyValue(...)`.
 
-You can also use the flag directly when you need to compose options:
+The current revision still advances and latest reads still work. What changes is the historical record: the revision created by this write is not available through `GetKeyValueRevision(...)` or snapshot reads that need that archived version. Use no-revision writes to reduce memory and disk write amplification when Kahuna is acting as a pure distributed key/value cache. Use normal writes for audit history, `GetKeyValueRevision(...)`, and point-in-time reads.
 
-```csharp
-KahunaKeyValue refreshed = await client.SetKeyValue(
-    "cache/session/abc",
-    "active",
-    expiryTime: 300000,
-    flags: KeyValueFlags.SetIfNotExists | KeyValueFlags.SetNoRevision,
-    durability: KeyValueDurability.Persistent
-);
-```
-
-Use no-revision writes to reduce memory and disk write amplification when Kahuna is acting as a pure distributed key/value cache. Use normal writes for audit history, `GetKeyValueRevision(...)`, and point-in-time reads.
-
-## Null and Empty Values
+### Null and Empty Values
 
 Kahuna preserves the difference between a key with no payload and a key whose payload is zero bytes. In .NET, pass `null` for no payload and `Array.Empty<byte>()` for an empty byte array:
 
 ```csharp
-await client.SetKeyValue("profile/empty-payload", null);
+await client.SetKeyValue("profile/empty-payload", (byte[]?)null);
 await client.SetKeyValue("profile/zero-bytes", Array.Empty<byte>());
 ```
 
-REST encodes that distinction as JSON `null` versus an empty base64 string. gRPC uses bytes-field presence. This matters for compare-value operations and for applications that use a present-but-empty payload as a meaningful value.
+This matters for compare-value operations and for applications that use a present-but-empty payload as a meaningful value.
 
-## Ordered Range Reads
+### Ordered Range Reads
 
-For ordered key spaces such as `users/000001` through `users/999999`, you can now use the top-level client directly to read a bounded ordered slice:
+For ordered key spaces such as `users/000001` through `users/999999`, `GetByRange(...)` reads one bounded page and `ScanByRange(...)` streams a larger range:
 
 ```csharp
-using Kahuna.Client;
-using Kahuna.Shared.KeyValue;
-
-var client = new KahunaClient([
-    "https://node1:8082",
-    "https://node2:8082",
-    "https://node3:8082"
-]);
-
 List<KahunaKeyValue> page = await client.GetByRange(
     prefix: "users",
     startKey: "users/000100",
@@ -507,58 +289,6 @@ List<KahunaKeyValue> page = await client.GetByRange(
     durability: KeyValueDurability.Persistent
 );
 
-foreach (KahunaKeyValue item in page)
-    Console.WriteLine($"{item.Key} -> {item.ValueAsString()}");
-```
-
-If you need transactional locking or interactive read/write behavior around the range read, use a transaction session:
-
-```csharp
-using System.Text;
-using Kahuna.Client;
-using Kahuna.Shared.KeyValue;
-
-var client = new KahunaClient([
-    "https://node1:8082",
-    "https://node2:8082",
-    "https://node3:8082"
-]);
-
-await using KahunaTransactionSession session = await client.StartTransactionSession(
-    new KahunaTransactionOptions
-    {
-        Locking = KeyValueTransactionLocking.Optimistic,
-        Timeout = 5000
-    }
-);
-
-KeyValueGetByRangePageResult page = await session.GetByRange(
-    prefix: "users",
-    startKey: "users/000100",
-    startInclusive: true,
-    endKey: "users/000200",
-    endInclusive: false,
-    limit: 100,
-    durability: KeyValueDurability.Persistent
-);
-
-foreach (KeyValueGetByBucketItem item in page.Items)
-    Console.WriteLine($"{item.Key} -> {Encoding.UTF8.GetString(item.Value)}");
-```
-
-This is the right read pattern when a key space is modeled as an ordered range instead of a single bucket. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for the routing model and trade-offs.
-
-For top-level client reads, `snapshotMs` pins the read to one historical snapshot. For transaction-session range reads, `readTimestamp` does the same thing at the session API boundary.
-
-When `readTimestamp` is set, the range read behaves as a **historical snapshot**. It does not switch into read-your-own-writes mode just because the session has a transaction ID. If a key existed at `T` and was updated later, the read returns the version visible at `T`; keys inserted after `T` stay hidden.
-
-For exact archived revisions, the client still exposes `GetKeyValueRevision(...)`. Use that when you know the precise revision number; use `snapshotMs` when you want the value visible at a specific historical time.
-
-## Streaming Range Reads
-
-When you want to stream a larger ordered range instead of materializing one bounded page, use `ScanByRange(...)`:
-
-```csharp
 await foreach (KahunaKeyValue item in client.ScanByRange(
     prefix: "users",
     startKey: "users/000100",
@@ -574,18 +304,42 @@ await foreach (KahunaKeyValue item in client.ScanByRange(
 }
 ```
 
-This keeps fetching server-side pages behind the async sequence while preserving one historical snapshot when `snapshotMs` is non-zero. Large range scans can read keys that currently live only on disk without forcing every scanned key back into the in-memory cache.
+`ScanByRange(...)` keeps fetching server-side pages behind the async sequence while preserving one historical snapshot when `snapshotMs` is non-zero. Large range scans can read keys that currently live only on disk without forcing every scanned key back into the in-memory cache. If a page keeps returning retryable state (a moving range, a leadership change, a restore, or an undecided transaction [write intent](/docs/glossary/#write-intent)), the scan fails with a retryable error instead of scanning forever. Back off briefly and retry.
 
-If one server-side page keeps returning retryable state because a range is moving, leadership is changing, restore is in progress, or an undecided transaction intent blocks visibility, Kahuna fails the page with a retryable error instead of scanning forever. Back off briefly and retry the scan.
+A transaction session also exposes `GetByRange(...)`, which returns a `KeyValueGetByRangePageResult` and can take a range lock; see [ordered range reads inside a transaction](/docs/distributed-keyvalue-store/transactions/#using-ordered-range-reads-inside-a-transaction) and [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/).
 
-## Watch Persistent Key Changes
+### Batch Operations
 
-`WatchKeyValues` streams committed sets, deletes, and expiry extensions for a persistent key, prefix, or range. Open the watch before reading the initial state: the returned watch is registered, but does not include a snapshot of existing values.
+The client exposes `SetManyKeyValues(...)`, `DeleteManyKeyValues(...)`, `GetManyKeyValues(...)`, and `ExistsManyKeyValues(...)`:
 
 ```csharp
-using Kahuna.Client;
-using Kahuna.Shared.KeyValue;
+List<KahunaKeyValue> setResults = await client.SetManyKeyValues([
+    new()
+    {
+        Key = "services/auth",
+        Value = System.Text.Encoding.UTF8.GetBytes("node1"),
+        ExpiresMs = 30000,
+        Flags = KeyValueFlags.SetNoRevision,
+        Durability = KeyValueDurability.Persistent
+    }
+]);
+```
 
+- `KahunaSetKeyValueRequestItem` supports `Key`, `Value`, `ExpiresMs`, `Flags`, `CompareValue`, `CompareRevision`, and `Durability`.
+- `KahunaDeleteKeyValueRequestItem` supports `Key` and `Durability`.
+- `KahunaGetManyKeyValuesRequestItem` supports `Key`, optional `Revision`, and `Durability`.
+
+`DeleteKeyValue(...)` and `DeleteManyKeyValues(...)` return the revision of the [tombstone](/docs/glossary/#tombstone) (delete marker) created by the delete. For a key at revision `0`, a successful delete returns revision `1`, and a later set returns revision `2`.
+
+Set `Flags = KeyValueFlags.SetNoRevision` for batch cache writes where old values are not needed. Combine it with conditional flags when the write should still be guarded by existence, value, or revision checks.
+
+Persistent batch writes benefit from [partition write coalescing](/docs/architecture/partition-write-coalescing/): Kahuna can combine direct writes for the same [Raft](/docs/glossary/#raft) partition into fewer Raft proposals, even when they come from different client requests. A batch is not atomic; use a transaction when all items must commit or roll back together.
+
+## Watches
+
+`WatchKeyValues` streams committed sets, deletes, and expiry extensions for a persistent key, prefix, or range:
+
+```csharp
 await using KahunaWatch watch = await client.WatchKeyValues(
     new KeyValueWatchRequest(
         KeyValueWatchScope.ForPrefix("config/prod/search/"),
@@ -595,194 +349,141 @@ await using KahunaWatch watch = await client.WatchKeyValues(
 await foreach (KeyValueWatchFrame frame in watch.ReadAllAsync(cancellationToken))
 {
     if (frame.Event is { } change)
-    {
         Console.WriteLine($"Refresh {change.Key} ({change.Kind})");
-    }
     else if (frame.IsTerminal)
-    {
         Console.WriteLine($"Watch ended: {frame.Type}");
-    }
 }
 ```
 
-`KeysOnly: true` avoids sending value bytes when an event just triggers a cache refresh. Omit it to receive new values for sets. Dispose the watch to close its server streams. For a long-running consumer, treat a terminal frame as a possible gap: reopen the watch and refresh the state it covers. The [watch recipe](/docs/recipes/watch-key-changes/) shows that loop for a feature flag.
+Open the watch before reading the initial state, and treat a terminal frame as a possible gap. `WatchKeyValues(request, autoResume: true)` can resume some interrupted streams from progress watermarks when every server runs with a positive `--commit-admission-lag-ms`. See [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/) for delivery rules and history holds, and the [watch recipe](/docs/recipes/watch-key-changes/) for a refresh loop.
 
-With `WatchKeyValues(request, autoResume: true)`, the client can resume some interrupted streams from progress watermarks. This requires a positive `--commit-admission-lag-ms` on every server; without it, the watch has no resume cursor. A `HistoryUnavailable` frame still requires a new snapshot. See [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/) for delivery rules and history holds.
+## Scripts
 
-## Batch Key/Value Operations
-
-The client also exposes batch methods for common key/value work:
-
-- `SetManyKeyValues(...)`
-- `DeleteManyKeyValues(...)`
-- `GetManyKeyValues(...)`
-- `ExistsManyKeyValues(...)`
-
-Example:
+`ExecuteKeyValueTransactionScript` runs a [Kahuna Script](/docs/scripts/) on the server. Pass dynamic values as parameters instead of concatenating them into the script text. The server can then reuse the execution plan across calls, and the script is safe from injection:
 
 ```csharp
-using Kahuna.Client;
-using Kahuna.Shared.KeyValue;
+const string script = """
+let inventory = get @inventory_key
+let available = to_int(inventory)
+let requested = to_int(@requested_amount)
+if available >= requested then
+  set @inventory_key available - requested
+  return 1
+else
+  return 0
+end
+""";
 
-List<KahunaKeyValue> setResults = await client.SetManyKeyValues([
-    new()
-    {
-        Key = "services/auth",
-        Value = System.Text.Encoding.UTF8.GetBytes("node1"),
-        ExpiresMs = 30000,
-        Flags = KeyValueFlags.SetNoRevision,
-        Durability = KeyValueDurability.Persistent
-    },
-    new()
-    {
-        Key = "services/payments",
-        Value = System.Text.Encoding.UTF8.GetBytes("node2"),
-        ExpiresMs = 30000,
-        Flags = KeyValueFlags.SetNoRevision,
-        Durability = KeyValueDurability.Persistent
-    }
+var result = await client.ExecuteKeyValueTransactionScript(
+    script,
+    null,
+    [
+        new() { Key = "@inventory_key", Value = userInventoryKey },
+        new() { Key = "@requested_amount", Value = "100" }
+    ]
+);
+
+Console.WriteLine("Result={0}", result.FirstValueAsString);
+```
+
+Avoid `ExecuteKeyValueTransactionScript("SET " + key + " " + value)`; prefer `"SET @key @value"` with `@key` and `@value` parameters.
+
+Script results expose `Values`, where each item carries the key, value, revision, expiration, and last-modified timestamp returned by the script. `FirstValue`, `FirstValueAsString`, and `FirstRevision` are convenience accessors for the first returned item.
+
+For scripts that run often, load them once during initialization with `client.LoadTransactionScript(script)` and call `Run(parameters)` on the returned `KahunaTransactionScript`. This avoids re-parsing and re-planning on every call:
+
+```csharp
+KahunaTransactionScript checkSession = client.LoadTransactionScript("""
+    let session = get @session_key
+    if not found then
+     return 0
+    end
+    set @session_key session ex to_int(@ttl_ms)
+    return 1
+    """);
+
+var result = await checkSession.Run([
+    new() { Key = "@session_key", Value = sessionKey },
+    new() { Key = "@ttl_ms", Value = ttlMs }
 ]);
-
-List<KahunaKeyValue> getResults = await client.GetManyKeyValues([
-    new() { Key = "services/auth", Durability = KeyValueDurability.Persistent },
-    new() { Key = "services/payments", Durability = KeyValueDurability.Persistent }
-]);
 ```
 
-Request item notes:
+The script rewrites the session value to apply the new TTL, so the key's revision advances. To change only the expiry, use `extend @session_key 1800000`; `extend` takes an integer literal, not a placeholder.
 
-- `KahunaSetKeyValueRequestItem` supports `Key`, `Value`, `ExpiresMs`, `Flags`, `CompareValue`, `CompareRevision`, and `Durability`
-- `KahunaDeleteKeyValueRequestItem` supports `Key` and `Durability`
-- `KahunaGetManyKeyValuesRequestItem` supports `Key`, optional `Revision`, and `Durability`
+Both `ExecuteKeyValueTransactionScript(..., priority: TransactionPriority.Background)` and `Run(TransactionPriority.High, parameters)` accept an admission priority. Priority matters only when the server has enabled transaction admission ceilings; otherwise it is recorded for metrics and the script starts immediately. See [Transaction Priority Admission](/docs/distributed-keyvalue-store/transaction-priority-admission/).
 
-`DeleteKeyValue(...)` and `DeleteManyKeyValues(...)` return the tombstone revision created by the delete. For a key at revision `0`, a successful delete returns revision `1`, and a later set returns revision `2`.
+## Interactive Transactions
 
-Set `Flags = KeyValueFlags.SetNoRevision` for batch cache writes where old values are not needed. Combine it with conditional flags when the write should still be guarded by existence, value, or revision checks.
-
-Persistent batch writes also benefit from [partition write coalescing](/docs/architecture/partition-write-coalescing/). Kahuna can combine direct writes for the same Raft partition into fewer Raft proposals, even when they come from different client requests. This improves bursts where keys share a bucket or key-space. It does not make a batch atomic; use a transaction when all items must commit or roll back together.
-
-## Key-Range Administration
-
-For ordered key spaces, the client exposes key-range administration over both REST and gRPC transports.
+`StartTransactionSession` opens a `KahunaTransactionSession` for multi-key work written in C#, over gRPC or REST. `RetryableTransaction` starts a fresh transaction for each attempt and retries `Aborted`, `MustRetry`, and `AlreadyLocked` with a short jittered backoff:
 
 ```csharp
-KahunaRegisterKeyRangeResponse registered =
-    await client.RegisterKeyRange("users");
-
-Console.WriteLine($"{registered.Status} {registered.RoutingMode}");
-```
-
-Registration changes routing mode on the node that receives the call and seeds the replicated whole-space descriptor if needed. In a multi-node cluster, register the key space on every node. The CLI does this fan-out automatically when you pass multiple endpoints.
-
-Inspect the range map:
-
-```csharp
-KahunaRangeMapResponse ranges = await client.GetRanges("users");
-
-foreach (var keySpace in ranges.KeySpaces)
+KahunaTransactionOptions txOptions = new()
 {
-    Console.WriteLine($"{keySpace.KeySpace}: {keySpace.RoutingMode}");
-    foreach (var range in keySpace.Descriptors)
-        Console.WriteLine($"{range.StartKey ?? "-inf"}..{range.EndKey ?? "+inf"} -> {range.PartitionId}");
-}
-```
+    Locking = KeyValueTransactionLocking.Pessimistic,
+    Timeout = 5000
+};
 
-Force a split at an exact key:
-
-```csharp
-KahunaSplitRangeResponse split =
-    await client.SplitRange("users", "users/0500");
-
-if (!split.Determinate)
+await client.RetryableTransaction(txOptions, async (session, cancellationToken) =>
 {
-    KahunaRangeMapResponse refreshed = await client.GetRanges("users");
-    // Inspect refreshed before deciding whether the split happened.
-}
-```
+    KahunaKeyValue balance1 = await session.GetKeyValue(userA);
+    KahunaKeyValue balance2 = await session.GetKeyValue(userB);
 
-Run the merge pass on demand:
-
-```csharp
-KahunaMergeRangesResponse merged = await client.MergeRanges();
-Console.WriteLine($"{merged.Status}: {merged.Merges}");
-```
-
-Remove a key space from range routing:
-
-```csharp
-KahunaRemoveKeyRangeResponse removed =
-    await client.RemoveKeyRange("users");
-```
-
-Use key-range administration only for key spaces intentionally modeled as ordered ranges. See [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for routing behavior, split/merge outcomes, and trade-offs.
-
-## Transport Notes
-
-Some client features currently require the gRPC transport:
-
-- `GetManyKeyValues(...)` is not available over the REST transport
-- `ExistsManyKeyValues(...)` is not available over the REST transport
-
-If you call those APIs through the REST transport, the client throws `NotSupportedException`.
-
-### Specify durability type
-
-You can also specify the desired durability type when acquiring a lock:
-
-```csharp
-using Kahuna.Client;
-
-public async Task UpdateBalance(KahunaClient client, string userId)
-{
-    // acquire a lock with persistent durability, ensuring that the lock state is
-    // replicated across all nodes in the Kahuna cluster
-    // in case of failure or network partition, the lock state is guaranteed to be durable
-
-    await using KahunaLock myLock = await client.GetOrCreateLock(
-        "balance-" + userId,
-        TimeSpan.FromSeconds(300), // lock for 5 mins
-        durability: LockDurability.Persistent
-    );
-
-    if (myLock.IsAcquired)
+    if (balance1.ValueAsLong() >= 50)
     {
-        Console.WriteLine("Lock acquired with strong consistency!");
-
-        // implement exclusive logic here
-    }
-    else
-    {
-        Console.WriteLine("Someone else has the lock!");
+        await session.SetKeyValue(userA, (balance1.ValueAsLong() - 50).ToString());
+        await session.SetKeyValue(userB, (balance2.ValueAsLong() + 50).ToString());
     }
 
-    // myLock is automatically released after leaving the method
-}
+    await session.Commit();
+});
 ```
 
-Learn more about the supported [durabilities](/docs/architecture/durability-levels.md).
+Because `MustRetry` can represent an unknown commit outcome, use `RetryableTransaction` only for business operations safe to repeat. Retry an unresolved durable finalize with the same session identity.
 
-## Sequences: Usage & Examples
+Call `Commit` explicitly. Disposing a still-pending session rolls it back, so `await using` is a safety net for exceptions and early returns. After `Commit` or `Rollback` starts, do not issue more reads or writes through the same session. The session exposes `Status`, `TransactionId`, `Handle`, and `RecordAnchorKey` for diagnostics.
 
-The .NET client exposes Kahuna's distributed sequencer for named, monotonically increasing values.
+`KahunaTransactionOptions`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `Locking` | `Pessimistic` | Chooses pessimistic or optimistic concurrency behavior. Pessimistic sessions acquire locks before or during operations. Optimistic sessions validate reads and write intents at commit. |
+| `Timeout` | server default when `0` | Maximum transaction duration in milliseconds. Use short timeouts for interactive work so abandoned sessions are cleaned up quickly. |
+| `AdmissionWaitMs` | server default when `0` | Maximum time to wait for an admission slot before the transaction starts. The server clamps it to `MaxAdmissionWaitMs`. |
+| `AsyncRelease` | `false` | Allows eligible post-commit cleanup to continue in the background. Leave it off when prompt lock cleanup matters. |
+| `AutoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit `Commit`. Disposal of a pending session rolls back. |
+| `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. Optimistic locking validates its read set at commit even when this value is `None`. |
+| `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical [HLC](/docs/glossary/#hybrid-logical-clock-hlc) timestamp for transaction reads. It is a snapshot view, not read-your-own-writes, and cannot be combined with `TrackAndValidate`. |
+| `DecisionDurability` | `BestEffort` | Under either policy, persistent modifications use a [canonical transaction record](/docs/internals/transaction-lifecycle/#basic-concepts) (the authoritative commit or abort decision) and durable prepared intents. Explicit `Durable` rejects ephemeral modified keys. |
+| `Priority` | `Normal` | Admission priority used when the server has enabled `MaxConcurrentSessions`. It affects when the session starts, not how it commits. |
+| `ConflictPolicy` | `Normal` | Set to `Yield` for retryable maintenance work that should let foreground writers take over point-key intents instead of failing. |
+
+`Commit(...)` and `Rollback(...)` return `true` when the server reaches the requested terminal outcome. A `false` result means the final outcome is not known yet: retry the same finalize action with the same session handle and treat it as uncertainty rather than a conflict. Other terminal outcomes are reported as `KahunaException`; inspect `KeyValueErrorCode`:
+
+| Result | Meaning |
+|--------|---------|
+| `Committed` | The transaction committed and the session is complete. |
+| `RolledBack` | Rollback cleanup was acknowledged and the session is complete. |
+| `MustRetry` | Retry commit or rollback with the same session. Do not add more operations. |
+| `Aborted` | Start a new transaction if the business operation should be retried. |
+| `AlreadyLocked` | Another transaction holds a conflicting lock. Retry through `RetryableTransaction(...)` or back off manually. |
+| `Errored` | The handle is unknown, expired, or the outcome is unavailable. Treat it as an application-level uncertainty. |
+
+The SDK assigns a stable operation ID to each transaction-scoped call, so a retried operation is not applied twice. Pessimistic point-key operations retry transient lock-acquire refusals inside the session for a short bounded window before returning `MustRetry`. The active interactive session is memory-resident: if it disappears before a canonical record is installed, retry the business operation from a new transaction.
+
+See [Transactions](/docs/distributed-keyvalue-store/transactions/) for locking modes, prefix and range locks, durable decisions, and snapshot sessions; [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) for visibility and locks lost during failover; [Yielding Transactions](/docs/distributed-keyvalue-store/yielding-transactions/); and [Distributed Transactions](/docs/architecture/distributed-transactions/) for the coordinator lifecycle.
+
+## Sequences
+
+The client exposes Kahuna's [distributed sequencer](/docs/distributed-sequencer/) for named, monotonically increasing values:
 
 ```csharp
-using Kahuna.Client;
 using Kahuna.Shared.Sequences;
-
-var client = new KahunaClient("https://localhost:8082");
 
 KahunaSequence sequence = await client.CreateSequence(
     "orders",
     initialValue: 0,
     increment: 1,
-    maxValue: null,
-    blockSize: null,
     durability: SequenceDurability.Persistent
-);
-
-KahunaSequence updated = await client.UpdateSequence(
-    "orders",
-    new SequenceUpdate(CurrentValue: 5000, BlockSize: 100)
 );
 
 long orderId = await client.NextSequenceValue(
@@ -795,453 +496,14 @@ KahunaSequenceRange range = await client.ReserveSequenceRange(
     count: 100,
     idempotencyKey: "import-batch-456"
 );
-
-KahunaSequence? current = await client.GetSequence("orders");
-bool deleted = await client.DeleteSequence("orders");
 ```
 
-Use idempotency keys when retrying allocation requests after a timeout. If the original request was committed, retrying with the same idempotency key returns the original allocation instead of consuming a new value.
+Use idempotency keys when retrying allocation requests after a timeout: a committed request retried with the same key returns the original allocation. `UpdateSequence`, `GetSequence`, and `DeleteSequence` complete the API; an update waits about one server `SequencerBlockLease` before returning. See [Sequencer Clients](/docs/distributed-sequencer/clients/) for every method and [Sequence Model](/docs/distributed-sequencer/model/) for update and retry behavior.
 
-`UpdateSequence` changes the reserved high-water mark, increment, initial value, max value, or per-sequence block size. It starts a new incarnation and waits about one server `SequencerBlockLease` before returning so stale owners cannot keep issuing from an old block after the update is reported as complete.
+## Snapshot Holds
 
-## Key/Values: Usage & Examples
+`AcquireSnapshotHold`, `RenewSnapshotHold`, `ReleaseSnapshotHold`, and `GetSnapshotFloor` keep the revisions needed by a historical timestamp from being pruned while you read them. These calls take no `nodeUrl` and rotate through the configured endpoints. See [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/) for a full .NET example.
 
-## Basic Usage
+## Cluster Administration
 
-...
-
-## Transactions
-
-Using the **C# client**, developers can execute both **Kahuna Scripts** and **interactive transactions**, depending on what best suits their use case.
-
-This flexibility allows for choosing between:
-
-- **Kahuna Scripts** for atomic, server-side logic with minimal latency.
-- **Interactive transactions** for full control using C# code and external libraries.
-
-Developers can switch between both approaches as needed to balance performance, maintainability, and complexity.
-
-### Scripts
-
-Kahuna Scripts can be loaded from their string representation and executed in C# like this:
-
-```csharp
-const string script = """
-let inventory_key = get @inventory_key
-let requested_amount = get @requested_amount
-
-let inventory = to_int(inventory_key)
-let requested = to_int(requested_amount)
-
-if current >= requested then
-  set inventory_key inventory - requested
-  return 1
-else
-  return 0
-end
-""";
-
-var result = await client.ExecuteKeyValueTransactionScript(
-    script,
-    null, 
-    [
-        new() { Key = "@inventory_key", Value = userInventoryKey },
-        new() { Key = "@requested_amount", Value = "100" }        
-    ]
-);
-
-Console.WriteLine("Result={0}", result.FirstValueAsString);
-
-```
-
-The recommended way to execute scripts is to pass all dynamic values as parameters, rather than embedding them directly in the script. This allows the server to reuse the execution plan across different calls with different inputs, improving performance and preventing security issues such as script injection.
-
-Scripts can also carry an admission priority. Priority matters only when the server has enabled transaction admission ceilings; otherwise it is recorded for metrics and the script starts immediately.
-
-```csharp
-var result = await client.ExecuteKeyValueTransactionScript(
-    script,
-    hash: null,
-    parameters: parameters,
-    priority: TransactionPriority.Background
-);
-```
-
-If you need a per-script admission wait, set it in the script's `begin (...)` options:
-
-```kahuna
-begin (priority="high", admissionWait=2000, timeout=10000)
-  set `orders/42/status` "processing"
-  commit
-end
-```
-
-Script results expose `Values`, where each item carries the key, value, revision, expiration, and last-modified timestamp returned by the script. `FirstValue`, `FirstValueAsString`, and `FirstRevision` are convenience accessors for the first returned item. REST and gRPC now return the same per-value result shape.
-
-Avoid this:
-
-```csharp
-await client.ExecuteKeyValueTransactionScript("SET " + key + " " + value);
-```
-
-Prefer this:
-
-```csharp
-await client.ExecuteKeyValueTransactionScript(
-    "SET @key @value", 
-    null, 
-    [
-        new() { Key = "@key", Value = key },
-        new() { Key = "@value", Value = value }        
-    ]
-);
-```
-
-This pattern leads to safer, faster, and more maintainable use of Kahuna Scripts.
-
-Another good practice is to load scripts during an initialization process so they can be reused many times later. This reduces memory usage and helps the server reuse the execution plan, improving performance and lowering overhead:
-
-```csharp
-public class SessionChecker
-{
-    private readonly KahunaTransactionScript kahunaScript;
-    
-    public SessionChecker(KahunaClient client)
-    {
-        const string myScript = """
-        let exists_key = exists @session_key
-        if exists_key then
-         extend @session_key @ttl_in_seconds
-         return 1
-        end
-        return 0
-        """;
-        
-        kahunaScript = client.LoadTransactionScript(myScript);
-    }
-    
-    public async Task<bool> CheckSession(string sessionKey, string ttlInSeconds)
-    {
-        var result = await kahunaScript.Run([
-            new() { Key = sessionKey, Value = ttlInSeconds }
-        ]);
-
-        var extended = result.FirstValueAsString ?? "0";
-
-        return extended == "1";
-    }
-}
-```
-
-By avoiding re-parsing and re-planning on every call, this approach makes script execution more efficient, especially in high-throughput scenarios. It also makes code easier to maintain by separating logic from runtime logic injection.
-
-Compiled scripts expose the same priority control:
-
-```csharp
-var result = await kahunaScript.Run(
-    TransactionPriority.High,
-    [
-        new() { Key = "@session_key", Value = sessionKey },
-        new() { Key = "@ttl_in_seconds", Value = ttlInSeconds }
-    ]
-);
-```
-
-### Interactive Transactions
-
-With interactive transactions, developers can execute transactional flows directly from C# without the need to use Kahuna Scripts.
-
-This gives programmers full control over the transaction logic using familiar language constructs, while still benefiting from Kahuna’s consistency guarantees, distributed coordination, and support for multi-key operations.
-
-Interactive sessions are available through the gRPC transport. The REST transport supports ordinary key/value operations, but it does not expose session start, commit, or rollback.
-
-Kahuna’s server-side transaction coordinator owns the transaction working set. The client keeps a session handle and sends operations through it, but commit and rollback do not rely on the client rebuilding a final list of touched keys. As each operation succeeds, the coordinator records confirmed reads, writes, locks, and cleanup state.
-
-That means the client code can stay focused on business logic:
-
-```csharp
-using Kahuna.Client;
-using Kahuna.Shared.KeyValue;
-
-await using KahunaTransactionSession session = await client.StartTransactionSession(
-    new KahunaTransactionOptions
-    {
-        Locking = KeyValueTransactionLocking.Optimistic,
-        Timeout = 5000
-    }
-);
-
-KahunaKeyValue balance1 = await session.GetKeyValue(userA);
-KahunaKeyValue balance2 = await session.GetKeyValue(userB);
-
-if (balance1.ValueAsLong() >= 50)
-{
-    await session.SetKeyValue(userA, balance1.ValueAsLong() - 50);
-    await session.SetKeyValue(userB, balance2.ValueAsLong() + 50);
-}
-
-await session.Commit();
-```
-
-Call `Commit` explicitly when the work should become visible. Disposing a still-pending session rolls it back, so `await using` is a safety net for exceptions and early returns. `AutoCommit` is carried on the transaction options for protocol compatibility, but interactive sessions still require an explicit `Commit`.
-
-The session exposes `Status`, `TransactionId`, `Handle`, and `RecordAnchorKey` for diagnostics and advanced integrations. Most applications should keep using the session object and let the SDK carry the routing identity.
-
-After `Commit` or `Rollback` starts, do not issue more reads or writes through the same session. Finalization closes the session to new operations, drains work already registered on the server, and then commits or rolls back from a frozen server-owned working set.
-
-In case of conflicts or encountering exclusive locks under pessimistic locking, transactions can be aborted so they can be retried on the client side.
-
-Two user-facing behaviors are worth knowing:
-
-- `GetByBucket(...)` inside a **pessimistic** session protects the whole bucket with a prefix lock, which blocks phantom inserts and conflicting writes under that prefix until the transaction finishes.
-- `GetByRange(...)` inside a **pessimistic** session protects only the requested interval with a range lock, which is the better fit for large ordered key spaces.
-
-The recommended approach is to use the built-in retry mechanism provided by Kahuna clients, which automatically retries aborted or retryable transactions using a short jittered backoff interval:
-
-```csharp
-KahunaTransactionOptions txOptions = new()
-{ 
-    Locking = KeyValueTransactionLocking.Pessimistic,
-    Timeout = 5000
-};
-
-await client.RetryableTransaction(txOptions, async (session, cancellationToken) =>
-{
-    KahunaKeyValue balance1 = await session.GetKeyValue(userA);
-    KahunaKeyValue balance2 = await session.GetKeyValue(userB);
-
-    if (balance1.ValueAsLong() >= 50)
-    {
-        await session.SetKeyValue(userA, balance1.ValueAsLong() - 50);
-        await session.SetKeyValue(userB, balance2.ValueAsLong() + 50);
-    }
-
-    await session.Commit();
-});
-```
-
-`RetryableTransaction(...)` starts a fresh transaction for each attempt and retries `Aborted`, `MustRetry`, and `AlreadyLocked`. Because `MustRetry` can represent an unknown commit outcome, use it only for business operations safe to repeat. Retry an unresolved durable finalize with the same session identity.
-
-#### Transaction Options
-
-`KahunaTransactionOptions` controls concurrency, timeout, read behavior, cleanup, and decision durability:
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `Locking` | `Pessimistic` | Chooses pessimistic or optimistic concurrency behavior. Pessimistic sessions acquire locks before or during operations. Optimistic sessions validate reads and write intents at commit. |
-| `Timeout` | server default when `0` | Maximum transaction duration in milliseconds. Use short timeouts for interactive work so abandoned sessions are cleaned up quickly. |
-| `AdmissionWaitMs` | server default when `0` | Maximum time to wait for an admission slot before the transaction starts. The server clamps it to `MaxAdmissionWaitMs`. |
-| `AsyncRelease` | `false` | Allows eligible post-commit cleanup to continue in the background. Leave it off when prompt lock cleanup matters. |
-| `AutoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit `Commit`. Disposal of a pending session rolls back. |
-| `ReadValidation` | `None` | Set to `TrackAndValidate` to record latest reads and validate them against revision or write-intent changes at commit. Optimistic locking validates its read set at commit even when this value is `None`. |
-| `ReadTimestamp` | `HLCTimestamp.Zero` | Uses a fixed historical HLC timestamp for transaction reads. It is a snapshot view, not read-your-own-writes, and cannot be combined with `TrackAndValidate`. |
-| `DecisionDurability` | `BestEffort` | Persistent modifications use a canonical record and durable prepared intents under either policy. Explicit `Durable` rejects ephemeral modified keys. |
-| `Priority` | `Normal` | Admission priority used when the server has enabled `MaxConcurrentSessions`. It affects when the session starts, not how it commits. |
-| `ConflictPolicy` | `Normal` | Set to `Yield` for retryable maintenance work that should let foreground writers take over point-key intents instead of failing. |
-
-Example with durable commit decisions:
-
-```csharp
-using Kahuna.Client;
-using Kahuna.Shared.KeyValue;
-
-KahunaTransactionOptions options = new()
-{
-    Locking = KeyValueTransactionLocking.Pessimistic,
-    Timeout = 10_000,
-    ReadValidation = ReadValidation.TrackAndValidate,
-    DecisionDurability = DecisionDurability.Durable,
-    Priority = TransactionPriority.High
-};
-
-await using KahunaTransactionSession session =
-    await client.StartTransactionSession(options, cancellationToken);
-
-await session.SetKeyValue(
-    "accounts/alice",
-    "90",
-    durability: KeyValueDurability.Persistent,
-    cancellationToken: cancellationToken
-);
-
-await session.SetKeyValue(
-    "accounts/bob",
-    "110",
-    durability: KeyValueDurability.Persistent,
-    cancellationToken: cancellationToken
-);
-
-bool committed = await session.Commit(cancellationToken);
-
-if (!committed)
-    throw new KahunaException("Commit must be retried", KeyValueResponseType.MustRetry);
-```
-
-Durable decision mode is different from persistent key durability:
-
-- `KeyValueDurability.Persistent` controls whether a value is replicated and stored persistently.
-- `DecisionDurability.Durable` rejects ephemeral modified keys. Persistent modifications use durable-intent finalization even under the default BestEffort policy.
-
-Durable decision mode rejects transactions that confirmed ephemeral modifications, because ephemeral values, prepared intents, and receipts cannot survive process loss. The active interactive session is still memory-resident; if it disappears before a canonical record is installed, retry the business operation from a new transaction.
-
-When a durable commit returns `true`, Kahuna has durably recorded the transaction decision. By default, value materialization and prepared-intent settlement may continue in the background. Kahuna's read and write paths resolve committed-but-unsettled intents through the canonical record, and recovery finishes settlement if a background run is lost. Recent servers materialize committed durable values by reference to prepared intents, so this behavior requires no client-side value replay. If commit returns `false` or throws `MustRetry`, retry the same commit operation and treat it as uncertainty rather than a conflict.
-
-#### Yielding Maintenance Transactions
-
-Use `ConflictPolicy = TransactionConflictPolicy.Yield` for background maintenance that should not block or fail foreground work:
-
-```csharp
-KahunaTransactionOptions options = new()
-{
-    Locking = KeyValueTransactionLocking.Pessimistic,
-    ConflictPolicy = TransactionConflictPolicy.Yield,
-    Timeout = 10_000
-};
-```
-
-A normal writer can take over a point-key intent owned by this transaction. The yielding transaction then aborts on a later touch of that key or at commit, and it never commits a key it lost. Prefix locks and range locks are refused for yielding sessions. See [Yielding Transactions](/docs/distributed-keyvalue-store/yielding-transactions/).
-
-#### Snapshot Reads in a Transaction Session
-
-`ReadTimestamp` gives the session a transaction-wide historical read timestamp for point, bucket, prefix, and range reads:
-
-```csharp
-using Kommander.Time;
-using Kahuna.Client;
-
-HLCTimestamp readTimestamp = new(0, 1718392012345, uint.MaxValue);
-
-await using KahunaTransactionSession session = await client.StartTransactionSession(
-    new KahunaTransactionOptions
-    {
-        ReadTimestamp = readTimestamp,
-        Timeout = 5000
-    }
-);
-
-KahunaKeyValue historical = await session.GetKeyValue(
-    "config/feature-x",
-    KeyValueDurability.Persistent
-);
-```
-
-When `ReadTimestamp` is set, reads behave as historical snapshot reads. Keys created after the timestamp are hidden, and keys updated after the timestamp return the older visible value. Do not combine a fixed `ReadTimestamp` with `ReadValidation.TrackAndValidate`, because a historical snapshot is not a latest-state read set.
-
-#### Operation Retries and Finalization Results
-
-The SDK assigns a stable operation ID to each transaction-scoped call. If the communication layer retries the same logical operation, Kahuna can recognize the retry and avoid applying the same mutation twice.
-
-`Commit(...)` and `Rollback(...)` return `true` when the server reaches the requested terminal outcome. A `false` result means the final outcome is not known yet and the same finalize action should be retried with the same session handle. Certain terminal outcomes are reported as `KahunaException`; inspect `KahunaException.KeyValueErrorCode` instead of matching exception text.
-
-Common result meanings:
-
-| Result | Meaning |
-|--------|---------|
-| `Committed` | The transaction committed and the session is complete. |
-| `RolledBack` | Rollback cleanup was acknowledged and the session is complete. |
-| `MustRetry` | Retry commit or rollback with the same session. Do not add more operations. |
-| `Aborted` | Start a new transaction if the business operation should be retried. |
-| `AlreadyLocked` | Another transaction holds a conflicting lock. Retry through `RetryableTransaction(...)` or back off manually. |
-| `Errored` | The handle is unknown, expired, or the outcome is unavailable. Treat it as an application-level uncertainty. |
-
-Pessimistic point-key operations retry transient lock-acquire refusals inside the session for a short bounded window before returning `MustRetry`. This reduces immediate retries during brief contention while still avoiding long waits inside a transaction timeout.
-
-Learn more about the coordinator lifecycle in [Distributed Transactions](/docs/architecture/distributed-transactions/) and [Transaction Lifecycle](/docs/internals/transaction-lifecycle/).
-
-#### Transaction Priority Admission
-
-`TransactionPriority` lets a client label latency-sensitive transaction work when a node is saturated:
-
-```csharp
-await using KahunaTransactionSession session =
-    await client.StartTransactionSession(new KahunaTransactionOptions
-    {
-        Priority = TransactionPriority.High,
-        Timeout = 10_000,
-        AdmissionWaitMs = 2_000
-    });
-```
-
-Available priorities are `Background`, `Low`, `Normal`, `High`, and `Critical`. `Normal` is the default. Priority is honored only when the server enables transaction admission ceilings. It does not preempt a running transaction or change consistency semantics.
-
-If the admission queue is full, or the caller's admission wait expires before a slot opens, the server returns `AdmissionRefused`. Retry with backoff; no transaction was started.
-
-See [Transaction Priority Admission](/docs/distributed-keyvalue-store/transaction-priority-admission/) for tuning and metrics.
-
-## Backup and Point-in-Time Restore
-
-Start the target Kahuna server with `--pitr-backup-dir` before using backup operations. The catalog belongs to the node selected by the client, so use a stable endpoint when building or inspecting an incremental chain.
-
-```csharp
-using Kahuna.Client;
-using Kahuna.Shared.Communication.Rest;
-
-var client = new KahunaClient("https://kahuna-1:8082");
-
-KahunaBackupInfo full = await client.TakeCoordinatedBackupAsync();
-
-KahunaBackupInfo incremental = await client.TakeIncrementalBackupAsync(
-    full.BackupId
-);
-
-List<KahunaBackupInfo> backups = await client.ListBackupsAsync();
-List<KahunaBackupInfo> chain = await client.GetBackupChainAsync(
-    incremental.BackupId
-);
-```
-
-Available methods:
-
-| Method | Purpose |
-|--------|---------|
-| `TakeFullBackupAsync()` | Create a full backup on the selected node |
-| `TakeCoordinatedBackupAsync()` | Create a full backup capped at a cluster-wide safe HLC timestamp |
-| `TakeIncrementalBackupAsync(parentBackupId)` | Append committed WAL changes to a backup chain |
-| `ListBackupsAsync()` | List manifests in the selected node's local catalog |
-| `GetBackupChainAsync(leafBackupId)` | Resolve and validate a chain from its full root through the selected leaf |
-| `RestoreAsync(leafBackupId, targetDir, targetTimeMs)` | Restore into a new directory on the selected server node |
-| `RunBackupGarbageCollectionAsync(dryRun)` | Sweep orphaned artifacts and enforce backup retention on the selected server node |
-
-Restore through the chain's natural end with `targetTimeMs: 0`:
-
-```csharp
-KahunaRestoreResponse restored = await client.RestoreAsync(
-    leafBackupId: incremental.BackupId,
-    targetDir: "/var/lib/kahuna/restored",
-    targetTimeMs: 0
-);
-
-Console.WriteLine($"Applied {restored.EntriesApplied} WAL entries");
-Console.WriteLine($"Restored to {restored.TargetDir}");
-Console.WriteLine($"Coverage: {restored.MinRecoverablePhysicalMs}..{restored.MaxRecoverablePhysicalMs}");
-```
-
-For point-in-time recovery, pass the target HLC physical component as Unix epoch milliseconds. The server treats the value as the inclusive end of that millisecond. `targetDir` refers to the server filesystem. The operation does not replace live state; start a fresh node with the restored directory.
-
-Run backup garbage collection directly, or preview it first:
-
-```csharp
-KahunaBackupGcResult preview =
-    await client.RunBackupGarbageCollectionAsync(dryRun: true);
-
-KahunaBackupGcResult applied =
-    await client.RunBackupGarbageCollectionAsync();
-
-Console.WriteLine($"Reclaimed {applied.BytesReclaimed} bytes");
-```
-
-Backup responses expose `RequestedKind`, `ActualKind`, and `SubstitutionReason` so callers can detect when an incremental request had to be replaced by a new full backup. Restore responses expose `Outcome`, `MinRecoverablePhysicalMs`, and `MaxRecoverablePhysicalMs` for typed handling and exact coverage checks.
-
-Backup listing entries also expose `ClusterId` and `CoordinatorNode` when the server wrote current-format manifests. In production, use these fields to confirm that all nodes are pointed at the same shared backup catalog and that coordinated backups are not scattered across node-local directories.
-
-See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recovery/) for server setup, node bootstrap, and restore constraints.
-
-## Transaction Visibility and Failover
-
-A first latest transactional `Get` or `Exists` pins a committed observation per key, including a committed unsettled intent. Later point operations can abort when a competing update makes that observation stale. These pins are distinct from an explicit read-only `ReadTimestamp`. A session stays on its original coordinator node across partition leadership changes, but actor-local staging and locks can be lost; staging-continuity validation and lock-grant term proofs can return terminal `Aborted` for an interactive session, or `MustRetry` for a script (`Lost staging: …` or `Lost lock: …`). Renewing a lost lock does not repair earlier reads; recorded range-lock lease lapses are also rejected without a term change. The lapse check does not cover expiry between one-phase validation and apply; grants from older nodes without term reporting remain unchecked. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/).
-
-## Lost Exclusion and Retryable Commit Checks
-
-An interactive transaction that loses a lock, staging, or the original write intent returns terminal `Aborted`; start a new session and recompute from new reads. A self-contained script maps this lost-exclusion abort to `MustRetry`, preserving its reason, so SDK retry handling can rerun the script as a new transaction. Detected data conflicts still return `Aborted`. This distinction does not turn a general `MustRetry` or a transport timeout into proof of rollback.
-
-Commit probes also fail closed with `MustRetry` when leadership, containment, or a peer response prevents proving a key clean or conflicting. An interactive durable finalize retains prepares for retry under the same transaction identity. Successful staged-intent probes hold the intent through commit instead of merely renewing its ordinary lease, and one-phase bundles fence the anchor leadership term before append. See [Staged Writes and Commit Probes](/docs/distributed-keyvalue-store/read-and-lock-semantics/#staged-writes-and-commit-probes) for semantics and metrics.
+Cluster membership, replica placement, leaving the cluster, key-range administration, and backup and point-in-time restore have their own page: [.NET Client: Cluster Administration](/docs/dotnet-client/administration/).

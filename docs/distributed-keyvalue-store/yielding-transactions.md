@@ -1,8 +1,8 @@
 # Yielding Transactions
 
-Yielding transactions are for background maintenance work that should never make foreground writes fail. Typical examples are bulk rewrites, backfills, migrations, and compaction-like sweeps.
+A backfill or migration that rewrites many keys competes with your application's own writes. By default, when a running transaction has staged a write to a key (a [write intent](/docs/glossary/#write-intent)), other writers to that key are blocked until it commits, rolls back, or expires. Background work can then make user-facing writes fail.
 
-By default, a live transactional write intent blocks other writers until it commits, rolls back, or expires. A yielding transaction changes that rule for point-key write intents: a normal foreground writer can take the key over, and the yielding transaction aborts instead.
+A yielding transaction reverses that rule for point-key write intents: a normal foreground writer can take the key over, and the yielding transaction aborts instead, so you can retry it later. Use it for background maintenance that should never make foreground writes fail, such as bulk rewrites, backfills, migrations, and compaction-like sweeps.
 
 ## When to Use It
 
@@ -64,7 +64,7 @@ If a normal writer updates `profiles/user-42` while this maintenance transaction
 
 A yielding transaction never commits a write to a key it already lost.
 
-Before finalization, Kahuna pins the surviving intents owned by the yielding transaction. A key that was taken over fails that pin step and aborts the whole transaction. Once an intent is pinned, foreground writers stop taking it over and receive the normal bounded wait/retry behavior because the yielding transaction is already finalizing.
+Before finalization, Kahuna pins (claims for commit) the surviving intents owned by the yielding transaction. A key that was taken over fails that pin step and aborts the whole transaction. Once an intent is pinned, foreground writers stop taking it over and receive the normal bounded wait/retry behavior because the yielding transaction is already finalizing.
 
 This pin step runs before every finalize shape, including one-phase durable commit, two-phase durable commit, and the in-memory ephemeral path.
 

@@ -1,6 +1,6 @@
 # Request Flow
 
-This page follows requests through a Kahuna node. It focuses on the internal path: transport, routing, actors, Raft, transaction coordination, and background persistence.
+Read this page when you diagnose request latency, unexpected forwarding between nodes, or a `MustRetry` result. It follows a request through a Kahuna node: transport, routing, [actors](/docs/glossary/#actor), [Raft](/docs/glossary/#raft), transaction coordination, and background persistence.
 
 ## Entry Points
 
@@ -21,13 +21,13 @@ The public transport layer parses the request and calls the `IKahuna` surface. F
 | Sequences | `SequencerManager` |
 | Backup and restore | `BackupService` |
 
-Clients may contact any node. If the receiving node is not the leader for the target partition, Kahuna routes or forwards the request to the current leader. With replica placement, the receiving node may also be a non-host for that partition; it resolves a hosting replica and forwards the request instead of rejecting it only because it has no local copy.
+Clients may contact any node. If the receiving node is not the leader for the target [partition](/docs/glossary/#partition), Kahuna routes or forwards the request to the current leader. With replica placement, the receiving node may also be a non-host for that partition; it resolves a hosting replica and forwards the request instead of rejecting it only because it has no local copy.
 
 When routing hints are enabled, successful key/value, lock, and sequence responses can include the client-reachable endpoint for the resolved owner. The hint is emitted after the server has already resolved the request, so it affects only later client endpoint selection.
 
 Forwarded requests carry a small hop budget. During elections or placement-map transitions, two nodes can briefly disagree about the right owner for a partition. When the hop budget is exhausted, Kahuna returns `MustRetry` instead of forwarding again, so clients retry after the routing view settles.
 
-Transaction priority admission runs only after this leader routing. Followers do not queue transaction starts they will not execute. When a script or interactive session is admitted after waiting, Kahuna starts it with the HLC timestamp from admission time, not from the time it first entered the queue.
+Transaction priority admission runs only after this leader routing. Followers do not queue transaction starts they will not execute. When a script or interactive session is admitted after waiting, Kahuna starts it with the [HLC](/docs/glossary/#hybrid-logical-clock-hlc) timestamp from admission time, not from the time it first entered the queue.
 
 ## Routing
 
@@ -70,7 +70,7 @@ sequenceDiagram
     Note over L: Key/value actor validates the write<br/>Partition write aggregator batches it
     L->>F: Raft ReplicateEntries
     F-->>L: Acknowledge (quorum)
-    Note over L,F: Raft commit. The write is now durable
+    Note over L,F: Raft commit. The write is now committed<br/>(process-loss durability also needs a persistent WAL)
     Note over L: KeyValueReplicator applies the entry<br/>to in-memory state
     L-->>R: Committed
     R-->>C: Success
@@ -78,24 +78,13 @@ sequenceDiagram
     W->>D: Flush to RocksDB, SQLite or memory
 ```
 
-The important boundary is Raft commit. A persistent write is not durable just because the local actor accepted it. The mutation becomes committed only after the partition's Raft group commits the log entry.
+The important boundary is Raft commit. A persistent write is not durable just because the local actor accepted it. The mutation becomes committed only after the partition's Raft group commits the log entry, and it survives process loss only when the Raft log uses persistent WAL storage with durable write settings.
 
-After commit, Kahuna applies the log entry to the in-memory state machine and queues materialized persistence. The background writer flushes the latest state and selected revision history to the configured backend. Later checkpoints allow Raft to compact older WAL entries that are no longer needed for normal recovery or PITR.
+After commit, Kahuna applies the log entry to the in-memory state machine and queues materialized persistence. The background writer flushes the latest state and selected revision history to the configured backend. Later checkpoints allow Raft to compact older [write-ahead log (WAL)](/docs/glossary/#write-ahead-log-wal) entries that are no longer needed for normal recovery or [point-in-time recovery (PITR)](/docs/glossary/#point-in-time-recovery-pitr).
 
 ## Ephemeral Key/Value Write
 
-An ephemeral write still routes through the responsible partition and actor, but it does not create durable storage guarantees.
-
-```text
-client
-  -> transport
-  -> KeyValuesManager
-  -> partition leader
-  -> ephemeral key/value actor
-  -> in-memory state
-```
-
-Ephemeral values are optimized for temporary data such as cache entries and sessions. They can expire or be evicted under memory pressure and should not be treated as restart-safe.
+An ephemeral write follows the same routing to the partition leader and its ephemeral key/value actor, but it updates only that leader's in-memory state, with no Raft proposal and no backend flush. See [Durability Levels](/docs/architecture/durability-levels/) for what ephemeral values survive.
 
 ## Reads and Snapshot Reads
 
@@ -131,7 +120,7 @@ When `MaxConcurrentTransactions` is enabled, multi-statement and explicit transa
 
 ## Interactive Transaction Operation
 
-Interactive transactions are gRPC-only at the client transport level. A session begins with a transaction handle that contains a transaction ID and coordinator key.
+Interactive transaction sessions are available over gRPC and REST. A session begins with a transaction handle that contains a transaction ID and coordinator key.
 
 When `MaxConcurrentSessions` is enabled, session start passes through the session admission gate. The session holds that slot until it commits, rolls back, or is reaped.
 
@@ -163,32 +152,16 @@ Finalization follows this shape:
 3. Freeze the server-owned working set.
 4. Split the working set into read-only, ephemeral, persistent, or mixed commit paths.
 5. Validate reads when the policy requires it.
-6. Prepare modified participants through two-phase commit.
+6. Prepare modified participants through [two-phase commit](/docs/glossary/#two-phase-commit-2pc).
 7. Decide commit or abort.
-8. Release locks, write intents, and MVCC read state.
+8. Release locks, [write intents](/docs/glossary/#write-intent), and [MVCC](/docs/glossary/#mvcc) read state.
 9. Retain the terminal outcome for a bounded idempotency window.
 
 A retryable finalization failure returns `MustRetry`. The session stays closed to new operations, and the caller should retry the same commit or rollback with the same handle.
 
 ## Durable Commit Decision Flow
 
-When `DecisionDurability.Durable` is used, the request flow adds a recoverable decision record for all-persistent write sets.
-
-```text
-freeze working set
-  -> build durable finalize input
-  -> initialize canonical transaction record and prepare anchor intents
-  -> replicate other prepared intents
-  -> validate staged bases and reads after the prepare barrier
-  -> confirm staged-base replica fences
-  -> compare-and-set the canonical record to Commit or Abort
-  -> return Committed after the durable decision when deferred settlement is enabled
-  -> materialize committed values or discard aborted intents in settlement
-```
-
-The canonical record is the durable authority. After it commits as `Commit`, Kahuna must not report a definite abort. With the default deferred settlement mode, the committed value may temporarily remain in a prepared intent. Reads, scans, and writes that encounter that intent resolve it through the canonical record instead of serving stale state.
-
-Persistent participants record completion receipts when their committed values are applied. Recovery uses those receipts to distinguish "already committed" from "unknown" after the original write intent is gone.
+When the frozen working set modifies persistent keys, finalization prepares replicated intents on every modified partition and records the outcome in one canonical transaction record, under either decision-durability policy. With the default deferred settlement, `Committed` returns once that record is durable, and reads that meet a still-pending intent resolve it through the record. See [Durable-Intent Two-Phase Commit](/docs/internals/transaction-lifecycle/#durable-intent-two-phase-commit) for the full sequence and [Completion Receipts](/docs/internals/transaction-lifecycle/#completion-receipts-and-range-movement) for how recovery proves a participant already committed.
 
 ## Recovery and Background Work
 

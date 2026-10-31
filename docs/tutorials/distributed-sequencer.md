@@ -3,24 +3,7 @@ import TabItem from '@theme/TabItem';
 
 # Tutorial: Distributed Sequencer
 
-A sequence gives several processes one shared source of increasing numbers, such as invoice, ticket, or order numbers, without duplicates, even when the processes run on different machines or retry after a timeout. See [Distributed Sequencer](/docs/distributed-sequencer/) for the concepts.
-
-<ArchDiagram
-  group="Sequence owner (partition leader)"
-  sources={[
-    {label: 'Worker A', icon: 'server'},
-    {label: 'Worker B', icon: 'server'},
-    {label: 'Worker C', icon: 'server'},
-  ]}
-  hub={{label: 'In-memory block 1..1000', icon: 'layers'}}
-  targets={[
-    {label: 'Raft commit', sub: 'Reserves 1..1000 once', icon: 'log'},
-    {label: 'Sequence record', sub: 'CurrentValue = 1000', icon: 'database'},
-  ]}
-  title="Workers A, B and C ask the sequence owner for values. The owner serves them from an in-memory block of 1 to 1000 that it reserved in one Raft commit, so the sequence record reports CurrentValue 1000."
-/>
-
-The node that owns the sequence reserves a block of values in one Raft commit and serves `next` calls from memory. `CurrentValue` therefore reports the end of the reserved block, not the last value handed out. See [Sequence Model and Allocation](/docs/distributed-sequencer/model/) for block sizes and gaps.
+A sequence works like a database identity column that several processes can share: one source of increasing numbers, such as invoice, ticket, or order numbers, without duplicates, even when the processes run on different machines or retry after a timeout. See [Distributed Sequencer](/docs/distributed-sequencer/) for the concepts.
 
 This tutorial shows how to create a sequence, allocate individual values, reserve ranges, and use idempotency keys for safe retries.
 
@@ -28,7 +11,7 @@ This tutorial shows how to create a sequence, allocate individual values, reserv
 
 Start `kahuna-cli` and create an `orders` sequence:
 
-```bash
+```text
 kahuna-cli> create-sequence orders 0 1
 r0 created orders current 0 increment 1 max -
 ```
@@ -41,7 +24,7 @@ The arguments are:
 
 With these defaults, the first allocated value is `1`.
 
-For a sequence that should commit every value individually, create it with a per-sequence block size of `1`:
+By default, Kahuna reserves values in blocks of 1000 and hands them out from memory. For a sequence that should commit every value individually, create it with a per-sequence block size of `1`:
 
 ```bash
 kahuna-cli --create-sequence invoices --initial-value 0 --increment 1 --block-size 1
@@ -49,7 +32,7 @@ kahuna-cli --create-sequence invoices --initial-value 0 --increment 1 --block-si
 
 ## Allocate One Value
 
-```bash
+```text
 kahuna-cli> next-sequence orders create-order-1001
 r1 next orders 1
 ```
@@ -60,7 +43,7 @@ The optional second argument is an idempotency key. If the client retries the sa
 
 Reserve five IDs for a worker:
 
-```bash
+```text
 kahuna-cli> reserve-sequence orders 5 worker-a-batch-1
 r2 reserved orders 2..6 count 5
 ```
@@ -69,12 +52,26 @@ The worker can now use `2`, `3`, `4`, `5`, and `6` locally without making anothe
 
 ## Inspect the Sequence
 
-```bash
+```text
 kahuna-cli> get-sequence orders
 r1 get orders current 1000 increment 1 max - block default incarnation 0
 ```
 
-`current 1000` means the highest reserved value is `1000`. With larger block sizes, `current` may be ahead of the last value your application consumed because the owner reserves blocks durably before handing values out.
+Workers A, B, and C ask the sequence owner for values. The owner serves them from an in-memory block it reserved in one Raft commit:
+
+```mermaid
+flowchart TD
+    A[Worker A] --> Block
+    B[Worker B] --> Block
+    C[Worker C] --> Block
+    subgraph Owner["Sequence owner (partition leader)"]
+        Block["In-memory block<br/>1..1000"]
+    end
+    Block --> Raft["Raft commit<br/>reserves 1..1000 once"]
+    Raft --> Record["Sequence record<br/>CurrentValue = 1000"]
+```
+
+`current 1000` means the highest reserved value is `1000`, not the last value handed out. The node that owns the sequence, the [leader](/docs/glossary/#leader-follower-and-learner) of its partition, reserves a block of values in one [Raft](/docs/glossary/#raft) commit and serves `next` calls from memory, so `current` may be ahead of the last value your application consumed. See [Sequence Model and Allocation](/docs/distributed-sequencer/model/) for block sizes and gaps.
 
 ## Update a Sequence
 
@@ -84,7 +81,7 @@ Use `update-sequence` to change the reserved high-water mark or retune the per-s
 kahuna-cli --update-sequence orders --current-value 5000 --block-size 100
 ```
 
-The next allocation returns `5001`. The update starts a new incarnation and takes about one server `SequencerBlockLease` to return. During that short wait, allocations for the sequence return `MustRetry`.
+The next allocation returns `5001`. The update starts a new incarnation (a new generation of the sequence's values) and takes about one server `SequencerBlockLease`, five seconds by default, to return, during which allocations return `MustRetry`; see [Updating a Sequence](/docs/distributed-sequencer/model/#updating-a-sequence).
 
 ## Use Single-Command Mode
 
@@ -100,6 +97,8 @@ kahuna-cli --get-sequence invoices
 
 ## Use a Client
 
+This example creates a new sequence, `web-orders`, because creating `orders` again would fail with `AlreadyExists`.
+
 <Tabs groupId="client-examples">
 <TabItem value="dotnet" label=".NET">
 
@@ -108,15 +107,15 @@ using Kahuna.Client;
 
 var client = new KahunaClient("https://localhost:8082");
 
-await client.CreateSequence("orders");
+await client.CreateSequence("web-orders");
 
 long orderId = await client.NextSequenceValue(
-    "orders",
+    "web-orders",
     idempotencyKey: "create-order-1001"
 );
 
 KahunaSequenceRange batch = await client.ReserveSequenceRange(
-    "orders",
+    "web-orders",
     count: 5,
     idempotencyKey: "worker-a-batch-1"
 );
@@ -135,13 +134,13 @@ const client = new KahunaClient({
   endpoints: ["https://localhost:8082"]
 });
 
-await client.createSequence("orders");
+await client.createSequence("web-orders");
 
-const orderId = await client.nextSequenceValue("orders", {
+const orderId = await client.nextSequenceValue("web-orders", {
   idempotencyKey: "create-order-1001"
 });
 
-const batch = await client.reserveSequenceRange("orders", 5, {
+const batch = await client.reserveSequenceRange("web-orders", 5, {
   idempotencyKey: "worker-a-batch-1"
 });
 
@@ -154,8 +153,11 @@ console.log(`Reserved: ${batch.start}..${batch.end}`);
 
 ## Clean Up
 
-```bash
+```text
 kahuna-cli> delete-sequence orders
+deleted
+
+kahuna-cli> delete-sequence web-orders
 deleted
 ```
 

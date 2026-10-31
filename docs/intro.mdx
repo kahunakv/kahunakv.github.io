@@ -2,17 +2,21 @@ import Kahuna1 from './assets/kahuna1.png';
 
 # Tutorial: Key/Value Store
 
-<div style={{textAlign: 'center'}}>
-<img src={Kahuna1} height="350" />
-</div>
+The Kahuna **key/value store** gives every instance of your service the same view of small shared state: **configuration, service discovery records, metadata, caches, and sessions**. The commands look like Redis `GET` and `SET`, but persistent writes are replicated before they are acknowledged, so they survive the failure of a node.
 
-Kahuna provides building blocks to help construct distributed systems. The **key/value store** can be used to store **configuration, service discoverability,
-metadata, caching, sessions, and more**. In this tutorial, you will learn how it works.
+In this tutorial, you start a local server and try reads, writes, expiration, revisions, compare-and-set, and transactions.
+
+<div style={{textAlign: 'center'}}>
+<img src={Kahuna1} height="250" />
+</div>
 
 ## Starting Kahuna
 
-Before you proceed, make sure that Kahuna is running on your system. Refer to the **[Server Installation](/docs/server-installation/)** section for instructions.
-You will also need the **[Kahuna CLI](/docs/kahuna-cli/)** to execute commands on the server.
+You need a running Kahuna server and the **[Kahuna CLI](/docs/kahuna-cli/)** to execute commands on it. Check that the CLI is installed:
+
+```bash
+kahuna-cli --version
+```
 
 For a local standalone server with Docker, run:
 
@@ -20,199 +24,147 @@ For a local standalone server with Docker, run:
 docker run --rm -p 8081:8081 -p 8082:8082 -p 8083:8083 -v kahuna-data:/data --name kahuna kahunakv/kahuna:latest
 ```
 
-The container exposes `http://127.0.0.1:8081` for REST, `https://127.0.0.1:8082` for HTTPS REST/gRPC, and `http://127.0.0.1:8083` for cleartext gRPC. The named Docker volume `kahuna-data` keeps the server data across container restarts.
-
-You can also install the server as a .NET global tool:
-
-```bash
-dotnet tool install --global Kahuna.Server
-```
-
-```bash
-kahuna-server \
-  --http-ports 8081 \
-  --grpc-cleartext-ports 8083 \
-  --storage rocksdb \
-  --wal-storage rocksdb \
-  --storage-path ~/.kahuna/data \
-  --wal-path ~/.kahuna/wal \
-  --storage-revision v1 \
-  --wal-revision v1
-```
-
-Connect to Docker over HTTPS:
-
-```bash
-kahuna-cli -c "https://127.0.0.1:8082" --insecure
-```
-
-Connect to Docker or the NuGet tool server over cleartext gRPC:
+Then connect over cleartext gRPC:
 
 ```bash
 kahuna-cli -c "http://127.0.0.1:8083"
 ```
 
-After installing the necessary components, run the following command:
-
-```bash
-~> kahuna-cli --version
-```
+See **[Server Installation](/docs/server-installation/)** for the exposed ports, HTTPS connections, the .NET global tool, and storage options.
 
 ## Setting and Retrieving Keys
 
-Within the Kahuna CLI, you can execute commands, transactions, and scripts. Use the following format to set and retrieve key/value pairs:
+The Kahuna CLI runs commands, transactions, and scripts. Set a key and read it back:
+
+Run these commands one at a time in the shell:
 
 ```kahuna
-~> kahuna-cli
-Kahuna Shell 1.0.0
-
-kahuna-cli> set myconfig "my-value"
-r0 set 9ms
-
-kahuna-cli> get myconfig
-r0 my-value 7ms
-
-kahuna-cli> set myconfig "my-value-2"
-r1 set 7ms
-
-kahuna-cli> get myconfig
-r1 my-value-2 6ms
+set myconfig "my-value"
+get myconfig
+set myconfig "my-value-2"
+get myconfig
 ```
 
-The `set` command stores key/value pairs durably in the cluster. Internally, the system routes the request to the leader
-node of the corresponding Raft group, which coordinates the operation, achieves consensus, and ensures durable storage and replication. Most key spaces use hash routing by default, while advanced ordered key spaces can opt into key-range routing. The `get`
-command retrieves the most recent value consistently from the appropriate leader node.
+The two reads return `my-value` at revision `r0`, then `my-value-2` at revision `r1`.
+
+`set` stores the key persistently: Kahuna copies the write to a majority of the key's replicas (a [quorum](/docs/glossary/#quorum)) before it acknowledges it. `get` returns the most recent committed value.
 
 ## Expiration
 
-By default, keys persisted to disk do not expire. However, you can specify an expiration time so that keys are removed after a defined period.
-The time-to-live of the key can set an expiration when creating a key with the `EX` parameter:
+By default, persistent keys do not expire. To remove a key after a period, give it a time-to-live in milliseconds with `ex` when you create it:
 
 ```kahuna
-kahuna-cli> set myconfig "my-value" ex 30000
-r2 set 18ms
+set myconfig "my-value" ex 30000
 ```
 
-or modify it later using the `extend` command:
+An example response is `r2 set 18ms`: the revision, result, and elapsed time.
+
+Or set it later with `extend`:
 
 ```kahuna
-kahuna-cli> set myconfig "my-value"
-r3 set 12ms
-
-kahuna-cli> extend myconfig 30000
-r3 extended 16ms
+set myconfig "my-value"
+extend myconfig 30000
 ```
 
-Expiration times are specified in milliseconds.
+The `extend` response is `r3 extended 16ms` in this example.
 
 ## Durability
 
-By default, Kahuna ensures strong durability by replicating persistent key/value writes through the key's Raft partition. The client is notified of a successful operation only after the mutation has reached Raft commit.
-
-In high-performance scenarios or when working with ephemeral data, on-disk durability may not be necessary or practical. For these cases, Kahuna offers
-an "ephemeral" durability mode, in which data is stored only in the leader node's volatile memory.
-
-Commands using ephemeral durability are prefixed with an "e". For example:
+Keys written with `set` are persistent: the client is notified of success only after a quorum of the key's [partition](/docs/glossary/#partition) commits the write, so it survives node failures. Commands prefixed with an "e" use ephemeral durability instead. They are faster because they skip replication and disk, but the data lives only in the memory of the partition's [leader](/docs/glossary/#leader-follower-and-learner) node and is lost if the node crashes, the leader changes, or memory pressure evicts the least-used keys. See [Durability Levels](/docs/architecture/durability-levels/).
 
 ```kahuna
-kahuna-cli> eset tempconfig "my-value"
-r0 set 47ms
-
-kahuna-cli> eget tempconfig
-r0 my-value 32ms
+eset tempconfig "my-value"
+eget tempconfig
 ```
 
-Keep in mind that ephemeral data will be lost if the node crashes or if memory pressure forces the system to free up space by removing the least-used keys. You can also specify an explicit expiration time for ephemeral keys. Ephemeral storage provides faster operations without the overhead of replication and persistence.
+The read returns `my-value`, for example `r0 my-value 32ms`.
 
 ## Revisions
 
-Each time a key is updated, you will notice an incrementing **[revision number](/docs/distributed-keyvalue-store/revisions)** (e.g., r0, r1, etc.). This value, known as the revision, is a monotonic version number that tracks when a key was last modified. Every time a key is updated or deleted, its revision increments, ensuring strong consistency and strict ordering.
+The `r0`, `r1`, `r2` prefix in each response is the key's **[revision](/docs/distributed-keyvalue-store/revisions/)**, a per-key version number that increases every time the key is updated or deleted. A revision orders the changes to one key, and it lets you make conditional writes and read older versions.
 
 ```kahuna
-kahuna-cli> set myconf "some config"
-r0 set 20ms
-
-kahuna-cli> set myconf "some other config"
-r1 set 10ms
-
-kahuna-cli> set myconf "another config"
-r2 set 15ms
-
-kahuna-cli> get myconf
-r2 another config 13ms
+set myconf "some config"
+set myconf "some other config"
+set myconf "another config"
+get myconf
 ```
+
+For a new key, the writes return revisions `r0`, `r1`, and `r2`. The final read returns `r2 another config 13ms` in this example.
 
 ## Compare And Swap (CAS)
 
-The **[Compare-And-Swap (CAS)](/docs/distributed-keyvalue-store/cas)** operation ensures atomic updates and prevents race conditions in environments where multiple clients may attempt to modify the same key simultaneously.
+A **[compare-and-set (CAS)](/docs/distributed-keyvalue-store/cas/)** write succeeds only if the key still holds the value you expect. When several clients update the same key at once, the late writer fails instead of silently overwriting the earlier change.
 
 ```kahuna
-kahuna-cli> set myconf "prev config"
-r0 set 14ms
-
-kahuna-cli> set myconf "new config" cmp "prev config"
-r1 set 18ms
-
-kahuna-cli> set myconf "some config" cmp "prev config"
-r1 not set 13ms
+set myconf "prev config"
+set myconf "new config" cmp "prev config"
+set myconf "some config" cmp "prev config"
 ```
 
-In the previous example, the CAS (Compare-And-Swap) operation is used to ensure that the value is only changed if its current value matches the one specified in the `"cmp"` parameter.
+The first two writes return `set`. The last returns `not set` because the current value no longer matches the one given in `cmp`.
 
 ## Scripts and Transactions
 
-Kahuna offers a scripting system that allows executing distributed transactions on the key/value store. Scripts can be run from an application using
-the appropriate connector for a programming language/platform or directly from `kahuna-cli`. Transactions allow executing multiple operations
-(such as modifying or consistently reading keys across multiple nodes) and are applied in an **all-or-nothing** manner.
+Kahuna Script runs several operations as one transaction, like a SQL transaction. You can run scripts from `kahuna-cli` or from a client. A transaction can read and modify keys on several nodes, and its changes are applied **all-or-nothing**.
 
-For example, if we wanted to decrement the value of one key based on the limit configured in another key, we could do the following:
+For example, this script decrements a per-user counter, using a limit stored in another key:
 
 ```kahuna
-kahuna-cli>  set max_rate_limit 100
-r0 set 13ms
-
-kahuna-cli> let limit = get max_rate_limit
-       ...> let current_rate = get rate_limit_user1
-       ...>
-       ...> if current_rate <= 0 then
-       ...>  throw "Rate limit exceeded. Please try again later."
-       ...> end
-       ...>
-       ...> let new_current_rate = current_rate - 1
-       ...> set rate_limit_user1 new_current_rate ex 60000
-       ...>
-       ...> return new_current_rate
-r1 99 18ms
-
-kahuna-cli> get rate_limit_user1
-r1 99 4ms
+set max_rate_limit 100
 ```
 
-In this other example, we’re going to make a transfer between two keys. The keys may or may not be led by the same node, but the transaction
-coordinator records the confirmed reads and writes, then applies the changes across all participating nodes during commit. If an error occurs, the transaction aborts and no changes are applied:
+Then run this script:
 
 ```kahuna
-kahuna-cli>  set balance_user1 1000 nx
-r0 set 14ms
+let limit = get max_rate_limit
+let current_rate = get rate_limit_user1
 
-kahuna-cli>  set balance_user2 1000 nx
-r0 set 12ms
+if not found then
+  let current_rate = limit
+end
 
-kahuna-cli> begin
-       ...>  let balance_user1_value = get balance_user1
-       ...>  let balance_user2_value = get balance_user2
-       ...>
-       ...>  let balance_user1_num = to_int(balance_user1_value)
-       ...>  let balance_user2_num = to_int(balance_user2_value)
-       ...>
-       ...>  if balance_user1_num > 0 then
-       ...>     set balance_user1 balance_user1_num - 50
-       ...>     set balance_user2 balance_user2_num + 50
-       ...>     commit
-       ...>  end
-       ...> end
+if to_int(current_rate) <= 0 then
+  throw "Rate limit exceeded. Please try again later."
+end
 
-r1 set 24ms
+let new_current_rate = to_int(current_rate) - 1
+set rate_limit_user1 new_current_rate ex 60000
+
+return new_current_rate
 ```
 
-This ensures **atomicity and consistency** across distributed nodes. In the next section, we’ll learn how to use **Distributed Locks** with Kahuna.
+For a new counter, the script returns `99`. You can read the stored value with:
+
+```kahuna
+get rate_limit_user1
+```
+
+The next example transfers 50 from one balance to another. The two keys may be led by different nodes. The transaction coordinator records the confirmed reads and writes, then applies the changes on every participating node at commit. If an error occurs, the transaction aborts and no changes are applied:
+
+Initialize the balances, running each command separately:
+
+```kahuna
+set balance_user1 1000 nx
+set balance_user2 1000 nx
+```
+
+Then run the transaction:
+
+```kahuna
+begin
+  let balance_user1_value = get balance_user1
+  let balance_user2_value = get balance_user2
+
+  let balance_user1_num = to_int(balance_user1_value)
+  let balance_user2_num = to_int(balance_user2_value)
+
+  if balance_user1_num >= 50 then
+    set balance_user1 balance_user1_num - 50
+    set balance_user2 balance_user2_num + 50
+    commit
+  end
+end
+```
+
+Either both balances change or neither does. Next, learn how to use **[Distributed Locks](/docs/tutorials/distributed-locking/)**.

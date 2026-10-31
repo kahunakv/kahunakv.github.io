@@ -1,6 +1,8 @@
 # Benchmarking Kahuna
 
-`kahuna-bench` sends sustained traffic through the normal `Kahuna.Client` network path and reports client-observed throughput and latency percentiles from p50 through p99.9.
+`kahuna-bench` measures how much load your Kahuna installation sustains and how fast it answers. It sends sustained traffic through the normal `Kahuna.Client` network path and reports client-observed throughput (successful requests per second) and latency percentiles from p50 through p99.9. The p99 value is the latency that 99% of successful requests stay within.
+
+Read the results as measurements of the hardware, configuration, and workload you ran, not as general Kahuna figures. The same applies to the sample results on this page: they depend on hardware, topology, storage backend, and Kahuna version, and each block states what is known about the run. For latency objectives, watch p99 and p99.9 rather than the median; [Read the Report](#read-the-report) explains every column.
 
 Use it to:
 
@@ -56,7 +58,7 @@ kahuna-bench \
   --duration 30
 ```
 
-When the server exposes a cleartext gRPC port with `--grpc-cleartext-ports`, point the benchmark at that h2c endpoint and omit `--insecure`:
+When the server exposes a cleartext gRPC port with `--grpc-cleartext-ports`, point the benchmark at that cleartext HTTP/2 (h2c) endpoint and omit `--insecure`:
 
 ```bash
 kahuna-bench \
@@ -77,12 +79,12 @@ Seeding is capped at 100,000 keys and uses at most 64 concurrent writers.
 
 Start a cluster with the Docker image or the `Kahuna.Server` .NET global tool on each node.
 
-Pass one reachable node or every cluster endpoint in one comma-separated connection source. This sample uses a local cleartext gRPC endpoint:
+Pass one reachable node or every cluster endpoint in one comma-separated connection source. This sample connects to three local HTTPS endpoints and uses `--insecure` to skip TLS validation for their self-signed development certificates:
 
 ```bash
 kahuna-bench \
   -c "https://127.0.0.1:8082,https://127.0.0.1:8084,https://127.0.0.1:8086" \
-  --insecure
+  --insecure \
   --duration 120 \
   --workload mixed \
   --durability persistent \
@@ -108,7 +110,9 @@ set         1,797,018   14,975   12.9ms   21.2ms   28.2ms   63.2ms   345.9ms   3
 TOTAL       3,593,871   29,948    7.1ms   17.7ms   21.2ms   46.6ms   151.9ms   3.3s    8.5ms        0        0
 ```
 
-This persistent run completed 3,593,871 successful operations at 29,948 requests per second without errors or misses. Reads reached a 1.4 ms p99, while persistent writes reached a 63.2 ms p99 because they include the replicated consensus path before success is returned.
+This persistent run completed 3,593,871 successful operations at 29,948 requests per second without errors or misses. Reads reached a 1.4 ms p99, while persistent writes reached a 63.2 ms p99 because they include the replicated consensus path ([Raft](/docs/glossary/#raft)) before success is returned.
+
+**Recorded:** September 2026 (docs commit `e0d919d6`), three nodes on local `127.0.0.1` endpoints with persistent durability. The hardware, storage and WAL backends, partition count, and Kahuna version of this run are not recorded.
 
 Use a longer measurement, such as `--warmup 10 --duration 60`, when establishing a performance baseline or comparing deployments.
 
@@ -227,7 +231,9 @@ Frames cover key/value requests, scripts, scans, and interactive transaction cal
 
 Recent local memory benchmarks are useful when evaluating Kahuna for cache-like ephemeral workflows as well as coordination workloads.
 
-Setup: one 8-core Apple Silicon machine, Kahuna server and benchmark client on the same host, cleartext gRPC, memory storage, memory WAL, one partition, concurrency 64, key space 10,000, 128-byte values. The Valkey reference is Valkey 9.1.2 with `valkey-benchmark -c 64`, no pipelining, on the same machine. These numbers are a same-machine comparison, not a universal throughput guarantee.
+Setup: one 8-core Apple Silicon machine, Kahuna server and benchmark client on the same host, cleartext gRPC, memory storage, memory [WAL](/docs/glossary/#write-ahead-log-wal), one [partition](/docs/glossary/#partition), concurrency 64, key space 10,000, 128-byte values. The Valkey reference is Valkey 9.1.2 with `valkey-benchmark -c 64`, no pipelining, on the same machine. These numbers are a same-machine comparison, not a universal throughput guarantee.
+
+**Recorded:** September 2026 (docs commit `e0d919d6`). The Kahuna version of this run is not recorded.
 
 | Workload | Kahuna result | Same-machine reference |
 |----------|---------------|------------------------|
@@ -238,13 +244,15 @@ Setup: one 8-core Apple Silicon machine, Kahuna server and benchmark client on t
 
 The rate-limit result uses the default gRPC request frames plus the single-key script fast path. That matters because it is not a raw key/value microbenchmark: each request runs a server-side script, checks a limit, updates an ephemeral counter, and returns an allow/deny result atomically.
 
-Persistent replicated writes are a different class of benchmark because they include Raft quorum replication and WAL durability. Use the persistent examples above when sizing durable state, and use these local memory results when comparing short-lived counters, temporary coordination state, or server-side script overhead.
+Persistent replicated writes are a different class of benchmark because they include Raft [quorum](/docs/glossary/#quorum) replication and WAL durability. Use the persistent examples above when sizing durable state, and use these local memory results when comparing short-lived counters, temporary coordination state, or server-side script overhead.
 
 ## Routing Measurements
 
 `kahuna-bench` uses the same leader-aware routing modes as `Kahuna.Client`. The console header prints the effective mode, so an `auto` run with several endpoints reports `Learned (auto)` while a single-endpoint run reports `RoundRobin (auto)`.
 
-In one local three-node read benchmark, learned routing reached 116,808 requests per second versus 72,188 requests per second with round-robin endpoint selection. See [Client Leader-Aware Routing](/docs/client-routing/#measured-effect) for context and caveats.
+In one local three-node read benchmark, learned routing reached 116,808 requests per second versus 72,188 requests per second with round-robin endpoint selection. See [Client Leader-Aware Routing](/docs/client-routing/#measured-effect) for the setup and caveats.
+
+**Recorded:** September 2026 (docs commit `1e6ebc5c`). The hardware and Kahuna version of this run are not recorded.
 
 Use explicit routing modes when comparing the cost of forwarded requests:
 
@@ -317,6 +325,8 @@ set         27,602,889   230,023   455µs   935µs   1.1ms   1.7ms   3.8ms   149
 TOTAL       55,204,826   460,038   455µs   934µs   1.1ms   1.7ms   3.8ms   149.1ms   553µs        0        0
 ```
 
+**Recorded:** September 2026 (docs commit `e0d919d6`), one local node over cleartext gRPC with ephemeral durability. The hardware, storage and WAL backends, and Kahuna version of this run are not recorded.
+
 This run completed 55,204,826 successful operations at 460,038 requests per second. The default mixed workload produced an approximately even split between reads and writes. Its p99 was 1.7 ms and p99.9 was 3.8 ms, with no errors or misses.
 
 The 149.1 ms maximum shows why a single worst request should not be treated as representative latency. Use p99 or p99.9 for a stable tail-latency objective, while still investigating repeated or unusually large maximums.
@@ -333,7 +343,7 @@ The 149.1 ms maximum shows why a single worst request should not be treated as r
 
 Errors, timeouts, and misses do not contribute to successful `req/s`. JSON and CSV separate `errors` from `timeouts`, while the console combines them in its `errors` column.
 
-Focus on p99 and p99.9 for user-facing latency. A low p50 with a high p99 indicates occasional stalls hidden by the median.
+A low p50 with a high p99 indicates occasional stalls hidden by the median.
 
 For `get` and `mixed`, a key space above 100,000 produces some misses because seeding stops at 100,000 keys. Use `--key-space 100000` or lower for an all-seeded read test. For `delete`, misses mean the generated key was already absent.
 

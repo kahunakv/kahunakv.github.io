@@ -1,13 +1,13 @@
-# Storage: Overview
+# Storage Engines
 
-Kahuna uses embedded storage engines as the durable local storage layer for each node. The distributed guarantees come from Kahuna and Kommander: commands are replicated through Raft, then committed state is written to the configured local backend.
+Each Kahuna node stores its data with an embedded storage engine on the node itself, so you do not run a separate database server. The engine you choose affects write throughput, how easily you can inspect data, and how much there is to operate. The distributed guarantees come from Kahuna and Kommander, not from the engine: commands are replicated through [Raft](/docs/glossary/#raft), then committed state is written to the configured local backend.
 
 There are two independent storage choices in a Kahuna server:
 
-- `--wal-storage` controls the Raft write-ahead log used by Kommander.
+- `--wal-storage` controls the Raft [write-ahead log (WAL)](/docs/glossary/#write-ahead-log-wal) used by Kommander.
 - `--storage` controls the materialized Kahuna state used for persistent locks, key/value entries, revisions, and sequences.
 
-Both options can use `rocksdb` or `sqlite`. The materialized state backend can also use `memory` for embedded or test deployments where restart durability is not required. RocksDB is Kahuna's default backend for both Raft WAL storage and materialized persistent state.
+Both options accept `rocksdb`, `sqlite`, or `memory`. RocksDB is Kahuna's default backend for both Raft WAL storage and materialized persistent state.
 
 If you are unsure, keep the default: RocksDB for both. Choose SQLite for small deployments, development, or when you want to inspect data with standard SQLite tools. Choose `memory` only for tests and embedded nodes where losing persistent state on restart is acceptable. See [Choosing an Adapter](#choosing-an-adapter) for a full comparison.
 
@@ -15,37 +15,29 @@ If you are unsure, keep the default: RocksDB for both. Choose SQLite for small d
 
 The `IPersistenceBackend` contract stores the latest state and historical revisions needed by Kahuna's persistent objects:
 
-- locks, including owner, fencing token, expiration, last-used time, last-modified time, and state
+- locks, including owner, [fencing token](/docs/glossary/#fencing-token), expiration, last-used time, last-modified time, and state
 - key/value entries, including value, revision, expiration, last-used time, last-modified time, and state
 - revision records used by compare-revision reads and revision-aware commands
 - prefix and bucket reads over persistent key/value data
 
-Kahuna's actors keep hot state in memory while the background writer batches dirty persistent objects to disk. Reads that miss memory, or that need a specific persistent revision, go through the configured backend.
+Kahuna's [actors](/docs/glossary/#actor) keep hot state in memory while the background writer batches dirty persistent objects to disk. Reads that miss memory, or that need a specific persistent revision, go through the configured backend.
 
 ## RocksDB in Kahuna
 
-RocksDB is a high-performance embedded key-value database created by Meta and based on an LSM-tree architecture. Originally derived from LevelDB, it adds numerous features and optimizations for production environments, including advanced compaction strategies, compression, transactions, snapshots, and configurable durability options. RocksDB is particularly well-suited for write-intensive workloads, offering high write throughput and efficient range scans over sorted keys while maintaining good storage efficiency.
-
-In Kahuna, the distributed coordination, replication, command processing, and high-level object model are written in C#. When RocksDB is selected, the local storage engine itself is native C++ code running close to the hardware, which gives Kahuna a fast embedded persistence layer without requiring an external database server.
+RocksDB is an embedded key/value database from Meta, built on an LSM tree (log-structured merge tree), that favors high write throughput and efficient scans over sorted keys. When you select it, the engine runs as native C++ code inside the Kahuna process.
 
 ### How an LSM Tree Works
 
-An LSM tree is optimized for turning many small writes into larger sequential disk writes:
+An LSM tree turns many small writes into larger sequential disk writes. New writes land in a sorted in-memory memtable, protected by RocksDB's own WAL. A full memtable is flushed to disk as an immutable sorted file (an SST file). A read checks memory first, then searches SST files across levels; the block cache keeps recently read blocks in memory, and Bloom filters skip SST files that cannot contain the key. Background compaction merges SST files, drops overwritten values and [tombstones](/docs/glossary/#tombstone) when safe, and moves data through levels to keep reads efficient.
 
-- **Ingest**. New writes first land in memory, usually in a sorted memtable, and are protected by RocksDB's own WAL.
-- **Flush**. When the memtable fills, RocksDB flushes it to disk as an immutable sorted string table file, usually called an SST file.
-- **Read**. A read checks memory first, then searches SST files across levels. Block cache keeps recently read data blocks in memory so hot keys avoid disk reads.
-- **Bloom filters**. RocksDB can use Bloom filters to skip SST files that definitely do not contain a requested key, reducing unnecessary disk lookups.
-- **Compaction**. Background compaction merges SST files, drops overwritten values and tombstones when safe, and moves data through levels to keep reads efficient.
-
-This is why RocksDB works well for Kahuna's persistent path: Kahuna batches committed actor output, RocksDB absorbs those writes efficiently, and compaction later reorganizes the data for long-running read and scan performance.
+This fits Kahuna's persistent path: Kahuna batches committed actor output, RocksDB absorbs those writes efficiently, and compaction later reorganizes the data for long-running read and scan performance.
 
 Kahuna's RocksDB adapter opens one RocksDB database under the configured storage path and revision. It uses separate column families for key/value data and lock data:
 
 - `kv` stores persistent key/value entries and their revision records.
 - `locks` stores persistent distributed lock state.
 
-Each write is serialized as a protobuf message and appended through a RocksDB `WriteBatch` with synchronous write options enabled. For a normal persistent key/value write, the adapter stores two records:
+Each write is serialized as a protobuf message and appended through a RocksDB `WriteBatch` with synchronous write options enabled. The adapter opens RocksDB with absolute WAL recovery. For a normal persistent key/value write, the adapter stores two records:
 
 - `key~CURRENT`, the latest visible state of the key
 - `key~revision`, the immutable revision record for revision-aware reads
@@ -55,27 +47,6 @@ When a write uses `SET ... NOREV` or `KeyValueFlags.SetNoRevision`, Kahuna updat
 Locks follow the same pattern, with `resource~CURRENT` and `resource~fencingToken` records in the lock column family. Prefix scans use RocksDB's sorted keyspace directly: the adapter seeks to the requested prefix, iterates until the prefix range ends, and returns only records ending in `~CURRENT`.
 
 RocksDB scans skip long runs of historical `key~revision` records once the visible current row or requested snapshot row is known. This keeps scans over revision-heavy stores closer to the number of logical keys than to the number of archived revisions. Kahuna also tracks keys that contain `~` so the optimization stays correct for escaped or unusual key names; older stores without that registry still read correctly, using the slower step-over path where needed.
-
-### Where RocksDB Shines
-
-RocksDB is the best default for production Kahuna nodes with sustained persistent traffic.
-
-- **Write-heavy workloads**. LSM storage, memtables, WAL, and background compaction fit high insert/update rates better than page-oriented storage.
-- **Large keyspaces**. Sorted SST files and iterators make prefix scans and bucket-style access natural.
-- **Persistent revisions**. Kahuna writes latest-state and revision records for every persistent update; RocksDB handles that append-heavy pattern well.
-- **Cache-style writes**. `NOREV` writes keep the current value durable while avoiding the extra historical revision record when old versions are not needed.
-- **Batched actor output**. Kahuna's background writer can hand RocksDB batches of dirty locks and key/value entries, which maps cleanly to `WriteBatch`.
-- **Crash recovery**. The adapter opens RocksDB with absolute WAL recovery, uses synchronous write options for materialized-state writes, and can close and reopen the native engine after repeated storage-write failures.
-
-### Where RocksDB Is Not Ideal
-
-RocksDB is powerful, but it has a larger operational footprint.
-
-- It adds native library dependencies and platform-specific packaging concerns.
-- Compaction, block cache, file counts, and disk write amplification matter under load and need monitoring.
-- Data files are not convenient to inspect manually compared with a SQL database.
-- For very small deployments, local development, and simple embedded usage, RocksDB may be more machinery than needed.
-- Revision-heavy workloads retain both current and historical records, so disk growth and compaction behavior should be planned.
 
 ### Storage Failure Recovery
 
@@ -98,8 +69,8 @@ Enable it with:
 kahuna-server \
   --storage rocksdb --wal-storage rocksdb \
   --rocksdb-shared-memory \
-  --rocksdb-shared-memory-budget-mb 512 \
-  --rocksdb-shared-memtable-budget-mb 128
+  --storage-shared-cache-mb 512 \
+  --storage-shared-memtable-budget-mb 128
 ```
 
 The total budget controls the shared block cache. The memtable budget is charged inside that same total, so cached SST blocks and in-memory write buffers draw from one budget across both RocksDB databases.
@@ -107,10 +78,10 @@ The total budget controls the shared block cache. The memtable budget is charged
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `--rocksdb-shared-memory` | disabled | Enables one shared block cache and write-buffer manager. |
-| `--rocksdb-shared-memory-budget-mb` | `320` | Total shared RocksDB memory budget in MiB. |
-| `--rocksdb-shared-memtable-budget-mb` | `128` | Memtable sub-budget in MiB, charged into the shared cache. |
+| `--storage-shared-cache-mb` | `0` | Total shared cache budget in MiB; must be positive for shared RocksDB memory. |
+| `--storage-shared-memtable-budget-mb` | `0` | Memtable sub-budget in MiB, charged into the shared cache; must be positive and no larger than the cache. |
 
-Sharing is a no-op unless both storage layers use RocksDB. With SQLite or memory on either side, Kahuna keeps the normal independent resources.
+The shared budgets are engine-neutral settings that a custom storage provider can also use. RocksDB applies them when both storage layers use RocksDB and `--rocksdb-shared-memory` is set. That mode now requires both budgets explicitly; the former 320 MiB and 128 MiB defaults no longer apply. The old `--rocksdb-shared-memory-budget-mb` and `--rocksdb-shared-memtable-budget-mb` names remain accepted as aliases.
 
 Use this feature when process memory is constrained and RocksDB is used for both durable state and WAL. Measure before and after enabling it: watch process RSS, RocksDB block-cache usage, write-buffer manager memtable usage, and Raft commit or WAL append latency under representative load.
 
@@ -119,6 +90,17 @@ Operational caveats:
 - The feature is opt-in and reversible; it does not change on-disk format, WAL semantics, recovery, or wire behavior.
 - A write burst in one RocksDB database can cause more frequent flushing that affects the shared memory budget for the other database.
 - Kahuna uses a soft cache and a non-stalling write-buffer manager for this mode, so sizing should be conservative rather than relying on RocksDB stalls for back-pressure.
+
+### Limit Compaction Work
+
+On a busy RocksDB store, flushes and compactions can compete with synchronized writes for disk throughput. Two optional settings bound that background work on the **materialized store**, not the Raft WAL:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `--storage-compaction-rate-mbps` | `0` (unlimited) | Limits store flush and compaction writes in MB/s. |
+| `--storage-max-background-compactions` | `0` (RocksDB default) | Caps concurrent store compactions. |
+
+Set these only after measuring disk contention. A rate below the incoming write load can let RocksDB level-0 files accumulate and eventually slow writes. SQLite and memory ignore these settings; a custom engine may choose to honor them.
 
 ### Direct Reads and Statistics
 
@@ -166,7 +148,7 @@ Larger flush units can let a log row and the range tombstone that later removes 
 
 ## SQLite in Kahuna
 
-SQLite is a lightweight, serverless, self-contained relational database engine widely used in embedded and client-side applications. It stores tables and indexes using B-Tree structures and provides full SQL support, including ACID-compliant transactions through rollback journals or write-ahead logging (WAL). SQLite is designed for simplicity, reliability, and minimal deployment overhead while delivering strong transactional guarantees.
+SQLite is a serverless, self-contained relational database that stores tables and indexes in B-trees and supports ACID transactions through rollback journals or write-ahead logging.
 
 Kahuna's SQLite adapter stores materialized state across eight shard files under the configured storage path and revision:
 
@@ -177,69 +159,36 @@ kahuna1_<revision>.db
 kahuna7_<revision>.db
 ```
 
-Keys are routed to a shard by hash. Each shard has its own SQLite connection and reader/writer lock. The adapter creates three tables:
+Keys are routed to a shard by hash. Each shard has its own SQLite connection and reader/writer lock; sharding across eight files gives Kahuna more concurrency than a single database file while keeping the implementation simple. The adapter creates three tables:
 
 - `locks`, keyed by lock resource
 - `keys`, keyed by key name and storing the latest visible key/value state
 - `keys_revisions`, keyed by `(key, revision)` and storing historical key/value revisions
 
-SQLite is opened in WAL mode with `synchronous=NORMAL` and `temp_store=MEMORY`. Key/value batches are grouped per shard and committed in a SQLite transaction. Lock writes are upserted by resource.
+SQLite is opened in WAL mode with `synchronous=NORMAL` and `temp_store=MEMORY`. `synchronous=NORMAL` is a performance-oriented durability setting: it is appropriate for many WAL-mode deployments, but it is not SQLite's strictest durability mode. Key/value batches are grouped per shard and committed in a SQLite transaction. Lock writes are upserted by resource.
 
 Prefix reads are implemented with SQL over the `keys` table using `LIKE '<prefix>%'`. Because Kahuna routes bucket-style keys by prefix, the adapter opens the shard for the prefix and scans that shard's current-key table.
-
-### Where SQLite Shines
-
-SQLite is a strong fit when operational simplicity matters more than maximum write throughput.
-
-- **Local development and tests**. It needs no server process and produces ordinary database files.
-- **Small persistent deployments**. It is easy to run, copy, inspect, and back up.
-- **Debuggability**. Operators can use standard SQLite tools to inspect tables, values, revisions, and lock rows.
-- **Predictable embedded behavior**. SQLite's single-file model is easy to reason about in constrained environments.
-- **Low to moderate write volume**. Sharding across eight files gives Kahuna more concurrency than a single database file while keeping the implementation simple.
-
-### Where SQLite Is Not Ideal
-
-SQLite is not the best choice for the highest-throughput persistent workloads.
-
-- Writes are serialized per shard, so high write concurrency can bottleneck.
-- Prefix scans are SQL `LIKE` reads over a shard rather than native ordered-key iteration.
-- `synchronous=NORMAL` is a performance-oriented durability setting; it is appropriate for many WAL-mode deployments, but it is not SQLite's strictest durability mode.
-- Large values and revision-heavy workloads can grow database and WAL files quickly.
-- Long-running deployments may need normal SQLite maintenance practices, such as WAL checkpointing and occasional vacuuming.
 
 ## Memory Backend
 
 The `memory` backend is useful for embedded nodes, tests, and temporary data. It keeps state in process memory and avoids disk I/O, but it is not restart-safe and should not be used for durable production state. Persistent revision reads also require an on-disk backend.
 
-## RocksDB vs SQLite
-
-| Feature | RocksDB | SQLite |
-|---------|---------|--------|
-| Storage model | Embedded C++ key/value store based on an LSM-tree | Embedded relational database based on B-Tree tables and indexes |
-| Kahuna layout | One database under the storage revision, with `kv` and `locks` column families | Eight hash-sharded database files named `kahunaN_<revision>.db` |
-| Latest state | Stored as `key~CURRENT` or `resource~CURRENT` records | Stored in `keys` and `locks` tables |
-| Historical revisions | Stored as revision-suffixed records in the same column family | Stored in the `keys_revisions` table with `(key, revision)` as the primary key |
-| Write path | Batched protobuf records written through RocksDB `WriteBatch` with sync writes | SQL upserts; key/value writes are grouped per shard and committed in transactions |
-| Prefix scans | Native ordered-key iterator over the RocksDB keyspace | SQL `LIKE '<prefix>%'` query on the prefix shard |
-| Write concurrency | Strong fit for sustained write-heavy workloads and large update volumes | Serialized per shard; suitable for low to moderate write volume |
-| Operational footprint | Larger native dependency and more tuning/monitoring surface | Small, serverless, easy to package and inspect |
-| Inspection and debugging | Requires RocksDB tooling or application-level inspection | Standard SQLite tools can inspect tables directly |
-| Disk behavior | Compaction, SST files, and write amplification need monitoring | WAL files, checkpoints, and occasional vacuuming may need attention |
-| Best fit | Production clusters, large keyspaces, high write rates, retained revisions | Development, tests, embedded deployments, small persistent clusters |
-| Weak fit | Tiny deployments where operational simplicity matters most | Write-heavy production workloads or very large revision-heavy keyspaces |
-
 ## Choosing an Adapter
 
-| Workload or constraint | Prefer RocksDB | Prefer SQLite |
-|------------------------|----------------|---------------|
-| Sustained write-heavy production traffic | Yes | No |
-| Large keyspace with many prefix or bucket scans | Yes | Sometimes |
-| Many retained revisions per key | Yes | Sometimes, with disk maintenance |
-| Minimal deployment footprint | No | Yes |
-| Easy manual inspection with common tools | No | Yes |
-| Native dependency sensitivity | No | Yes |
-| Local development and small demos | Sometimes | Yes |
-| Highest operational tuning control | Yes | No |
+| | RocksDB | SQLite |
+|---------|---------|--------|
+| Storage model | Embedded C++ key/value store based on an LSM tree | Embedded relational database based on B-tree tables and indexes |
+| Kahuna layout | One database under the storage revision, with `kv` and `locks` column families | Eight hash-sharded database files named `kahunaN_<revision>.db` |
+| Latest state | Stored as `key~CURRENT` or `resource~CURRENT` records | Stored in `keys` and `locks` tables |
+| Historical revisions | Stored as revision-suffixed records in the same column family; handles the append-heavy pattern of a latest-state plus a revision record per persistent update well | Stored in the `keys_revisions` table with `(key, revision)` as the primary key; works for many retained revisions with disk maintenance |
+| Write path | Batched protobuf records written through `WriteBatch` with sync writes; the background writer's batches of dirty locks and key/value entries map cleanly to it | SQL upserts; key/value writes are grouped per shard and committed in transactions |
+| Write concurrency | Strong fit for sustained write-heavy workloads: memtables, WAL, and background compaction suit high insert/update rates better than page-oriented storage | Writes are serialized per shard, so high write concurrency can bottleneck; suitable for low to moderate write volume |
+| Prefix scans | Native ordered-key iterator over sorted SST files, which makes prefix and bucket scans over large keyspaces natural | SQL `LIKE '<prefix>%'` query on the prefix shard rather than native ordered-key iteration |
+| Operational footprint | Larger: native library dependencies, platform-specific packaging, and more tuning and monitoring surface, with the most tuning control | Small: no server process, ordinary database files that are easy to package, run, copy, and back up |
+| Inspection and debugging | Data files are not convenient to inspect manually; needs RocksDB tooling or application-level inspection | Standard SQLite tools can inspect tables, values, revisions, and lock rows directly |
+| Disk behavior | Compaction, block cache, file counts, and write amplification matter under load and need monitoring; revision-heavy workloads keep current and historical records, so plan disk growth and compaction | Large values and revision-heavy workloads can grow database and WAL files quickly; long-running deployments may need WAL checkpointing and occasional vacuuming |
+| Best fit | Production clusters with sustained persistent traffic, large keyspaces, high write rates, and retained revisions | Local development, tests, small demos, embedded deployments in constrained environments, where its file model is easy to reason about, and small persistent clusters |
+| Weak fit | Very small deployments, local development, and simple embedded usage, where it may be more machinery than needed | The highest-throughput or write-heavy production workloads, and very large revision-heavy keyspaces |
 
 For most production clusters, start with RocksDB for both `--wal-storage` and `--storage`. Use SQLite when the deployment benefits more from a small footprint, easy inspection, and simple file-based operation than from maximum write throughput.
 
@@ -248,4 +197,4 @@ For most production clusters, start with RocksDB for both `--wal-storage` and `-
 - Keep `--wal-path` and `--storage-path` on reliable local disks. Network filesystems can add latency and failure modes that hurt Raft and embedded database behavior.
 - Use a stable `--storage-revision` and `--wal-revision` for an existing data directory. Changing revisions points Kahuna at a different set of local files.
 - Monitor disk growth when using persistent key/value revisions. Kahuna stores both latest records and revision records.
-- Use ephemeral durability for data that does not need restart persistence. Ephemeral objects stay in memory and avoid the storage backend entirely.
+- Ephemeral objects stay in memory and avoid the storage backend entirely; use them for data that does not need restart persistence (see [Durability Levels](/docs/architecture/durability-levels/)).

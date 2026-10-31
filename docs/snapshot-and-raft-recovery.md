@@ -1,136 +1,93 @@
 # Snapshot Installation and Raft Recovery
 
-A replica normally stays current by receiving each new Raft log entry from its partition leader. That
-only works while the leader still has the entries the replica is missing. Leaders compact (discard)
-old log entries to bound disk use, so some replicas cannot catch up from the log alone:
+Read this page when a new node joins the cluster, when a replica falls too far behind its leader to catch up from the log, or when you investigate a node that is slow to catch up or stays a [learner](/docs/glossary/#leader-follower-and-learner). It also helps you size memory and disk for large partitions or memory-constrained nodes.
+
+A replica normally stays current by receiving each new [Raft](/docs/glossary/#raft) log entry from its [partition](/docs/glossary/#partition) leader. That only works while the leader still has the entries the replica is missing. Leaders compact (discard) old log entries to bound disk use, so some replicas cannot catch up from the log alone:
 
 - A new node that joins the cluster and starts empty.
 - A node that was offline longer than the leader's retained log history.
 - A replica that the [placement controller](/docs/replica-placement/) moves to a different node.
 - A replica that must be repaired because its state diverged.
 
-In these cases the leader sends a **snapshot**: a complete copy of the partition's state. The replica
-installs it and then replays the log entries that follow. This happens automatically; you do not
-trigger it.
+In these cases the leader sends a **snapshot**: a complete copy of the partition's state. The replica installs it and then replays the log entries that follow. This happens automatically; you do not trigger it.
 
-**Read this page if** you operate a cluster with large partitions, run nodes with limited memory, or
-investigate a node that is slow to catch up or stays a learner. It explains what a snapshot contains,
-how much memory and disk it uses, which timeouts apply, and how to read the install outcomes and
-metrics. If your cluster joins and recovers nodes without problems, the defaults are usually
-sufficient.
+This page explains what a snapshot contains, how much memory and disk it uses, which timeouts apply, and how to read the install outcomes and metrics. If your cluster joins and recovers nodes without problems, the defaults are usually sufficient.
 
-Kahuna registers whole-partition state transfer with Kommander, its Raft library. A replica that needs history below the
-available Raft log floor can be seeded from its leader's snapshot and replay the retained tail. This
-supports catch-up and repair under both full replication and per-partition placement; it is separate
-from operator-triggered [backups and PITR](/docs/backups-and-point-in-time-recovery/). To seed a joining node
-from a backup instead of a leader snapshot, see [PITR Bootstrap](/docs/pitr-bootstrap/).
+Snapshot transfer works under both full replication and per-partition placement. It is separate from operator-triggered [backups and PITR](/docs/backups-and-point-in-time-recovery/); to seed a joining node from a backup instead of a leader snapshot, see [PITR Bootstrap](/docs/pitr-bootstrap/). For detection and containment of a divergent replica, see [Containment](/docs/internals/replication/#containment).
 
-For replica moves and staging-cap sizing, see the
-[replication factor guide](/docs/replica-placement/). For detection and
-containment of a divergent replica, see the
-[leadership fencing guide](/docs/internals/replication/#containment).
+## What a Snapshot Contains
 
-## What a data-partition snapshot carries
+A data-partition snapshot carries the partition's key/value rows, persistent lock state, completion receipts, transaction records, prepared [intents](/docs/glossary/#write-intent), and committed-head ledger. Partition 0 (the system partition) transfers the range map and snapshot-floor hold registry instead.
 
-`PartitionStateTransfer` exports key/value rows, persistent lock state, completion receipts,
-transaction records, prepared intents and the committed-head/settled-transaction ledger for the
-partition. Ownership is derived from the range map or hash routing over the node-global backend.
-Export first drains queued backend writes so the rows include state applied through the requested
-boundary. This is an **at-least boundary**, not an exact point-in-time image: pages and store slices
-can include later applies, and the receiver replays the retained tail idempotently. It is unsuitable
-as an operator backup cut. It writes paged,
-checksummed rows and store payloads into pooled segments rather than a growing contiguous array.
-The complete exported snapshot still occupies memory on the sender: this is not a zero-buffer export.
+A snapshot is an at-least boundary, not an exact point-in-time image: it can include writes applied after the requested position, and the receiver replays the retained log tail idempotently. Do not use it as a backup. The complete exported snapshot occupies memory on the sender.
 
-Partition 0 uses `MetaSystemStateTransfer` instead: it transfers the range map and snapshot-floor hold
-registry together. The data-partition streaming-install description below does not apply to that
-separate metadata decoder.
+The receiver stages the whole transfer and verifies every checksum before it changes any state. A truncated or corrupt transfer leaves the prior state untouched. It then replaces the partition's state in batches. See [Snapshot Transfer Internals](/docs/internals/snapshot-transfer/) for the export order, the two-pass install, and batch sizes.
 
-## Verification, installation and failure
+:::caution Partial installs
 
-The receiver stages the complete transfer before installing it. Data-partition import makes two passes
-through the seekable staged stream:
+Installing a snapshot is a recoverable replacement, not a single transaction over the whole partition. A storage or invalidation-hook failure after the replacement starts can leave partial rows behind. An on-disk marker records the interrupted install, and a retry purges that attempt's state before installing again, but the marker does not fence the partition from serving at startup. Do not assume automatic crash recovery from an interrupted install.
 
-1. **Verify before changing state.** Check the partition id, every page/store checksum, and decoding of
-   receipts, records and intents. Truncation, checksum failure or undecodable store entries leave the
-   prior state untouched. When `OnePhaseApplyTimeValidation` is enabled, a snapshot lacking the
-   committed-head ledger is refused.
-2. **Replace the owned state.** Mark the install incomplete; drain queued persistence; purge the
-   partition's old backend rows and receipt/record slices; stream in the new rows, records and receipts;
-   replace the intent/ledger slice. Persist the durable-store snapshots before reporting the install as complete,
-   invalidate resident key/value and lock state, and then clear the incomplete marker.
+:::
 
-Backend batches flush at 4,096 rows or after accumulated value bytes reach 16 MiB. The byte threshold
-can be exceeded by the final row; it is not a maximum value size. Records and receipts are decoded one
-entry at a time. The intent/ledger section is still decoded as a whole for replacement, and the final
-installed state must fit the node. Streaming reduces temporary working memory; it does not make total
-memory independent of partition size. A non-seekable input is copied once into pooled memory segments.
-Kommander's staged receive streams are seekable, including disk-backed streams.
+## Snapshot Options
 
-This is **recoverable replacement, not a backend transaction over the entire partition**. A storage or
-invalidation-hook failure after mutation starts can leave partial rows. The incomplete marker remains;
-a retry purges that attempt's owned state before installing again. The marker records interruption on disk,
-but there is currently no production caller of `IsInstallIncomplete`; the marker alone does not
-establish a startup serving fence. Automatic crash recovery from that marker must not be assumed. A second import of the same
-partition while one runs is refused, rather than queued. The in-process install flag is released on success or failure;
-other partitions have independent install gates. Install and un-host purge of one partition cannot
-interleave. Cancellation or loss of a sender acknowledgement does not roll back an install already
-running through Kommander's installer.
-
-Transaction-record and receipt snapshot files are also decoded entry by entry at startup. Prepared
-intent snapshots are parsed directly from a file stream but still retain the decoded intent state.
-
-## Receive staging and deadlines
-
-The server exposes these flags; embedded options with the `Raft` prefix are nullable and leave the
-underlying default unchanged unless set:
+This is the reference for snapshot transfer options. Server durations are **milliseconds** on the command line. Embedded options with the `Raft` prefix are nullable `EmbeddedKahunaOptions` properties that leave the default of Kommander (Kahuna's Raft library) unchanged unless set; embedded durations are `TimeSpan`.
 
 | Server flag | Embedded option | Default | Meaning |
 |---|---|---|---|
-| `--raft-snapshot-max-pending-bytes` | `RaftSnapshotMaxPendingBytes` | 512 MiB | Total staged bytes across receive sessions, on disk and in memory together. |
-| `--raft-snapshot-max-pending-sessions` | `RaftSnapshotMaxPendingSessions` | 8 | Concurrent receive sessions. |
-| `--raft-snapshot-staging-directory` | `RaftSnapshotStagingDirectory` | See below | Private directory for spilling received bytes. |
-| `--raft-snapshot-staging-memory-bytes` | `RaftSnapshotStagingMemoryBytes` | 64 MiB | Resident staged-byte budget with a staging directory; zero stages entirely on disk. Ignored without a directory. |
+| `--raft-snapshot-max-pending-bytes` | `RaftSnapshotMaxPendingBytes` | 512 MiB | Total staged bytes across receive sessions, on disk and in memory together, including installing sessions. Must be positive. |
+| `--raft-snapshot-max-pending-sessions` | `RaftSnapshotMaxPendingSessions` | 8 | Concurrent receive sessions across all partitions. Older inactive sessions can be evicted after the cap. Must be positive. |
+| `--raft-snapshot-receive-session-ttl` | No corresponding option | 30 s | Idle receive-session lifetime before the receiver drops its buffered bytes. |
+| `--raft-snapshot-staging-directory` | `RaftSnapshotStagingDirectory` | See below | Private per-node directory for spilling received bytes. |
+| `--raft-snapshot-staging-memory-bytes` | `RaftSnapshotStagingMemoryBytes` | 64 MiB | Resident staged-byte budget with a staging directory; zero stages entirely on disk. Ignored without a directory. Must be nonnegative. |
 | `--raft-snapshot-chunk-ack-timeout` | `RaftSnapshotChunkAckTimeout` | 15 s | Bound a chunk acknowledgement or install-status call; not a total install deadline. |
 | `--raft-snapshot-transfer-step-timeout` | `RaftSnapshotTransferStepTimeout` | 120 s | Bound lack of progress in export, stream reads, sends, or the install's reported bytes read; not total transfer/install duration. |
 | `--raft-reseed-request-timeout` | No corresponding option | 180 s | Bounds a requested repair's apply hold and the leader's pending checkpoint request. |
+| `--raft-allow-legacy-snapshot-senders` | No corresponding option | disabled | Accept snapshot chunks from older senders that omit session metadata. Use only for temporary mixed-version upgrades. |
+| `--raft-grpc-enable-snapshot-compression` | No corresponding option | disabled | Compress Raft snapshot transfers sent over gRPC. |
 
-Server durations in this table are **milliseconds** on the command line. Embedded durations are
-`TimeSpan`. Pending-byte/session caps must be positive and staging-memory bytes must be nonnegative.
+Embedded timeouts must be positive, and an explicitly set chunk-ack timeout above the effective step timeout is rejected.
 
-The server default is no staging directory, so all staged bytes remain in memory. Embedded nodes with
-`Storage = "sqlite"` or `"rocksdb"` and a `StoragePath` default to
-`{StoragePath}/snapshot-staging_{StorageRevision}`; other embedded nodes default to memory staging.
-An explicit embedded staging directory overrides this choice. `EmbeddedKahunaCluster.CreateInMemoryAsync`
-gives each member a subdirectory named for that member under an explicit base staging directory. Without a fixed `StorageRevision`, the automatic staging
-directory gets a fresh GUID on each construction; use a stable revision when reopening stored state.
+Snapshot rescue, export-retry caching, and live-replica compaction holds are leader-side catch-up settings. They are listed under [Raft Communication](/docs/server-configuration/#raft-communication) and explained in [Snapshot Catch-Up and Log Retention](/docs/architecture/raft/#snapshot-catch-up-and-log-retention).
 
-Directories must be private to one node: Kommander deletes spill files there at startup. Distinct
-storage revisions provide distinct automatic directories when hosts share a storage path. Spill-to-disk
-limits staged-byte residency, not the decoded stores, export buffers, backend caches or total heap.
-A spill-file write failure fails that receive session and causes sender retries. Size the pending cap above the largest expected partition snapshot even when staging on disk.
+### Receive Staging
 
-Current peers separate **receipt** from **installation**. A polling sender's final chunk can receive
-`InstallPending` once the complete snapshot is staged and verified. The sender then polls for
-`Installed`, `SkippedAlreadyCovered`, or failure, rather than holding one chunk RPC open for the entire
-import. A sender that does not use install polling retains the older behavior: its terminal chunk waits
-for installation to finish.
+The server default is no staging directory, so all staged bytes remain in memory. Embedded nodes with `Storage = "sqlite"` or `"rocksdb"` and a `StoragePath` default to `{StoragePath}/snapshot-staging_{StorageRevision}`; other embedded nodes default to memory staging. An explicit embedded staging directory must be nonblank and overrides this choice. `EmbeddedKahunaCluster.CreateInMemoryAsync` gives each member a subdirectory named for that member under an explicit base staging directory; the cluster still uses memory backend and WAL storage. Without a fixed `StorageRevision`, the automatic staging directory gets a fresh GUID on each construction; use a stable revision when reopening stored state.
 
-Each chunk or status call is bounded by the smaller of chunk-ack and transfer-step timeouts. During
-installation, the sender also watches the receiver's reported count of staged bytes read. Progress
-resets the transfer-step stall clock, so an install can take longer than 120 seconds while progressing.
-No byte progress for the step timeout, or unanswered status calls for the acknowledgement bound,
-fails that attempt and triggers normal retry backoff. A long storage operation after reads stop can
-therefore hit the stall bound even if the receiver remains alive. Increase the relevant budget for
-observed stalls; total partition install time alone is no longer a reason to increase chunk-ack timeout.
-Embedded validation still rejects an explicitly set chunk-ack timeout above the effective step timeout.
+Directories must be private to one node: Kommander deletes spill files there at startup. Distinct storage revisions provide distinct automatic directories when hosts share a storage path. Spill-to-disk limits staged-byte residency, not the decoded stores, export buffers, backend caches, or total heap. A spill-file write failure fails that receive session and causes sender retries. Size the pending cap above the largest expected partition snapshot even when staging on disk.
 
-While an install of a partition is queued or running, the receiver stages no second snapshot of that
-partition and drops its other pending sessions. A polling sender learns which install is already
-running and waits for it. Repeated terminal chunks do not start another import. If an acknowledgement
-was lost, the next attempt queries the remembered session before exporting again; completed outcomes
-are retained in process so a sender can discover them. A receiver restart can lose that install record,
-requiring a new transfer. None of these waits roll back partial application state.
+### Acknowledgement and Deadlines
+
+Peers separate **receipt** from **installation**. A polling sender's final chunk can receive `InstallPending` once the complete snapshot is staged and verified. The sender then polls for `Installed`, `SkippedAlreadyCovered`, or failure, rather than holding one chunk RPC open for the entire import. A sender that does not use install polling keeps its terminal chunk open until installation finishes.
+
+The polling exchange between the leader and the receiving replica:
+
+```mermaid
+sequenceDiagram
+    participant L as Partition leader
+    participant R as Receiving replica
+    Note over L: Export the partition
+    loop Each chunk
+        L->>R: Snapshot chunk
+        R-->>L: ChunkAccepted
+    end
+    L->>R: Final chunk
+    Note over R: Staged and verified
+    R-->>L: InstallPending
+    loop While the install runs
+        L->>R: Status poll
+        R-->>L: InstallPending and bytes read
+    end
+    L->>R: Status poll
+    R-->>L: Installed or SkippedAlreadyCovered
+    Note over L,R: Replica replays the retained log tail
+```
+
+Each chunk or status call is bounded by the smaller of chunk-ack and transfer-step timeouts. During installation, the sender also watches the receiver's reported count of staged bytes read. Progress resets the transfer-step stall clock, so an install can take longer than 120 seconds while progressing. No byte progress for the step timeout, or unanswered status calls for the acknowledgement bound, fails that attempt and triggers normal retry backoff. A long storage operation after reads stop can therefore hit the stall bound even if the receiver remains alive. Increase the relevant budget for observed stalls; total partition install time alone is not a reason to increase chunk-ack timeout.
+
+While an install of a partition is queued or running, the receiver stages no second snapshot of that partition and drops its other pending sessions. Receive byte and session caps stay active with disk staging. A polling sender learns which install is already running and waits for it. Repeated terminal chunks do not start another import. If an acknowledgement was lost, the next attempt queries the remembered session before exporting again; completed outcomes are retained in process so a sender can discover them. A receiver restart can lose that install record, requiring a new transfer. A lost acknowledgement does not roll back an install already running, and none of these waits roll back partial application state.
+
+### Configuration Example
 
 For example, configure a persistent embedded host's receive path (other options omitted):
 
@@ -158,41 +115,9 @@ kahuna-server \
   --raft-snapshot-transfer-step-timeout 120000
 ```
 
-## Replication scheduling and log retention
-
-The following settings describe Kahuna's pinned **Kommander 1.11.3** behavior. These **server** options are passed to `RaftConfiguration`. They do not have matching
-properties on `EmbeddedKahunaOptions` today; do not assume server/embedded configuration parity.
-
-| Flag | Default | Semantics |
-|---|---|---|
-| `--raft-fan-out-before-local-write` | `true` | Queue the leader's proposed write and send to followers concurrently. Quorum completion still requires the leader's local write to be durable. If that write fails after fan-out, followers may hold the proposal: the outcome can be unknown, rather than proof of rejection. |
-| `--raft-follower-apply-in-own-turn` | `true` | Acknowledge follower appends before delivering committed entries to the application in separate executor turns. Apply remains ordered; a replication acknowledgement is not proof that the follower's application has caught up. The system partition still applies inline. |
-| `--raft-follower-apply-turn-time` | 100 µs | Cooperative time budget per follower apply turn; at least one entry is delivered. `0` leaves only the entry budget. A long callback can exceed the time budget. |
-| `--raft-follower-apply-turn-budget` | 1024 | Entry budget per follower turn; nonpositive disables the count bound. A large backlog can increase the effective budget. |
-| `--raft-compaction-live-replica-lag-window` | 180000 ms | Time-sized recent history that raises the live-replica retention depth. `0` uses the entry budget alone. |
-| `--raft-compaction-live-replica-lag-cap` | 10000000 entries | Caps the window's increase; nonpositive disables that increase. Does not lower a larger entry budget. |
-
-The effective retention depth is
-`max(CompactionLiveReplicaLagBudget, min(recent-window entries, CompactionLiveReplicaLagCap))` when the
-window is enabled. `--raft-compaction-live-replica-lag-budget` defaults to 1,000,000 entries. Retention
-uses the leader's observed commit rate; a new leader initially uses the entry budget. It is a bounded
-catch-up aid, **not a guarantee that a pause of that many milliseconds always avoids a snapshot**.
-Liveness, the separate silent-peer retention window, checkpoints, application durability and PITR floors
-also constrain compaction. A replica outside retained history still needs snapshot seeding.
-
-`--raft-grpc-max-message-bytes` defaults to 16 MiB and bounds peer send/receive messages. Keep outbound
-batch/backfill payload limits below it to allow protocol overhead. Raise receivers' message limits
-before raising senders' payload sizes. These transport limits do not replace snapshot staging caps.
-
-## Followers Retain the Leader's Catch-Up Floor
-
-The leader now sends its effective live-replica retention floor and composed entry budget on AppendLogs/heartbeat traffic. Followers apply that floor to their own WAL compaction when accepting the term's leader, so a future leader retains the same protected catch-up history instead of having already compacted it away. A zero floor report preserves the previous floor; an explicit no-constraint report clears it. Application-durability and PITR floors still constrain compaction independently.
-
-This extends the bounded retention policy across replicas; it does not retain all history indefinitely or guarantee that a lagging replica can avoid snapshot seeding.
-
 ## Install Outcomes and Diagnostics
 
-`Installed` means application import and the durable WAL boundary completed. `SkippedAlreadyCovered` means the receiver proved that its application/boundary already covers the requested state, so it did not import. Senders advance from the reported covered index and log a skip separately from a seeded replica. Merely accepting the terminal bytes (`ChunkAccepted`) is not accepted as installation success.
+`Installed` means application import and the durable [WAL](/docs/glossary/#write-ahead-log-wal) boundary completed. `SkippedAlreadyCovered` means the receiver proved that its application/boundary already covers the requested state, so it did not import. Senders advance from the reported covered index and log a skip separately from a seeded replica. Merely accepting the terminal bytes (`ChunkAccepted`) is not accepted as installation success.
 
 Skip logs appear at Warning with the rule and the snapshot, applied, installed-boundary, and present/committed positions. A skip whose contiguous present position is below the snapshot is logged as an error. Use these positions to distinguish already-covered state from an unexpected log hole.
 
@@ -206,8 +131,8 @@ Embedded hosts can query `node.Raft.GetSnapshotStatuses(partitionId)` for sender
 | `raft.snapshot.install_duration_ms` | Receiver install duration from terminal chunk to outcome. |
 | `raft.snapshot.install_peak_heap_bytes` | Sampled managed-heap high-water mark around installation; it does not fall when an install ends and is not a precise per-partition allocation measurement. |
 
-## Export Ordering and Catch-Up Grace
-
-Whole-partition export captures prepared intents and the committed-head ledger before draining persistence, then scans rows and locks. This order ensures a captured head without its intent has its materialized row flushed before the scan. A by-reference replay already reflected by an installed snapshot verifies persisted row coverage; a ledger entry alone is not proof that the value exists. Missing reconstruction remains a containment condition, not a silently skipped write.
+## Catch-Up Grace After a Snapshot
 
 Backfill progress accounts for the follower's reported frontiers rather than only its committed index. A recently snapshot-seeded follower can defer escalation for the no-progress pause cap plus an estimated catch-up duration. The estimate uses its gap at install and the leader's subsequent commit rate; `--raft-backfill-seeded-catch-up-grace-cap` caps that catch-up component at 180,000 ms (zero disables the grace). When the rate is not yet measurable, the component uses that cap. This is not proof that the follower is progressing. The grace delays escalation, not the stall warning, and does not postpone repair indefinitely.
+
+How long a leader retains log history before a lagging follower needs a snapshot is described in [Snapshot Catch-Up and Log Retention](/docs/architecture/raft/#snapshot-catch-up-and-log-retention).

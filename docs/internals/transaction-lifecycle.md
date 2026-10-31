@@ -1,6 +1,6 @@
 # Transaction Lifecycle
 
-A transaction groups several key/value operations into one attempt to commit or roll back. In Kahuna, those keys can belong to different partitions and be served by different nodes. The transaction coordinator tracks the work and coordinates the outcome.
+A transaction groups several key/value operations into one attempt to commit or roll back, like a SQL transaction. In Kahuna, those keys can belong to different partitions and be served by different nodes. The transaction coordinator tracks the work and coordinates the outcome.
 
 This page starts with the vocabulary and a worked example, then follows the implementation in more detail. You do not need prior knowledge of Raft, MVCC, or two-phase commit. If you want to write an application first, start with [Transactions](/docs/distributed-keyvalue-store/transactions/) and the [.NET](/docs/dotnet-client/) or [TypeScript](/docs/typescript-client/) client examples.
 
@@ -8,7 +8,9 @@ The main distinction to keep in mind is **staged, prepared, and committed**. A s
 
 ## Basic Concepts
 
-| Term | Meaning in this page |
+This table is the shared glossary for the transaction pages.
+
+| Term | Meaning |
 |---|---|
 | **Node** | A running Kahuna server or embedded host. |
 | **Partition** | A group of keys with its own replication and ordering. A transaction can involve several partitions. |
@@ -17,17 +19,23 @@ The main distinction to keep in mind is **staged, prepared, and committed**. A s
 | **Participant** | A partition that executes work for the transaction. Modified persistent participants must prepare their changes before the coordinator decides commit. |
 | **Transaction handle** | The identity the client uses for later operations and finalization. It routes the live session back to its original coordinator node. |
 | **Working set** | The coordinator's record of confirmed reads, modified keys, and acquired locks. Commit uses this record. |
+| **Read set and write set** | The keys the server observed during latest-state reads (used for conflict detection when validation is enabled), and the keys it confirmed as modified by the transaction. |
+| **Operation ID** | Stable identity assigned to an interactive operation, so a retry can return the same result without applying the mutation twice. |
 | **MVCC** | Multi-version concurrency control: keep proposed transaction values separate from committed values, and retain history for historical reads. |
 | **Write intent** | State identifying a transaction that intends to change a key. An unprepared intent is leader-local; a persistent prepared intent is replicated and includes the proposed value. |
 | **Revision and write base** | A revision is a per-key version number. A write base is the committed revision a proposed change was derived from. |
 | **Read dependency** | A value or absence the transaction observed and depends on. Validation checks whether competing work invalidated that observation. |
 | **Lock and lease** | A transaction lock excludes conflicting operations while held. A lease limits how long ownership lasts without renewal. These locks are leader-local, and renewal can leave gaps. |
+| **Prefix and range locks** | Predicate protection: pessimistic locks over a bucket prefix or an ordered key range that block conflicting mutations, including new keys, while held. They are leader-local; renewal is best-effort and final validation remains necessary. |
+| **Historical read** | A read at a fixed `ReadTimestamp` that selects retained revisions committed at or before that HLC. Historical sessions cannot write. |
 | **Validation** | Checking whether the observations and write bases used by the transaction are still acceptable. A concurrent change can cause an abort. |
 | **Raft and quorum** | Raft orders replicated entries for a partition. A quorum is the required majority of that partition's voters; writing on one node alone is insufficient for persistent commit. |
 | **WAL** | Write-ahead log: the ordered records used to reconstruct replicated state after failure. Process-loss durability requires a persistent WAL and durable write settings. |
 | **HLC** | Hybrid Logical Clock: a timestamp containing physical time and logical ordering information. Transaction identity, commit time, and an explicitly requested historical read time have different roles. |
 | **Canonical decision** | The authoritative transaction record, which moves from `Undecided` to `Commit` or `Abort`. Participants resolve their prepared work from it. |
+| **Decision durability** | The session policy for finalization. Persistent modifications use a canonical transaction record and replicated prepared intents under both `BestEffort` (the default) and `Durable`; explicit `DecisionDurability.Durable` also rejects ephemeral modified keys. |
 | **Materialization and settlement** | Materialization installs committed values into the normal key/value projection. Settlement finishes participant work and removes prepared intents. |
+| **Priority admission** | Optional per-node start gate that can queue transactions by priority when script or session concurrency ceilings are enabled. |
 
 An **actor** is a local worker that processes one message at a time and owns mutable state for its keys. Actors provide local serialization; Raft provides replicated ordering. An actor and a Raft partition are different units, so one actor can handle keys from several partitions.
 
@@ -73,8 +81,15 @@ The first question after a failed request is whether Kahuna established a final 
 | `Aborted` | A definite non-committing outcome, including conflict, lost staging, or confirmed presumed abort. | If retrying the business operation, start a new transaction and recompute from new reads. |
 | `MustRetry` | The outcome is uncertain or transient work remains. | Retry the same finalization with the same handle; do not add new operations or assume rollback. |
 | `Errored` | The handle is unknown, expired, or its outcome is unavailable. | Resolve the uncertainty at the application boundary; this result alone does not prove rollback. |
+| `InvalidInput` | The request or policy combination is invalid. | Fix the request. |
 
 `Aborted` is terminal and can include stale validation, lost staging, and a confirmed deadline/presumed abort. Admission rejection surfaces as `AdmissionRefused` before a transaction starts. Infrastructure failures and unresolved finalization return `MustRetry` when the outcome cannot yet be established; retry with the same identity.
+
+### Lost Exclusion and Retryable Commit Checks
+
+An interactive transaction that loses a lock, staging, or the original write intent returns terminal `Aborted`; start a new session and recompute from new reads. A self-contained script maps this lost-exclusion abort to `MustRetry`, preserving its reason, so SDK retry handling can rerun the script as a new transaction. Detected data conflicts still return `Aborted`. This distinction does not turn a general `MustRetry` or a transport timeout into proof of rollback.
+
+Commit probes also fail closed with `MustRetry` when leadership, containment, or a peer response prevents proving a key clean or conflicting. An interactive durable finalize retains prepares for retry under the same transaction identity. Successful staged-intent probes hold the intent through commit instead of merely renewing its ordinary lease, and one-phase bundles fence the anchor leadership term before append. See [Staged Writes and Commit Probes](/docs/distributed-keyvalue-store/read-and-lock-semantics/#staged-writes-and-commit-probes) for semantics and metrics.
 
 ## Transaction Shapes
 
@@ -83,7 +98,7 @@ Kahuna has two transaction shapes:
 | Shape | Driven by | Entry point | Transport |
 |---|---|---|---|
 | Script transaction | The server runs a submitted script | `TryExecuteTransactionScript` | REST, gRPC, embedded |
-| Interactive transaction | The client sends operations one by one | `StartTransaction`, operations, `CommitTransaction` | gRPC and embedded |
+| Interactive transaction | The client sends operations one by one | `StartTransaction`, operations, `CommitTransaction` | REST, gRPC, embedded |
 
 Both shapes converge on the same coordinator machinery. A script builds the working set while the script executor runs statements on the server. An interactive session builds the working set across several client round trips.
 
@@ -150,6 +165,12 @@ Leadership loss clears actor-local staging and locks, but the active session sta
 
 See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) and [Durable Settlement](/docs/internals/durable-settlement/) for visibility, settlement encodings, durability floors, and upgrade requirements.
 
+### Leadership Proof for Transaction Locks
+
+A successful lock grant reports its partition and Raft term (the leadership epoch). The coordinator retains the first term per partition. A grant or renewal under a different term marks lost exclusion, and commit checks leadership continuity even for a read-only transaction. A changed term, moved range, or unconfirmed proof returns terminal `Aborted` with `Lost lock: …` for an interactive session, or `MustRetry` for a self-contained script. Reacquiring the lock does not repair a computation based on earlier reads.
+
+The leader also remembers a transaction whose range lock it observed lapsing; commit rejects that holder even within an unchanged term and after renewal. Explicit range-lock leases use monotonic elapsed time inside the actor. Write intents and session-owned lock ceilings still use HLC, and expiry between one-phase validation and apply is not covered. Older nodes without term reporting leave their grants unchecked. One-phase bundles with apply-time validation also check the grant term against the proposal term. See [Detecting Locks Lost During Failover](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover) for an example, rollout limits, and metrics.
+
 ## Server-Owned Working Set
 
 The working set is the coordinator's record of what actually succeeded. For example, a successful write to Alice enters the modified-key list; a failed conditional write does not. Clients carry a transaction handle, but they do not provide the final list of keys to commit.
@@ -161,10 +182,19 @@ As operations complete, the coordinator records:
 - latest-read observations and validation policy
 - transaction-wide snapshot timestamp policy
 - registered operation IDs, pending operations, and completed operation responses
-- timeout, locking mode, decision durability, lifecycle, and finalization state
-- the durable record anchor, once a persistent modified key establishes one
+- timeout, locking mode, decision durability, admission priority, lifecycle, and finalization state
+- the coordinator key and the durable record anchor, once a persistent modified key establishes one
+- variables and script parameters, for script execution
 
-Only confirmed effects are folded into this state. Failed conditional writes and failed lock acquisitions do not become modified keys or held locks.
+Only confirmed effects are folded into this state:
+
+- Successful writes, deletes, and extends record modified keys.
+- Successful point, prefix, and range lock acquisitions record held locks.
+- Explicit releases remove matching lock descriptors.
+- Latest point reads record read observations for cleanup and optional validation.
+- Snapshot reads do not record live read dependencies.
+
+Failed conditional writes and failed lock acquisitions do not become modified keys or held locks.
 
 ## Operation Registration
 
@@ -257,11 +287,11 @@ sequenceDiagram
     Note over P: With deferred settlement this runs in the background
 ```
 
-The decision record is the point of no return. Once it commits as `Commit`, Kahuna must not later report a definite abort for that transaction. If a concurrent recovery pass wins the record as `Abort`, the finalizer reports the record's actual outcome, not the outcome it hoped to write.
+The decision record is the point of no return. Once it commits as `Commit`, Kahuna must not later report a definite abort for that transaction. If a concurrent recovery pass wins the record as `Abort`, the finalizer reports the record's actual outcome, not the outcome it hoped to write. If a participant cannot be resolved immediately, the transaction remains retryable and recovery continues from the canonical record and prepared intents.
 
 A write's base is the committed revision from which it was derived. A lost update would occur if a transaction overwrote a competing change using that outdated base. Validated-base writes get a second check after prepare. The leader checks the current committed base before prepare, each replica remembers the committed head it saw while applying the prepare, and the finalizer asks replicas for those verdicts before writing `Commit`. A `StaleBase` verdict aborts the transaction as a conflict. Missing or unreachable verdicts are counted as unattested and do not by themselves block commit; the canonical decision still follows the ordered record path.
 
-The replica fence has a per-endpoint lag breaker. If a replica repeatedly cannot attest within the apply wait, for example during a disk pause, WAL saturation, or snapshot install, Kahuna keeps asking it for instant verdicts but stops waiting for its apply path on every commit. When this node leads the participant partition, the breaker also reads Raft follower progress: a replica whose durable frontier is too far behind, or whose WAL is stalled, is treated as lagging immediately and is not restored until it both attests and its frontier is back within the bound. Operators can watch `kahuna.durable_tx.replica_fence_lag_transitions{state,reason}`, `kahuna.durable_tx.replica_fence_lagging_replicas`, `kahuna.durable_tx.replica_fence_lagging_asks{kind}`, `kahuna.durable_tx.replica_fence_unattested`, and `kahuna.durable_tx.finalize_replica_fence_ms`.
+The replica fence has a per-endpoint lag breaker. If a replica repeatedly cannot attest within the apply wait, for example during a disk pause, WAL saturation, or snapshot install, Kahuna keeps asking it for instant verdicts but stops waiting for its apply path on every commit. When this node leads the participant partition, the breaker also reads Raft follower progress: a replica whose durable frontier is too far behind, or whose WAL is stalled, is treated as lagging immediately and is not restored until it both attests and its frontier is back within the bound. Full-wait probes bring the replica back into the normal fence after sustained recovery. Operators can watch `kahuna.durable_tx.replica_fence_lag_transitions{state,reason}`, `kahuna.durable_tx.replica_fence_lagging_replicas`, `kahuna.durable_tx.replica_fence_lagging_asks{kind}`, `kahuna.durable_tx.replica_fence_unattested`, and `kahuna.durable_tx.finalize_replica_fence_ms`.
 
 ## Decision Deadlines
 
@@ -274,6 +304,8 @@ commit timestamp + clamp(multiplier x max(finalize p99, per-intent p99 x intent 
 The p99 is the estimated duration below which 99% of locally observed finalizations fall. `clamp` keeps the computed margin between configured minimum and maximum values. It gives healthy coordinators enough time to finish under current load, while bounding how long recovery waits before presuming an undecided transaction was abandoned.
 
 A late commit attempt does not force the record to `Commit`; finalization or recovery drives presumed abort and follows the canonical decision that wins the race. A rising `kahuna.durable_tx.late_commit_rejections` or `kahuna.durable_tx.deadline_expiry_aborts` rate usually means the deadline margin is too tight for current latency.
+
+The deadline estimator measures local elapsed duration, not distributed event order. It sizes the margin for the current manifest as well as observed total latency. Samples with at least 64 intents feed the per-intent estimate; until such a sample exists in the window, all samples feed it conservatively. Estimates are usable from the first sample; before any sample, the floor applies. The configured ceiling still caps the margin, so this is adaptive headroom, not a promise arbitrarily large finalizes finish before their deadline.
 
 ## Aggregator Role
 
@@ -292,9 +324,11 @@ Durable transaction stores are written only by the ordered Raft apply stream. Pr
 
 ## One-Phase Durable Fast Path
 
-When a durable transaction's full participant set is the anchor partition, Kahuna can collapse record initialization, prepare, read validation, and commit decision into one Raft proposal. That removes the usual two durable barriers for single-partition transactions while keeping the decision replicated.
+When a durable transaction's full participant set is the anchor partition, Kahuna can collapse record initialization, prepare, read validation, and commit decision into one Raft proposal. That removes the usual two durable barriers for single-partition transactions while keeping the decision replicated. In a single-process embedded node, read-carrying transactions can also bundle record initialization, prepare, and commit in one ordered apply. In a multi-node group, a read-carrying bundle needs [apply-time validation](#one-phase-apply-time-validation).
 
 If another node leads the anchor partition, the coordinator forwards the whole one-phase bundle as a typed durable operation. The receiving leader submits the record, prepared intent, and decision entries as one atomic scheduler submission under the original range fence. If the remote leader is too old to understand that typed operation, the coordinator falls back to the standard two-phase flow instead of approximating the result.
+
+For hash-routed schemas, [placement groups](/docs/distributed-keyvalue-store/buckets/#placement-groups) such as `orders|rows/...` and `orders|by_customer/...` help keep row and index dependencies on the same partition, so more transactions remain eligible for this path.
 
 With `OnePhaseApplyTimeValidation` enabled, replicas also check same-partition point-read dependencies and validated write bases at apply time against the committed-head ledger. That keeps read-modify-write transactions eligible for the fast path in a multi-node group. Predicate dependencies, such as prefix or range locks, and off-partition read dependencies still use two-phase commit.
 
@@ -303,7 +337,8 @@ The main metric is `kahuna.durable_tx.one_phase_gate{outcome}`:
 | Outcome | Meaning |
 |---------|---------|
 | `entered` | The transaction was eligible for a one-phase attempt. |
-| `read_set_beyond_writes` or `validated_base` | Apply-time validation is off, so the bundle cannot safely carry that dependency in a multi-process group. |
+| `disabled` | The node has no one-phase commit path. |
+| `read_set_beyond_writes`, `validated_base`, or `held_lock` | Apply-time validation is off, so the bundle cannot safely carry that dependency (a read beyond the writes, a validated write base, or a held lock) in a multi-process group. |
 | `predicate_read` | A prefix or range dependency requires the two-phase path. |
 | `off_partition_read` | A read dependency routes to a different partition than the anchor. Co-locate related hash key spaces with a placement group when the workload should stay single-partition. |
 | `non_persistent_read` | The dependency has no persistent committed-head ledger entry. |
@@ -329,12 +364,13 @@ Kahuna handles that window through intent-aware visibility:
 | Bucket, prefix, or range scan | Overlays visible prepared intents, honoring strictly newer heads and resolving foreign decisions when needed |
 | New write | Materializes a committed predecessor intent before deriving revision, existence, and conditional checks |
 | New transaction prepare | Waits or retries while a predecessor still owns the live intent |
+| Snapshot read | Fails safe and retries when it meets a live foreign intent whose commit timestamp is still unknown, instead of guessing around it |
 
 When the canonical record is not local, the read or write path can route a lookup to the anchor-partition leader and retry with the terminal decision. It does not serve the stale pre-transaction value just because settlement has not materialized yet.
 
-Setting `DurableDeferredSettlement` to `false` restores synchronous settlement: the finalizer waits for materialization and settlement before returning success.
+Setting `DurableDeferredSettlement` to `false` in embedded or code-level configuration restores synchronous settlement: the finalizer waits for materialization and settlement before returning success.
 
-By default, durable materialization writes `MaterializeIntent` records. These records carry the intent identity, revision, state, and commit timestamp, but not the value bytes. Each replica resolves the value from the prepared intent it already holds, which avoids sending and storing the same committed value through Raft a second time. Use by-value materialization only during mixed-version upgrades from builds that cannot apply `MaterializeIntent`.
+By default, durable materialization writes `MaterializeIntent` records. These records carry the intent identity, revision, state, and commit timestamp, but not the value bytes. Each replica resolves the value from the prepared intent it already holds, which avoids sending and storing the same committed value through Raft and the WAL a second time. This reduces serialization, network traffic, and write amplification for durable transactions. Use by-value materialization (`DurableMaterializeByReference = false`) only during mixed-version upgrades from builds that cannot apply `MaterializeIntent`, until every node has been upgraded.
 
 ## One-Phase Apply-Time Validation
 
@@ -346,7 +382,7 @@ The option is off by default. Enable it only after every node in the group runs 
 
 ## Recovery
 
-Recovery finishes durable work when the original finalizer cannot, for example after a coordinator crash or participant leader change. It reads the authoritative decision rather than treating a missing response as an abort. `PreparedIntentRecoveryActor` periodically drives `DurableTransactionRecovery` for partitions the node currently leads.
+Recovery finishes durable work when the original finalizer cannot, for example after a coordinator crash or participant leader change. It reads the authoritative decision rather than treating a missing response as an abort. `PreparedIntentRecoveryActor` drives `DurableTransactionRecovery` for partitions the node currently leads. It wakes periodically and when leadership changes.
 
 For each unresolved intent whose recovery deadline is due:
 
@@ -354,6 +390,7 @@ For each unresolved intent whose recovery deadline is due:
 - record says `Abort`: discard and settle the intent
 - record is `Undecided` inside its deadline: leave it for the live coordinator
 - record is `Undecided` after its deadline, or missing within the protected canonical-record retention horizon: drive an idempotent presumed abort, then resolve from the record that actually won
+- a matching completion receipt: recognize a participant that already committed
 
 Recovery and request-path finalization can run concurrently. Initialize, prepare, decide, materialize, and settle are idempotent: repeating them for the same identity does not create a second independent transaction or reverse a terminal decision. Recovery never guesses a terminal decision while the canonical record is still undecided inside its deadline.
 
@@ -365,9 +402,9 @@ A missing canonical record is not always proof of abort. Beyond the protected ou
 
 A completion receipt is evidence that a participant already applied a committed change. When a committed intent materializes, Kahuna records this receipt with the key/value commit. A duplicate commit or recovery re-drive can use the receipt to prove that the participant already applied the transaction after the original MVCC state is gone.
 
-The receipt identity includes transaction, key, and durability, so a persistent receipt cannot satisfy an ephemeral operation for the same logical key.
+The receipt identity includes transaction, key, and durability, so a persistent receipt cannot satisfy an ephemeral operation for the same logical key. Receipts are restored from the committed key/value log and included in snapshots before WAL retention advances.
 
-Range split and merge transfer durable transaction records, prepared intents, and completion receipts to the destination partition before cutover. The transfer is replicated on the destination partition's Raft log and gates cutover. Range-lock transfer is separate and best-effort because range locks are in-memory leader state.
+Range split and merge transfer durable transaction records, prepared intents, and completion receipts to the destination partition before cutover. The transfer is replicated on the destination partition's Raft log and gates cutover: if the handoff cannot be made durable, cutover is aborted instead of risking loss of recovery state. Range-lock transfer is separate and best-effort because range locks are in-memory leader state.
 
 ## WAL and Persistence
 
@@ -382,8 +419,8 @@ Backend persistence is not the commit point. It is the materialized store that l
 
 These storage optimizations affect how WAL writes are grouped and acknowledged:
 
-- Group commit can coalesce several partitions into one storage flush.
-- Single-fsync commit can acknowledge an auto-commit proposal after the propose quorum is durable and write the committed marker lazily.
+- Group commit can coalesce several partitions into one storage flush (`fsync`).
+- Single-fsync commit removes one disk flush from the caller's wait. Without it, an auto-commit proposal waits for two flushes in a row: the proposal, then a "committed" marker. With it, Kahuna acknowledges once a quorum has durably stored the proposal, which is already the commit point, and writes the committed marker later.
 
 ## Bounds and Backpressure
 
@@ -391,32 +428,43 @@ Bounds limit memory and queued work. Backpressure means refusing or delaying new
 
 Important transaction bounds:
 
-| Setting or limit | Purpose |
-|---|---|
-| `DurableDecisionOutstandingMax` | Hard cap on outstanding undecided canonical records admitted by a node |
-| `DurableRecordRetentionMax` | Count budget for retained terminal durable records |
-| `DurableRecordRetentionMaxBytes` | Estimated heap-byte budget for terminal durable records plus completion receipts |
-| `DurableRecordRetentionHeapPressure` | Last-resort heap pressure threshold for reclaiming old terminal records |
-| `DurableRecordRetentionFloor` | Minimum terminal-record age protected from early budget reclamation |
-| `DurableMaintenanceInterval` | Tick interval for prepared-intent recovery and durable retention sweeps |
-| `DurablePreparedIntentMaxCount` | Resident prepared-intent count bound |
-| `DurablePreparedIntentMaxBytes` | Resident prepared-intent value-byte bound |
-| `DurableMaterializeOnResolve` | Installs values from local prepared intents during settlement apply; enable only after all readers support it. See [Durable Settlement](/docs/internals/durable-settlement/). |
-| `DurableMaterializeByReference` | Enables value-free committed-intent materialization |
-| `SessionOwnedIntentCeilingMs` | Maximum age for orphaned session-owned write intents and no-expiry range locks |
-| `OnePhaseApplyTimeValidation` | Allows eligible bundled durable commits to validate reads and bases at apply time |
-| `TransactionOutcomeRetentionMax` | Retained terminal outcome count for duplicate finalize idempotency |
-| `TransactionOutcomeRetentionTtl` | Retained terminal outcome age window |
-| `MaxTransactionTimeout` | Upper bound for admitted interactive session lifetime |
-| `MaxConcurrentTransactions` | Script transaction concurrency ceiling. `0` disables the script gate |
-| `MaxConcurrentSessions` | Interactive session concurrency ceiling. `0` disables the session gate |
-| `TransactionPriorityReservedSlots` | Slots reserved for `High` and `Critical` work |
-| `TransactionPriorityAgingThreshold` | Wait time per effective priority promotion |
-| `TransactionPriorityMaxQueued` | Waiters allowed per gate before admission returns `AdmissionRefused` |
-| `DefaultAdmissionWaitMs` | Admission wait used when the caller does not specify one |
-| `MaxAdmissionWaitMs` | Maximum admission wait allowed by the server |
-| Pending operations per session | In-flight operation bound |
-| Total operations per session | Retained operation-record bound |
+| Setting or limit | Default | Purpose |
+|---|---:|---|
+| `TransactionOutcomeRetentionMax` | `10000` | Retained terminal outcome count for duplicate finalize idempotency. A non-positive value disables best-effort outcome retention. |
+| `TransactionOutcomeRetentionTtl` | `5 minutes` | Age window for terminal outcomes and completed durable decisions. A non-positive value disables age-based removal. |
+| `DurableDecisionOutstandingMax` | `100000` | Hard cap on outstanding undecided canonical records admitted by a node. Completed records do not count against this budget. |
+| `DurableRecordRetentionMax` | `200000` | Count budget for resident terminal durable records per node before older records are reclaimed early. `0` disables the count budget. |
+| `DurableRecordRetentionMaxBytes` | `268435456` | Estimated heap-byte budget for terminal durable records plus completion receipts. `0` disables the byte budget. |
+| `DurableRecordRetentionHeapPressure` | `0.85` | Last-resort managed-heap pressure threshold that triggers aggressive reclamation of terminal records older than the retention floor. `0` disables it. |
+| `DurableRecordRetentionFloor` | `90 seconds` | Minimum terminal-record age protected from early reclamation by count, byte, or heap-pressure budgets. |
+| `DurableMaintenanceInterval` | `5 seconds` | Tick interval for prepared-intent recovery and durable retention sweeps, clamped to `CollectionInterval`; nonpositive uses that interval. |
+| `DurablePreparedIntentMaxCount` | `500000` | Resident prepared-intent count bound. A non-positive value disables the count bound. |
+| `DurablePreparedIntentMaxBytes` | `1073741824` | Resident prepared-intent value-byte bound. A non-positive value disables the byte bound. |
+| `DurableDeferredSettlement` | `true` | Runs durable materialization and settlement after the decision record is durable and success can be returned. `false` awaits settlement inline. |
+| `DurableMaterializeOnResolve` | `false` | Installs values from local prepared intents during settlement apply; enable only after all readers support it. See [Durable Settlement](/docs/internals/durable-settlement/). |
+| `DurableMaterializeByReference` | `true` | Uses value-free `MaterializeIntent` records after commit. Set `false` during mixed-version rollouts from builds that cannot apply that record. |
+| `SessionOwnedIntentCeilingMs` | `0` | Maximum age for orphaned session-owned write intents and no-expiry range locks. `0` derives the ceiling from the transaction timeout, reaper grace, and participant-effect TTL. |
+| `OnePhaseApplyTimeValidation` | `false` | Embedded/code-level option that allows eligible bundled durable commits in multi-process Raft groups to validate reads and bases at apply time. Enable only after every node supports the committed-head ledger. |
+| `DurableDecisionDeadlineFloorMs` | `5000` | Lower clamp for the durable decision-deadline margin. |
+| `DurableDecisionDeadlineCeilingMs` | `60000` | Upper clamp for the durable decision-deadline margin. |
+| `DurableDecisionDeadlineMultiplier` | `4` | Multiplier applied to the larger of total finalize p99 and per-intent p99 × manifest size, before clamping the decision-deadline margin. |
+| `CollectionInterval` | `60 seconds` | Transaction reaper and range-lock renewal cadence, and upper bound for the durable maintenance cadence. |
+| `MaxTransactionTimeout` | `300000` ms | Upper bound for admitted interactive session lifetime and script transaction timeout. |
+| `MaxConcurrentTransactions` | `0` | Script transaction concurrency ceiling. `0` disables the script gate. |
+| `MaxConcurrentSessions` | `0` | Interactive session concurrency ceiling. `0` disables the session gate. |
+| `TransactionPriorityReservedSlots` | `0` | Slots reserved for `High` and `Critical` work when a gate is enabled. |
+| `TransactionPriorityAgingThreshold` | `1000 ms` | Wait time per effective priority promotion. `0` disables aging. |
+| `TransactionPriorityMaxQueued` | `4096` | Waiters allowed per gate before admission returns `AdmissionRefused`. `0` makes the queue unbounded. |
+| `DefaultAdmissionWaitMs` | `5000` | Admission wait used when the caller does not specify one. |
+| `MaxAdmissionWaitMs` | `30000` | Maximum admission wait allowed by the server. |
+| Pending operations per session | `4096` | Safety bound for in-flight registered operations in one transaction. Additional registrations receive a retryable capacity rejection. |
+| Total operations per session | `65536` | Safety bound for retained operation records in one transaction. Exceeding it is terminal for that session. |
+| Participant in-doubt results | `8192 per node` | Bounded cache for acknowledgement-loss recovery. |
+| Participant finalize retries | `20 retries, 250 ms apart` | Retry window used while committing or rolling back prepared participants. |
+
+Durable admission is bounded by `DurableDecisionOutstandingMax`, independently of `TransactionOutcomeRetentionMax`. Kahuna rejects a new durable transaction before prepare when the outstanding-record budget is full, and it never evicts recovery state to make room.
+
+`DurableDecisionDeadlineFloorMs` and `DurableDecisionDeadlineCeilingMs` are embedded/runtime options. The server CLI exposes durable record-retention budgets and the durable maintenance interval, while `DurableDecisionDeadlineMultiplier` remains a code-level configuration field.
 
 Important aggregator bounds:
 
@@ -433,17 +481,3 @@ Important aggregator bounds:
 ## Where to Go Next
 
 For application development, use [Transactions](/docs/distributed-keyvalue-store/transactions/) for API examples and [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) for read visibility and lock behavior. For operations or implementation work, continue with [Durable Settlement](/docs/internals/durable-settlement/), [WAL and Persistence](/docs/internals/wal-and-persistence/), and [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/).
-
-## Leadership Proof for Transaction Locks
-
-A successful lock grant reports its partition and Raft term (the leadership epoch). The coordinator retains the first term per partition. A grant or renewal under a different term marks lost exclusion, and commit checks leadership continuity even for a read-only transaction. A changed term, moved range, or unconfirmed proof returns terminal `Aborted` with `Lost lock: …` for an interactive session, or `MustRetry` for a self-contained script. Reacquiring the lock does not repair a computation based on earlier reads.
-
-The leader also remembers a transaction whose range lock it observed lapsing; commit rejects that holder even within an unchanged term and after renewal. Explicit range-lock leases use monotonic elapsed time inside the actor. Write intents and session-owned lock ceilings still use HLC, and expiry between one-phase validation and apply is not covered. Older nodes without term reporting leave their grants unchecked. One-phase bundles with apply-time validation also check the grant term against the proposal term. See [Detecting Locks Lost During Failover](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover) for an example, rollout limits, and metrics.
-
-## Lost Exclusion and Retryable Commit Checks
-
-An interactive transaction that loses a lock, staging, or the original write intent returns terminal `Aborted`; start a new session and recompute from new reads. A self-contained script maps this lost-exclusion abort to `MustRetry`, preserving its reason, so SDK retry handling can rerun the script as a new transaction. Detected data conflicts still return `Aborted`. This distinction does not turn a general `MustRetry` or a transport timeout into proof of rollback.
-
-Commit probes also fail closed with `MustRetry` when leadership, containment, or a peer response prevents proving a key clean or conflicting. An interactive durable finalize retains prepares for retry under the same transaction identity. Successful staged-intent probes hold the intent through commit instead of merely renewing its ordinary lease, and one-phase bundles fence the anchor leadership term before append. See [Staged Writes and Commit Probes](/docs/distributed-keyvalue-store/read-and-lock-semantics/#staged-writes-and-commit-probes) for semantics and metrics.
-
-The deadline estimator measures local elapsed duration, not distributed event order. It now sizes the margin for the current manifest as well as observed total latency. Samples with at least 64 intents feed the per-intent estimate; until such a sample exists in the window, all samples feed it conservatively. Estimates are usable from the first sample; before any sample, the floor applies. The configured ceiling still caps the margin, so this is adaptive headroom, not a promise arbitrarily large finalizes finish before their deadline.

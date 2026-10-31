@@ -1,6 +1,6 @@
 # Batched Point and Range Probes
 
-Embedding hosts and storage integrations can use `IKahuna.LocateAndTryProbeMany` and `IKahuna.LocateAndTryProbeManyRanges` to read related keys or bounded ranges with fewer actor and backend-scheduler hand-offs. These are server/embedded APIs with inter-node gRPC support, not new methods on `Kahuna.Client` or the TypeScript SDK.
+When an embedding host or storage integration needs many related keys or bounded ranges at once, a batched probe reads them with fewer hand-offs between [actors](/docs/glossary/#actor) and the backend scheduler than one get or scan per item. Use `IKahuna.LocateAndTryProbeMany` and `IKahuna.LocateAndTryProbeManyRanges`. These are server/embedded APIs with inter-node gRPC support, not new methods on `Kahuna.Client` or the TypeScript SDK.
 
 A **point probe** returns the ordinary get outcome for each requested key. A **range probe** returns one ordinary bounded range page per seek. Both preserve input order and can optionally acquire Shared transaction locks as part of the read. Inspect every result: a batch can contain successful reads, missing keys, refusals, and held locks together.
 
@@ -26,7 +26,7 @@ for (int i = 0; i < results.Length; i++)
 
 Keys must belong to one key space, determined by the portion before the last `/`. Keys without `/` are individual key spaces and can only be probed alone without locks. All items share durability and the requested read timestamp. A point result exposes `Type`, `Entry`, `HolderTransactionId`, and `Locked`.
 
-The router groups requests by partition, retains order within each group, and combines remote work per leader. A split key space can therefore involve several actors and leaders. Point visibility and transaction pins follow the same rules as single gets; batching does not establish a cluster-wide atomic snapshot. Use the [transaction read rules](/docs/distributed-keyvalue-store/read-and-lock-semantics/) to choose latest or fixed-timestamp reads.
+The router groups requests by [partition](/docs/glossary/#partition), retains order within each group, and combines remote work per leader. A split key space can therefore involve several actors and leaders. Point visibility and transaction pins follow the same rules as single gets; batching does not establish a cluster-wide atomic snapshot. Use the [transaction read rules](/docs/distributed-keyvalue-store/read-and-lock-semantics/) to choose latest or fixed-timestamp reads.
 
 ## Bounded Range Reads
 
@@ -52,7 +52,7 @@ A partition-local range-probe handler reads its seeks at one read instant. The r
 
 ## Shared Locks and Partial Results
 
-`KeyValueProbeLock.Shared` requires a nonzero transaction identity and a nonnegative lease. A point key uses Shared bounds `[key,key]`; a range seek locks its requested bounds, not just its returned rows. In the actor path the lock grant and initial read occur in the same turn. These are the usual leader-local transaction range locks, with the same renewal, compatibility, and failure limits.
+`KeyValueProbeLock.Shared` requires a nonzero transaction identity and a nonnegative [lease](/docs/glossary/#lease). A point key uses Shared bounds `[key,key]`; a range seek locks its requested bounds, not just its returned rows. In the actor path the lock grant and initial read occur in the same turn. These are the usual leader-local transaction range locks, with the same renewal, compatibility, and failure limits.
 
 Within each partition group, the first **lock-acquisition refusal** stops further work in that group. Earlier items retain their results and locks; the refused item reports the refusal and holder; later items return `MustRetry` without locks or values. Other partition groups can already have succeeded. A read refusal after a successful lock does not imply release: `Locked` can remain true even if the read returned `MustRetry`. Do not treat a partially refused batch as an automatic rollback.
 
@@ -69,6 +69,14 @@ Lock-grant term proofs still apply. If no routing key can represent a granted ra
 | `KahunaConfiguration.MaxProbeBatchSize` | `512` | Keys in a point probe or seeks in a range probe. |
 | `KahunaConfiguration.MaxProbeRangeEntries` | `65536` | Sum of requested range-seek limits. |
 
-Oversized or mixed-key-space point requests, malformed range requests, and locking without a transaction return `InvalidInput` for the request's result slots. Split large requests to fit. These settings are core configuration fields; they have no server CLI flags or corresponding `EmbeddedKahunaOptions` fields today.
+Oversized or mixed-key-space point requests, malformed range requests, and locking without a transaction return `InvalidInput` for the request's result slots. Split large requests to fit. These settings are core configuration fields; they have no server CLI flags or corresponding `EmbeddedKahunaOptions` fields.
 
 Point probes batch missing-head reads. On RocksDB/SQLite, range probes read the open seeks together in one scheduler operation and merge them in one resume turn per round; seeks needing more source rows continue in later rounds. The memory backend can read and merge inline under a shared inspection budget, then fall back to the scheduler. This reduces hand-offs rather than promising parallel disk reads or constant latency. See [Backend I/O Scheduler](/docs/backend-io-scheduler/) and [Range-Scan Observations](/docs/internals/range-scan-observations/).
+
+## Scheduler Execution
+
+Persistent range pages on the `memory` backend can read and merge on the key/value actor thread while within the scan inspection budget. Work beyond that budget resumes through the [backend read scheduler](/docs/backend-io-scheduler/), releasing the actor between rounds. RocksDB and SQLite pages continue on the read pool. `kahuna.scan.pages_read_on_actor_total` and `kahuna.scan.pages_read_on_scheduler_total` distinguish those backend page paths.
+
+Range probes follow the same split, as described in [Limits and Execution Cost](#limits-and-execution-cost); they do not parallelize reads within the partition. Explicit end bounds also reach the storage backends and unflushed overlay, so bounded seeks need not read a full page beyond their requested key interval.
+
+Backend schedulers are owned by `KahunaManager` and stop after the actor system drains. That ordering lets in-flight backend I/O finish cleanly during shutdown instead of failing because the shared Raft scheduler already stopped.

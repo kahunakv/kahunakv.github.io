@@ -1,14 +1,14 @@
 
-# Compare-And-Swap (CAS)
+# Compare-and-Set (CAS)
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-A Compare-And-Swap (CAS) operation is critical in a distributed key-value store like Kahuna because it ensures atomic updates and prevents race conditions in environments where multiple clients may try to modify the same key simultaneously. CAS is an atomic operation that:
+Two clients read the same key, both compute a new value, and both write it back. The second write silently erases the first: a **lost update**.
 
- - Compares a key’s current value (or version) against an expected value or revision
- - Only updates the key if the current value matches the expected value or revision
- - Fails safely if another process modified the key in the meantime.
+A compare-and-set (CAS) write prevents this. It succeeds only if the key still has the value or [revision](/docs/glossary/#revision) you expect, and fails if another client changed the key first, so your code can read again and retry. It is the same idea as `UPDATE ... WHERE version = @expected` in SQL.
+
+Because the check against the current version and the write happen as one step, CAS guarantees strong consistency for that key: no writer can overwrite a change it has not seen.
 
 | **Use Case** | **How CAS Helps** |
 |-------------|------------------|
@@ -18,41 +18,39 @@ A Compare-And-Swap (CAS) operation is critical in a distributed key-value store 
 | **Rate Limiting** | Ensures atomic updates to request counters. |
 | **Concurrent Transactions** | Avoids lost updates when multiple clients modify the same key. |
 
-Advantages of using CAS:
-
-- **Ensures atomic updates** in distributed stores.
-- **Prevents race conditions** when multiple clients write to the same key.
-- **Guarantees strong consistency** by checking versioning before updating.
-- **It can be used in leader election, distributed locks, and state coordination.**
-- **Prevents lost updates** and ensures correct data modifications.
+The leader election and lock uses above, and the queue consumer example below, rely on a key written with an expiry and `nx` as a simple lock. CAS does not stop a worker that paused past the expiry: it can still finish its work after another worker took over, and only its final CAS write fails. When work must not overlap, use [distributed locks](/docs/distributed-locks/) with [fencing tokens](/docs/distributed-locks/fencing-tokens/).
 
 ## Examples
 
-The client provides specialized methods to execute CAS operations based on the value or revision:
+In Kahuna Script, add `cmp <value>` or `cmprev <revision>` to `set`. The .NET and TypeScript clients have dedicated methods for CAS on a value or on a revision. Their signatures are in the API reference: [Compare Value and Set](/docs/distributed-keyvalue-store/api/#compare-value-and-set) and [Compare Revision and Set](/docs/distributed-keyvalue-store/api/#compare-revision-and-set).
 
 ### Distributed Queue Consumer Lock
 
 Use Case: Multiple workers process tasks from a queue but each task should only be handled once
 
-<Tabs>
-<TabItem value="CLI">
+<Tabs groupId="client-examples">
+<TabItem value="cli" label="CLI">
 
 Sets the initial value as usual if it hasn't been assigned previously:
 
 ```kahuna
-kahuna-cli> set `locks/tasks/123` "node1" ex 10000 nx
+set `locks/tasks/123` "node1" ex 10000 nx
+```
+```text
 r0 set 15ms
 ```
 
 Mark the task as completed if this node still holds the key:
 
 ```kahuna
-kahuna-cli> set `locks/tasks/123` "completed" cmp "node1"
+set `locks/tasks/123` "completed" cmp "node1"
+```
+```text
 r1 set 11ms
 ```
 
 </TabItem>
-<TabItem value="C#">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 using Kahuna.Client;
@@ -63,14 +61,14 @@ public async Task HandleTask(KahunaClient client, string taskId)
     string machineName = Environment.MachineName;
 
     // Sets the initial value as usual if it hasn't been assigned previously
-    (bool success, long revision) = await client.SetKeyValue(
+    KahunaKeyValue result = await client.SetKeyValue(
         keyName,
         machineName,
         10000,
         KeyValueFlags.SetIfNotExists
     );
 
-    if (!success)
+    if (!result.Success)
     {
         Console.WriteLine("Other node acquired the task");
         return;
@@ -80,9 +78,9 @@ public async Task HandleTask(KahunaClient client, string taskId)
     // ...
 
     // Mark the task as completed if this node still holds the key
-    (success, revision) = await client.TryCompareValueAndSetKeyValue(keyName, "completed", machineName, 0);
+    result = await client.TryCompareValueAndSetKeyValue(keyName, "completed", machineName, 0);
 
-    if (success)
+    if (result.Success)
     {
         Console.WriteLine("Marked as completed successfully");
         return;
@@ -91,7 +89,7 @@ public async Task HandleTask(KahunaClient client, string taskId)
 ```
 
 </TabItem>
-<TabItem value="TypeScript">
+<TabItem value="typescript" label="TypeScript">
 
 ```ts
 async function handleTask(client, taskId, machineName) {
@@ -129,32 +127,38 @@ async function handleTask(client, taskId, machineName) {
 
 Use Case: Update a feature flag, but only if it hasn’t changed since you last read it.
 
-<Tabs>
-<TabItem value="CLI">
+<Tabs groupId="client-examples">
+<TabItem value="cli" label="CLI">
 
 Obtains the current value of the feature flag:
 
 ```kahuna
 get `feature/new-landing`
+```
+```text
 r0 disabled 12ms
 ```
 
 Change the flag if the revision is still 0:
 
 ```kahuna
-kahuna-cli> set `feature/new-landing` "enabled" cmprev 0
+set `feature/new-landing` "enabled" cmprev 0
+```
+```text
 r1 set 19ms
 ```
 
 The flag won't change if the revision is not 0:
 
 ```kahuna
-kahuna-cli> set `feature/new-landing` "disabled" cmprev 0
+set `feature/new-landing` "disabled" cmprev 0
+```
+```text
 r1 not set 14ms
 ```
 
 </TabItem>
-<TabItem value="C#">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 using Kahuna.Client;
@@ -164,14 +168,14 @@ public async Task CheckFeatureFlag(KahunaClient client, string featureName)
     string featureKey = "feature/" + featureName;
 
     // Obtains the current value of the feature flag
-    (byte[]? _, long revision) = await client.GetKeyValue(featureKey);
+    KahunaKeyValue current = await client.GetKeyValue(featureKey);
 
     // ...
 
     // Check if the flag was changed
-    (success, revision) = await client.TryCompareRevisionAndSetKeyValue(featureKey, "enabled", revision);
+    KahunaKeyValue result = await client.TryCompareRevisionAndSetKeyValue(featureKey, "enabled", current.Revision);
 
-    if (success)
+    if (result.Success)
     {
         Console.WriteLine("No one else changed the flag between our read and write.");
         return;
@@ -180,7 +184,7 @@ public async Task CheckFeatureFlag(KahunaClient client, string featureName)
 ```
 
 </TabItem>
-<TabItem value="TypeScript">
+<TabItem value="typescript" label="TypeScript">
 
 ```ts
 async function checkFeatureFlag(client, featureName) {

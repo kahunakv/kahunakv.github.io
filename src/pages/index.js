@@ -79,7 +79,9 @@ const advantageCards = [
     icon: 'layers',
     title: 'Your choice of storage',
     description:
-      'RocksDB for heavy writes, SQLite for smaller deployments, or memory for tests and temporary state.',
+      'Choose RocksDB, SQLite, or memory, or run the data store and Raft log on Solarium through an external extension.',
+    link: 'https://solariumdb.github.io/docs/integrations/kahuna/',
+    linkLabel: 'Explore the Solarium integration →',
   },
 ];
 

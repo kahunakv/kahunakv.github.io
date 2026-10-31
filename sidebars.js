@@ -29,6 +29,7 @@ const sidebars = {
     },
     'getting-started',
     'why-kahuna',
+    'glossary',
     'book',
     {
       type: 'category',
@@ -44,17 +45,18 @@ const sidebars = {
       label: 'Distributed Key/Value Store',
       items: [
         'distributed-keyvalue-store',
-        'distributed-keyvalue-store/key-range-sharding',
-        'distributed-keyvalue-store/load-based-range-splitting',
+        'distributed-keyvalue-store/api',
         'distributed-keyvalue-store/cas',
         'distributed-keyvalue-store/revisions',
-        'distributed-keyvalue-store/watches',
+        'distributed-keyvalue-store/buckets',
         'distributed-keyvalue-store/transactions',
+        'distributed-keyvalue-store/watches',
         'distributed-keyvalue-store/read-and-lock-semantics',
         'distributed-keyvalue-store/yielding-transactions',
         'distributed-keyvalue-store/transaction-priority-admission',
-        'distributed-keyvalue-store/buckets',
-        'distributed-keyvalue-store/snapshot-holds'
+        'distributed-keyvalue-store/snapshot-holds',
+        'distributed-keyvalue-store/key-range-sharding',
+        'distributed-keyvalue-store/load-based-range-splitting',
       ],
     },
     {
@@ -98,6 +100,7 @@ const sidebars = {
         'scripts/functions/string',
         'scripts/functions/time',
         'scripts/functions/type',
+        'scripts/functions/values-and-collections',
       ],
     },
     {
@@ -122,7 +125,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Client',
-      items: ['kahuna-cli', 'dotnet-client', 'distributed-rate-limiting', 'typescript-client', 'client-routing'],
+      items: ['kahuna-cli', 'dotnet-client', 'dotnet-client/administration', 'distributed-rate-limiting', 'typescript-client', 'client-routing'],
     },
     {
       type: 'category',
@@ -151,6 +154,7 @@ const sidebars = {
         'internals/actor-model',
         'internals/wal-and-persistence',
         'internals/backups-and-pitr',
+        'internals/snapshot-transfer',
         'internals/replication',
         'internals/mvcc',
         'internals/sequences'
@@ -159,7 +163,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Storage',
-      items: ['storage/overview'],
+      items: ['storage/overview', 'storage/custom-storage-engines'],
     },
     {
       type: 'category',

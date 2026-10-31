@@ -9,11 +9,11 @@ tags: [kahuna, camusdb, redis, postgres, distributed-systems]
 
 Last Sunday, I was having lunch with a friend and talking about Kahuna, [CamusDB](https://camusdb.github.io/), and all the time I've been putting into these projects lately. He didn't really understand why I would build Kahuna when most of what it does could probably be achieved with some combination of Redis and Postgres.
 
-My explanation may not have been very convincing, and I understand why. Every business has a different tolerance for durability, availability, and consistency. Not every business operates 24/7, and not every business suffers significantly if its systems are down for a few minutes or even a few hours. In many operations, problems and mistakes can be fixed manually by people, or sometimes with an apology to the customer.
+My explanation may not have been very convincing, and I understand why. Every business has a different tolerance for durability, availability, and consistency. Not every business operates 24/7, and not every business suffers significantly if its systems are down for a few minutes or even a few hours. In many operations, problems and mistakes can be fixed manually by people, or sometimes with an apology to the customer. Unfortunately, it's hard to explain to someone why you spent so much time solving edge cases they haven't encountered yet.
 
 My story is very different. For some reason, I've spent almost my entire career working in industries that operate 24/7: airline reservations, hospitality, and video games. There is always a customer or user somewhere interacting with the system, whether it's just a few people or hundreds of thousands at the same time. That changed the way my brain works and the kinds of failure modes I instinctively try to avoid.
 
-Building systems where performance is high and consistency is non-negotiable gradually became part of my DNA.
+Building systems where performance is high and consistency is non-negotiable gradually became part of my DNA. I've learned that downtime and inconsistent systems mean lost revenue, damaged customer trust, and personal time and energy spent solving the wrong problems.
 
 <!-- truncate -->
 

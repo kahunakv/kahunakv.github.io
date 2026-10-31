@@ -1,6 +1,6 @@
 # Sequences Internals
 
-Kahuna's distributed sequencer is implemented on top of the key/value subsystem.
+A sequence works like a database identity column shared by every node: each allocation returns values no other caller receives, even across retries and leader changes. Read this page to see how Kahuna builds that on the key/value subsystem, and why unused values become gaps rather than duplicates.
 
 ## Reserved Keyspace
 
@@ -10,7 +10,7 @@ Sequence state is stored under a reserved internal prefix:
 __kahuna:sequences:{sequence-name}
 ```
 
-This lets sequences reuse the existing routing, Raft replication, compare-and-set, and persistence behavior of key/value entries.
+This lets sequences reuse the existing routing, [Raft](/docs/glossary/#raft) replication, compare-and-set, and persistence behavior of key/value entries.
 
 ## State Format
 
@@ -34,9 +34,9 @@ For `next` and `reserve`:
 
 1. Validate the sequence name and durability.
 2. Load the sequence state from the reserved key.
-3. Check the idempotency map if an idempotency key is provided.
-4. Serve the allocation from the actor's resident block when one is available.
-5. Reserve a new block by compare-and-swapping the durable high-water mark when the resident block is empty.
+3. Check the idempotency map if an [idempotency key](/docs/glossary/#idempotency-key) is provided.
+4. Serve the allocation from the [actor](/docs/glossary/#actor)'s resident block when one is available.
+5. Reserve a new block with a compare-and-set (CAS) on the durable high-water mark when the resident block is empty.
 6. Validate the allocation against `MaxValue`.
 7. Retry if a concurrent update changed the source revision.
 
@@ -52,9 +52,11 @@ The compare-revision write is what prevents overlapping allocations when multipl
 
 A node configured with `SequencerBlockLease = 0` refuses sequence updates because stale blocks would never be forced to revalidate.
 
-## Per-Sequence Local Lock
+## One Request at a Time
 
-`SequencerManager` keeps a local semaphore per normalized sequence name. This reduces local contention and avoids unnecessary compare-revision retries on the same node. It is not the distributed correctness mechanism; Raft-backed compare-revision writes provide the cluster-wide safety.
+Each sequence is owned by one `SequenceActor` on the leader of its [partition](/docs/glossary/#partition). The actor processes requests one at a time, so it can hand out values from its resident block without a lock. This is not the distributed correctness mechanism: a block reservation lands only if the durable record still carries the revision the actor read, so even a former leader that has not yet learned it lost the partition cannot reserve a range that overlaps the new leader's.
+
+Unused values in an abandoned block, after a restart, an eviction, or an ownership change, become gaps, never duplicates. This holds within one incarnation of the sequence; the block lease above bounds the window across incarnations.
 
 ## Idempotency Storage
 

@@ -6,9 +6,10 @@ import {examples, parseParameters, seedScript} from './examples.mjs';
 import {loadEngine} from './runtime';
 import styles from './styles.module.css';
 
+// Keep these lists in sync with the Prism grammar in src/theme/prism-include-languages.js.
 const keywords = new Set([
-  'AND', 'AS', 'AT', 'BEGIN', 'BUCKET', 'BY', 'CASE', 'CMP', 'CMPREV', 'COMMIT', 'DO', 'ELSE',
-  'END', 'EX', 'FOR', 'FOUND', 'IF', 'IN', 'LET', 'NOREV', 'NOT', 'NX', 'OF', 'OR', 'PREFIX',
+  'AS', 'AT', 'BEGIN', 'BUCKET', 'BY', 'CASE', 'CMP', 'CMPREV', 'COMMIT', 'DO', 'ELSE',
+  'END', 'EX', 'FOR', 'FOUND', 'IF', 'IN', 'LET', 'NOREV', 'NOT', 'NX', 'OF', 'PREFIX',
   'RETURN', 'ROLLBACK', 'SLEEP', 'SWITCH', 'THEN', 'THROW', 'XX',
 ]);
 const commands = new Set([
@@ -75,7 +76,7 @@ function tokenize(code) {
       continue;
     }
 
-    const operator = /^(?:\.\.|==|!=|<>|<=|>=|&&|\|\||[-+*/%=<>!])/.exec(rest);
+    const operator = /^(?:\.\.|==|!=|<>|<=|>=|&&|\|\||[-+*/=<>!@])/.exec(rest);
     if (operator) {
       tokens.push({kind: 'operator', value: operator[0]});
       index += operator[0].length;

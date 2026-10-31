@@ -2,6 +2,7 @@
   max-width: 100%;
   margin-bottom: var(--ifm-leading);
   text-align: center;
+  overflow-x: auto;
 }
 
 .container > svg {

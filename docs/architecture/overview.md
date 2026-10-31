@@ -1,6 +1,8 @@
 # Architecture Overview
 
-Kahuna is a partitioned cluster for [distributed locks](/docs/distributed-locks), [key/value storage](/docs/distributed-keyvalue-store), and [sequences](/docs/distributed-sequencer). Each partition is a Raft group with one leader and multiple replicas. Clients can talk to any node; Kahuna routes or forwards each request to the leader that owns the target key, lock, or sequence. New clients can also use [leader-aware routing](/docs/client-routing/) to learn owners and skip many forwarding hops.
+Kahuna gives you one strongly consistent cluster for [distributed locks](/docs/distributed-locks/), [key/value storage](/docs/distributed-keyvalue-store/), and [sequences](/docs/distributed-sequencer/), so you run one system instead of three. Read this page to understand how that cluster survives node failures and where request latency comes from.
+
+The cluster is split into [partitions](/docs/glossary/#partition). Each partition is a [Raft](/docs/glossary/#raft) group: a set of replicas that agree on one ordered log of writes, with one [leader](/docs/glossary/#leader-follower-and-learner) and several followers. Clients can talk to any node; Kahuna routes or forwards each request to the leader that owns the target key, lock, or sequence. New clients can also use [leader-aware routing](/docs/client-routing/) to learn owners and skip many forwarding hops.
 
 ```mermaid
 flowchart TB
@@ -33,7 +35,6 @@ flowchart TB
         K3A ~~~ K3B ~~~ K3C ~~~ K3D ~~~ K3S
     end
     C <--> K1 & K2 & K3
-    classDef leader fill:#02874c,color:#ffffff,stroke:#00241a
 ```
 
 The diagram shows three nodes and four partitions. A node can lead some partitions while replicating others, so leadership and work are spread across the cluster.
@@ -59,26 +60,11 @@ For persistent data, the normal path is:
 
 1. The receiving node finds the partition leader.
 2. The leader validates and orders the operation.
-3. Raft replicates the log entry to a quorum.
-4. The committed entry is applied to actor-owned memory.
+3. Raft replicates the log entry to a [quorum](/docs/glossary/#quorum), a majority of the partition's voting replicas.
+4. The committed entry is applied to memory owned by an [actor](/docs/glossary/#actor), a worker that processes one message at a time for its keys.
 5. Background writers materialize state to RocksDB, SQLite, or memory.
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant N as Receiving node
-    participant L as Partition leader
-    participant F as Followers
-    participant D as Storage backend
-    C->>N: Write k
-    N->>L: Forward if this node is not the leader
-    L->>F: Replicate log entry
-    F-->>L: Quorum acknowledges
-    Note over L: Committed. Apply to actor memory
-    L-->>N: Committed
-    N-->>C: Success
-    L-)D: Background writer materializes state
-```
+[Request Flow](/docs/internals/request-flow/) shows this path as a sequence diagram, including forwarding and background persistence.
 
 This keeps the client API simple while preserving one committed history per partition.
 
@@ -86,13 +72,13 @@ This keeps the client API simple while preserving one committed history per part
 
 Kahuna has a public [Jepsen test suite](https://github.com/kahunakv/kahuna-jepsen) for distributed correctness testing. The suite runs against a multi-node cluster with network partitions, process kills, process pauses, and membership changes. It currently covers:
 
-- `register`: linearizable CAS-register behavior over the key/value store
-- `lock`: lease-aware mutual exclusion and fencing-token monotonicity
-- `append`: Elle list-append histories over interactive transactions, checking serializability
+- `register`: linearizable compare-and-set (CAS) register behavior over the key/value store. This Jepsen workload checks that single-key reads, writes, and CAS operations each appear to take effect at one instant, in real-time order.
+- `lock`: [lease](/docs/glossary/#lease)-aware mutual exclusion and [fencing-token](/docs/glossary/#fencing-token) monotonicity
+- `append`: list-append histories over interactive transactions, checked for serializability by Elle, Jepsen's transaction checker
 - `sequencer`: duplicate-free allocation, allocation-range integrity, and idempotent replay
 - `membership`: leave and rejoin fault injection around the Raft roster while workloads continue
 
-These tests complement unit, integration, and benchmark tests. They are intentionally scoped to the workloads they model, so a passing Jepsen run should be read as evidence for the covered key/value, lock, transaction, sequencer, and membership-change properties rather than a blanket proof of every Kahuna feature.
+These tests complement unit, integration, and benchmark tests. Each one is scoped to the workload it models, so a passing run is evidence for the covered key/value, lock, transaction, sequencer, and membership-change properties, not proof that every Kahuna feature is correct.
 
 ## Scaling and Membership
 
@@ -110,13 +96,13 @@ Membership changes are separate from request routing. Clients can still use mult
 
 Kahuna separates the replicated log from materialized state:
 
-- Kommander stores the Raft WAL.
+- Kommander stores the Raft [write-ahead log (WAL)](/docs/glossary/#write-ahead-log-wal).
 - Kahuna stores materialized locks, key/value entries, revisions, and sequence state.
 - RocksDB is the default persistent storage engine.
 - SQLite is available for smaller deployments and easier inspection.
 - Memory storage is available for tests, embedded usage, and temporary state.
 
-Actors keep hot state in memory. Background writers flush committed persistent state to the configured backend. Eviction, WAL checkpointing, backup/PITR retention, and revision cleanup run as maintenance paths around the same committed state model.
+Actors keep hot state in memory. Background writers flush committed persistent state to the configured backend. Eviction, WAL checkpointing, backup and [point-in-time recovery (PITR)](/docs/glossary/#point-in-time-recovery-pitr) retention, and revision cleanup run as maintenance paths around the same committed state model.
 
 ## Performance Paths
 
@@ -134,15 +120,12 @@ These optimizations do not replace Raft. They reduce avoidable work around the r
 
 Use Kahuna when several application instances must agree on state, ownership, or ordering:
 
-- **Configuration and service metadata:** share configuration, [service discovery records](/docs/recipes/service-discoverability/), sessions, and [feature flags](/docs/recipes/feature-flags/).
-- **Job ownership and exclusive access:** coordinate scheduled jobs, [leader election](/docs/recipes/leader-election/), and access to shared resources with lock leases. Protected resources must enforce fencing tokens to reject work from an expired owner.
-- **Reservations and multi-key state changes:** update related keys together with transactions or scripts, such as [inventory reservations](/docs/recipes/inventory-reservation/).
-- **Shared rate limits and concurrency budgets:** coordinate admissions across application replicas with [distributed rate limiters](/docs/distributed-rate-limiting/), subject to their durability, renewal, and failure-mode limits.
-- **Retry-safe ordered allocation:** allocate invoice numbers, tickets, order IDs, offsets, or non-overlapping ranges through [sequences](/docs/distributed-sequencer/), using idempotency keys for retries.
-- **Hot small state without a separate cache:** keep persistent values in memory and reload them from RocksDB or SQLite after eviction, using one accepted write path instead of coordinating a database copy and a cache copy. Use ephemeral values when losing that state is acceptable.
+- **Shared configuration and hot small state:** configuration, [service discovery records](/docs/recipes/service-discoverability/), sessions, and [feature flags](/docs/recipes/feature-flags/). Persistent values stay in memory and reload from RocksDB or SQLite after eviction, so you do not coordinate a database copy and a cache copy. Use ephemeral values when losing that state is acceptable.
+- **Exclusive ownership and shared limits:** scheduled jobs, [leader election](/docs/recipes/leader-election/), and access to shared resources with lock leases, plus [distributed rate limiters](/docs/distributed-rate-limiting/) within their durability, renewal, and failure-mode limits. Protected resources must enforce fencing tokens to reject work from an expired owner.
+- **Multi-key changes and ordered allocation:** update related keys together with transactions or scripts, such as [inventory reservations](/docs/recipes/inventory-reservation/), and allocate invoice numbers, order IDs, offsets, or non-overlapping ranges through [sequences](/docs/distributed-sequencer/), using idempotency keys for retries.
 
-Use a simpler cache or local store when data can be lost, rebuilt, or briefly inconsistent. Kahuna does not replace a primary business database for relational queries, document storage, analytics, large records, or bulk data. See [Why Kahuna?](/docs/why-kahuna/) for the tradeoffs behind these use cases.
+Use a simpler cache or local store when data can be lost, rebuilt, or briefly inconsistent. Kahuna does not replace a primary business database for relational queries, document storage, analytics, large records, or bulk data. See [Why Kahuna?](/docs/why-kahuna/) for the trade-offs.
 
 ## Visibility and Recovery Details
 
-Latest transactional reads pin committed observations per key; they are distinct from fixed-timestamp historical reads. Persistent commit establishes a canonical decision before optional deferred settlement, and process-loss durability depends on a persistent, durably written Raft WAL. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/), [Durable Settlement](/docs/internals/durable-settlement/), and [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for the guarantees and failure limits.
+Latest transactional reads pin committed observations per key, which differs from fixed-timestamp historical reads. A persistent commit records a [canonical decision](/docs/internals/transaction-lifecycle/#basic-concepts) before optional deferred settlement, and process-loss durability depends on a persistent, durably written Raft WAL. For the full guarantees and failure limits, see [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/), [Durable Settlement](/docs/internals/durable-settlement/), and [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/).

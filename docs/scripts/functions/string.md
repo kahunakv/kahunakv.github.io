@@ -19,7 +19,9 @@ Kahuna provides string helpers for formatting, validation, and parsing inside sc
 | `trim(str)` | Removes leading and trailing whitespace. | `trim(" hello ")` returns `"hello"` |
 | `to_json(value)` | Serializes a value to JSON. | `to_json([1, 2])` returns `"[1,2]"` |
 
-`to_json` writes each element of an array as its JSON value: numbers, strings, `true`, `false`, `null`, and nested arrays. For example, `to_json(["a", true, null, [1]])` returns `"[\"a\",true,null,[1]]"`. A byte value is written as a string, decoded as UTF-8.
+`to_json` accepts an integer, a float, a string, or an array. A boolean or `null` on its own is a script error (`to_json(true)` and `to_json(null)` fail), but inside an array they are written as JSON values. `to_json` writes each element of an array as its JSON value: numbers, strings, `true`, `false`, `null`, and nested arrays. For example, `to_json(["a", true, null, [1]])` returns `"[\"a\",true,null,[1]]"`. A byte value inside an array is written as a string, decoded as UTF-8.
+
+`len` and `length` accept only strings; for an array, use [`count`](/docs/scripts/functions/values-and-collections/). `concat` takes exactly two strings. Join more parts with nested calls, such as `concat(concat(a, ":"), b)`, and convert numbers first with [`to_str`](/docs/scripts/functions/type/). The `+` operator does not join strings.
 
 String comparisons are ordinal and culture-invariant. Every argument to the string-specific functions must be a string.
 

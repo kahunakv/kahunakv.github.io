@@ -1,8 +1,8 @@
 # Node Transport Security
 
-Kahuna nodes trust each other: they replicate Raft log entries, forward client requests, and take part in each other's transactions. Without node authentication, any process that can reach a node's internal ports could pose as a peer and send it forged replication or transaction messages. Node transport security makes each node prove its identity before peers accept its traffic.
+Kahuna nodes trust each other: they replicate [Raft](/docs/glossary/#raft) log entries, forward client requests, and take part in each other's transactions. Without node authentication, any process that can reach a node's internal ports could pose as a peer and send it forged replication or transaction messages. Node transport security makes each node prove its identity before peers accept its traffic.
 
-Kahuna can authenticate node-to-node traffic with mutual TLS. In `MutualTls` mode, each node presents a certificate to peers and verifies the peer certificate thumbprint before accepting internal traffic.
+Kahuna can authenticate node-to-node traffic with mutual TLS (mTLS), where both ends of a connection present a certificate. In `MutualTls` mode, each node presents a certificate to peers and verifies the peer certificate's thumbprint, a SHA-256 hash that identifies one certificate, before accepting internal traffic.
 
 Use this for production clusters where the Raft port or internal Kahuna gRPC calls could be reached by anything other than trusted nodes.
 
@@ -13,7 +13,7 @@ Use this for production clusters where the Raft port or internal Kahuna gRPC cal
 | Raft traffic | Authenticated | Authenticated |
 | Key/value and lock forwarding | Authenticated | Not authenticated |
 | Sequence forwarding | Authenticated | Not authenticated |
-| Internal two-phase commit participant calls | Authenticated | Not authenticated |
+| Internal [two-phase commit](/docs/glossary/#two-phase-commit-2pc) participant calls | Authenticated | Not authenticated |
 | Application clients and CLI calls | Not covered | Not covered |
 
 `SharedSecret` protects Raft only. Use `MutualTls` when you need full node-to-node coverage.
@@ -27,7 +27,7 @@ Each node needs:
 - an HTTPS certificate for the listener
 - a client certificate to present to peers, or the same certificate reused as the client certificate
 - the SHA-256 thumbprints of peer client certificates it accepts
-- the SHA-256 thumbprints of peer server certificates it pins when dialing peers
+- the SHA-256 thumbprints of peer server certificates it pins when dialing peers (pinning means it accepts only those certificates, not any certificate the system trust store accepts)
 
 ```bash
 kahuna-server \
@@ -47,18 +47,16 @@ Point peers at the cluster listener. Point applications at an application listen
 
 ## Flags
 
+The `MutualTls` setup above uses these flags:
+
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--node-auth-mode` | `Disabled` | Node authentication mode: `Disabled`, `SharedSecret`, or `MutualTls`. |
-| `--client-certificate` | `--https-certificate` | PKCS#12 certificate this node presents to peers in `MutualTls` mode. |
-| `--client-certificate-password` | `--https-certificate-password` | Password for `--client-certificate`. |
+| `--client-certificate` | `--https-certificate` | PKCS#12 certificate this node presents to peers in `MutualTls` mode. `--client-certificate-password` defaults to `--https-certificate-password`. |
 | `--trusted-client-cert-thumbprint` | none | SHA-256 thumbprints of peer certificates this node accepts. |
 | `--trusted-server-cert-thumbprint` | system trust store | SHA-256 thumbprints this node pins when dialing peers. |
-| `--node-shared-secret` | empty | Shared secret for `SharedSecret` mode. |
-| `--node-auth-header` | Kommander default | Header or metadata name used by signed `SharedSecret` requests. |
-| `--node-require-tls` | `true` | Reject node-to-node requests that did not arrive over TLS. |
-| `--node-auth-clock-skew` | `60` | Maximum accepted clock skew for signed `SharedSecret` requests, in seconds. |
-| `--allow-plaintext-listener` | disabled | Bind cleartext HTTP and h2c listeners even when an HTTPS certificate is configured. |
+
+`SharedSecret` options (`--node-shared-secret`, `--node-auth-header`, `--node-auth-clock-skew`) and `--node-require-tls` (default `true`) are listed in [Server Configuration: Node Transport Security](/docs/server-configuration/#node-transport-security). Listener flags such as `--allow-plaintext-listener` are in [Network and TLS](/docs/server-configuration/#network-and-tls).
 
 Thumbprints are SHA-256 fingerprints of the DER-encoded certificate. Colons, spaces, and letter case are ignored.
 
@@ -70,7 +68,19 @@ openssl pkcs12 -in node1.pfx -nokeys -passin pass: \
 
 ## Listener Behavior
 
-When `MutualTls` is enabled:
+When `MutualTls` is enabled, the node splits its HTTPS ports into a cluster listener for peers and application listeners for clients:
+
+```mermaid
+flowchart LR
+    P[Peer nodes]
+    A[Applications and CLI]
+    subgraph K[Kahuna node]
+        CL["Cluster listener<br/>--raft-port"]
+        AL["Application listener<br/>other --https-ports"]
+    end
+    P -->|mutual TLS| CL
+    A -->|server TLS| AL
+```
 
 | Listener | Behavior |
 |----------|----------|
@@ -83,7 +93,7 @@ Kahuna also stops binding cleartext listeners whenever an HTTPS certificate is c
 
 ## Routing Hints
 
-Routing hints should advertise client-reachable application endpoints, not the mTLS cluster listener.
+[Routing hints](/docs/client-routing/) are advisory endpoints that servers return in responses so clients can call the node that holds a key directly. They should advertise client-reachable application endpoints, not the mTLS cluster listener.
 
 In mTLS deployments, set `--advertised-client-endpoint` on every node and use `--disable-peer-endpoint-advertisement` unless peer application URLs can be derived safely. You can also disable hints entirely with `--disable-routing-hints`.
 

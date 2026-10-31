@@ -30,6 +30,23 @@ set \`counters/visits\` 3
 get \`counters/visits\``,
   },
   {
+    label: 'Compare and set',
+    description: 'The write succeeds only if the key still has the revision this script read. Each run adds 50.',
+    script: `set \`config/max-connections\` 100 nx
+let current = get \`config/max-connections\`
+set \`config/max-connections\` to_int(current) + 50 cmprev rev(current)
+if not set then
+  throw "another client changed the key first: retry"
+end
+get \`config/max-connections\``,
+  },
+  {
+    label: 'Old revision',
+    description: 'The sample data wrote revision 0 of this flag. The script writes a new value, then reads revision 0 back.',
+    script: `set \`config/feature-flags/dark-mode\` false
+get \`config/feature-flags/dark-mode\` at 0`,
+  },
+  {
     label: 'Bucket',
     description: 'Read every key in the services/email bucket.',
     script: `get by bucket \`services/email\``,

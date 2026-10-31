@@ -1,8 +1,8 @@
 # Partition Write Coalescing
 
-Kahuna coalesces persistent partition writes before proposing them to Raft. This reduces the number of WAL appends, quorum round trips, and synchronous disk flushes needed when many clients write to the same partition at the same time.
+When many clients write to the same [partition](/docs/glossary/#partition) at once, their persistent writes share one replication round trip instead of paying for one each. Like group commit in a relational database, this cuts the number of [WAL](/docs/glossary/#write-ahead-log-wal) appends, [quorum](/docs/glossary/#quorum) round trips, and synchronous disk flushes, so bulk imports, batch writes, and busy buckets get higher write throughput with no change to application code.
 
-For you, this means higher write throughput for workloads such as bulk imports, batch writes, and busy buckets, with no change to application code. Coalescing is on by default, and the defaults are designed not to add visible latency to most writes. Most deployments keep them; see [When It Helps](#when-it-helps) and [Tuning](#tuning) if you measure a write bottleneck on one partition.
+Kahuna does this by coalescing writes before proposing them to [Raft](/docs/glossary/#raft). Coalescing is on by default, and the defaults are designed not to add visible latency to most writes. Most deployments keep them; see [When It Helps](#when-it-helps) and [Tuning](#tuning) if you measure a write bottleneck on one partition.
 
 A direct write is a non-transactional persistent key/value mutation:
 
@@ -12,13 +12,30 @@ A direct write is a non-transactional persistent key/value mutation:
 - .NET client equivalents such as `SetKeyValue(...)`, `SetManyKeyValues(...)`, `DeleteKeyValue(...)`, `DeleteManyKeyValues(...)`, and `ExtendKeyValue(...)`
 - TypeScript client equivalents such as `set(...)`, `setMany(...)`, `delete(...)`, `deleteMany(...)`, and `extend(...)`
 
-Ephemeral writes do not use this path because they are in-memory only. In-flight transactional writes also do not enter this path while the transaction is open; they stage MVCC intents on their owning actors. When an all-persistent durable transaction finalizes, its canonical transaction record and prepared-intent deltas use the same partition scheduler as direct writes.
+Persistent lock mutations (acquire, extend, and unlock) use the same per-partition aggregator, so they coalesce with each other and with key/value writes to the same partition.
+
+Ephemeral writes do not use this path because they are in-memory only. In-flight transactional writes also do not enter this path while the transaction is open; they stage [write intents](/docs/glossary/#write-intent) on their owning [actors](/docs/glossary/#actor). When an all-persistent durable transaction finalizes, its [canonical transaction record](/docs/internals/transaction-lifecycle/#basic-concepts) and prepared-intent deltas use the same partition scheduler as direct writes.
 
 ## How It Works
 
 Every persistent write belongs to one Raft partition. For a direct key/value mutation, the partition leader validates the write, stages the in-memory intent, serializes the log record, and hands that record to a leader-local write aggregator.
 
 The aggregator keeps a queue per partition. Instead of proposing each record immediately, it can send several records for the same partition in one Raft call. Writes from different clients and from batch APIs share the same partition queue, so coalescing works across requests and not only inside one `SetManyKeyValues(...)` call.
+
+The diagram shows three concurrent callers sharing one Raft call. The queue dispatches when `--kv-write-linger-ms` elapses or a batch reaches `--kv-write-max-batch-items` or `--kv-write-max-batch-bytes`. A write that cannot be admitted, or waits longer than `--kv-write-max-queue-delay-ms`, returns `MustRetry`.
+
+```mermaid
+flowchart TD
+    A[Caller A] --> Q
+    B[Caller B] --> Q
+    C[Caller C] --> Q
+    Q[Partition queue] -->|"linger elapsed<br/>or batch full"| R[One Raft call]
+    Q -.->|"queue full<br/>or max delay"| MR[MustRetry]
+    R --> Act["Owning actors apply<br/>committed result"]
+    Act --> A2[Resolve A]
+    Act --> B2[Resolve B]
+    Act --> C2[Resolve C]
+```
 
 The scheduler is shared across compatible persistent log types for the same partition. A batch may contain direct key/value records plus durable transaction-record or prepared-intent entries from concurrent durable transactions. Each queued item keeps its own completion path, so a mixed batch can still resolve each caller or transaction finalizer independently.
 
@@ -138,13 +155,15 @@ kahuna.kv.write.entries / kahuna.kv.write.batches
 
 During a healthy coalescing burst, this ratio should move above one and may approach the configured item cap. If it stays near one under heavy write load, writes may be too spread out across partitions, the linger may be too low for the arrival pattern, or the bottleneck may be somewhere else.
 
-## Cycle Accounting and Precise Wakes
+## Advanced Tuning: Cycle Accounting and Precise Wakes
+
+This section and the next matter only when you investigate dispatch timing on a saturated partition. Most deployments keep the defaults.
 
 `kahuna.kv.write.cycle_stage{stage}` records consecutive stages: `raft`, `completion_mailbox`, `completion_turn`, `hold`, `arrival_wait`, `wake_late`, `wake_mailbox`, and `dispatch`, plus their sum as `cycle`. Cycles whose batch overlaps a later dispatch, or whose partition goes idle, are omitted. Compare requested hold with wake lateness rather than assuming a one-millisecond timer fires exactly on time.
 
 `KeyValueWritePreciseWake` defaults to `false` and is exposed as `--kv-write-precise-wake`. When enabled, one dedicated timer thread per node handles linger, hold, and queue-age wakes. It sleeps whole milliseconds using a kernel wait and spins only the sub-millisecond remainder. Each partition has one replaceable wake slot; wake IDs prevent an obsolete wake from clearing a newer one. This avoids depending on a thread-pool continuation for the timer but does not guarantee an exact dispatch deadline. Count/byte thresholds and queue-age release can bypass the hold.
 
-## Fill-or-Time Dispatch
+## Advanced Tuning: Fill-or-Time Dispatch
 
 `KeyValueWriteFillTargetTrigger` (`--kv-write-fill-target-trigger`) is off by default. When enabled, a held or lingering buffer can dispatch early when its submission count reaches the learned fill target. Each partition uses the upper median of up to its last 16 timer-dispatched batches; at least eight samples are required. After eight consecutive fill-triggered dispatches, the next batch waits for its timer to provide a fresh sample. A timed batch larger than twice the target clears the sample window and relearns. Full batches and queue-age deadlines retain their existing behavior.
 

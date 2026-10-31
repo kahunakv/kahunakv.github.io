@@ -1,6 +1,8 @@
 # Replication Factor and Replica Placement
 
-A **replica** is a copy of one partition stored on one node. The **replication factor** is the number of replicas each partition has. By default, Kahuna uses full replication: every voter stores every partition and participates in every partition's Raft quorum. This is simple and remains the default behavior.
+Kahuna splits keys into [partitions](/docs/glossary/#partition). A **replica** is a copy of one partition stored on one node, and the **replication factor** is the number of replicas each partition has. By default, Kahuna uses full replication: every voting node stores every partition and takes part in every partition's [quorum](/docs/glossary/#quorum). This is simple and remains the default.
+
+A replication factor lets you add nodes for capacity without adding a copy of every partition to each new node. The trade-off is that fault tolerance is counted per partition: with replication factor `3`, each partition tolerates one replica failure, whatever the node count.
 
 ## Why It Matters
 
@@ -8,9 +10,18 @@ Full replication has a hard scaling ceiling: every node stores every partition, 
 
 Replication factor removes that ceiling. Kahuna can keep each partition replicated to a small quorum while spreading different partitions across the cluster. Adding nodes can add storage capacity, reduce per-node write amplification, and give the placement controller more room to distribute load.
 
-This is different from coordination systems where every server must carry the full dataset. Kahuna still provides strongly consistent partitions, but the cluster does not have to make every node a replica of every partition.
+For example, with five nodes and replication factor `3`, each partition has three replicas and each node hosts only some of the partitions:
 
-It is not infinite scale by itself. Hot keys, partition count, network bandwidth, storage throughput, and transaction shape still matter. Replication factor gives Kahuna the horizontal scaling model needed to grow past the limits of full replication.
+```mermaid
+flowchart LR
+    P1[Partition 1] --> N1[Node 1] & N2[Node 2] & N3[Node 3]
+    P2[Partition 2] --> N3 & N4[Node 4] & N5[Node 5]
+    P3[Partition 3] --> N4 & N5 & N1
+```
+
+This differs from etcd and ZooKeeper, where every member stores a full copy of the data. Kahuna still provides strongly consistent partitions, but the cluster does not have to make every node a replica of every partition.
+
+It does not give unlimited scale by itself. Hot keys, partition count, network bandwidth, storage throughput, and transaction shape still matter. Replication factor gives Kahuna the horizontal scaling model needed to grow past the limits of full replication.
 
 ## When to Use It
 
@@ -20,7 +31,7 @@ Use a positive replication factor when you want to:
 
 - Add more nodes without copying every partition to every node
 - Reduce disk usage and write amplification per node
-- Keep the Raft quorum for each partition small and predictable
+- Keep the [Raft](/docs/glossary/#raft) quorum for each partition small and predictable
 - Spread partitions across zones or racks
 
 Prefer odd values. Replication factor `3` tolerates one failed replica for a partition. Replication factor `5` tolerates two. Even values usually add cost without improving failure tolerance.
@@ -35,7 +46,7 @@ For larger clusters, set a replication factor so each partition is stored on a s
 kahuna-server \
   --initial-cluster https://kahuna-1:8082 https://kahuna-2:8082 https://kahuna-3:8082 \
   --raft-replication-factor 3 \
-  --raft-enable-placement-rebalancer true
+  --raft-enable-placement-rebalancer
 ```
 
 With replication factor `3`, each partition has three voter replicas. A node that does not host the target partition can still accept the client request and forward it to a hosting replica, so clients can continue to connect to any healthy node.
@@ -49,7 +60,7 @@ The ongoing placement rebalancer is controlled separately:
 ```bash
 kahuna-server \
   --raft-replication-factor 3 \
-  --raft-enable-placement-rebalancer true \
+  --raft-enable-placement-rebalancer \
   --raft-max-replica-moves-per-pass 2 \
   --raft-max-concurrent-replica-repairs 3 \
   --raft-max-concurrent-replica-transfers 1
@@ -59,13 +70,15 @@ The rebalancer repairs under-replicated partitions, trims over-replicated partit
 
 Repair and balance are budgeted separately. Repair moves restore durability after a node leaves or fails and are controlled by `--raft-max-concurrent-replica-repairs`. Balance moves smooth replica-count skew and are controlled by `--raft-max-concurrent-replica-transfers`. `--raft-max-replica-moves-per-pass` caps how many new moves can start during one pass across both priorities.
 
-Replica moves happen in stages:
+Replica moves happen in stages. The new replica starts as a [learner](/docs/glossary/#leader-follower-and-learner) and is seeded from the Raft log or a partition [snapshot](/docs/glossary/#snapshot):
 
-1. Add a learner replica
-2. Seed it from the Raft log or a partition snapshot
-3. Promote it after it catches up
-4. Remove the old replica
-5. Purge local data from nodes that no longer host the partition
+```mermaid
+flowchart TD
+    A[Add a learner replica] --> S["Seed from the Raft log<br/>or a partition snapshot"]
+    S --> P["Promote to Voter<br/>after catch-up"]
+    P --> R[Remove the old replica]
+    R --> U["Purge local data on nodes<br/>that no longer host it"]
+```
 
 During a move, a request can receive a retryable response if leadership or hosting changes at the same time. Retrying against the cluster is the normal client behavior.
 
@@ -98,7 +111,7 @@ Set a zone or rack hint on each node when replicas should be spread across failu
 kahuna-server \
   --raft-zone rack-a \
   --raft-replication-factor 3 \
-  --raft-enable-placement-rebalancer true
+  --raft-enable-placement-rebalancer
 ```
 
 The planner prefers distinct zones when it can. Zone hints are advisory; the cluster still uses the available voters if there are not enough distinct zones.
@@ -175,32 +188,24 @@ Treat `hostedPartitions` as informational only. With per-partition placement, a 
 
 ## Backups
 
-Use a coordinated backup for whole-cluster coverage under replica placement. Kahuna 1.12.5 and later capture one share per hosting source at a common cut and compose those shares into a complete backup. Composed incrementals preserve that coverage. Every participating node needs backup configuration and the same storage engine; shares use private scratch until merged. An unavailable or lagging source can be replaced by another voter on retry. No final artifact is published if required captures fail (`PartitionCaptureFailed`).
-
-A plain full backup stays node-local and can omit partitions hosted elsewhere. Restore and chain validation require every stamped link to cover the cluster, not just their union. See [backup capture and retry behavior](/docs/backups-and-point-in-time-recovery/#capture-cost-and-lagging-replicas).
+Use a coordinated backup for whole-cluster coverage under replica placement: it composes one share per hosting source at a common cut into a complete backup. A plain full backup stays node-local and can omit partitions hosted elsewhere. See [Replica Placement Coverage](/docs/backups-and-point-in-time-recovery/#replica-placement-coverage) for the version requirement, node configuration, and coverage validation, and [Capture Cost and Lagging Replicas](/docs/backups-and-point-in-time-recovery/#capture-cost-and-lagging-replicas) for retry behavior.
 
 ## Migration Notes
 
-Current Kahuna, pinned to Kommander 1.11.3, can convert legacy full-replication partitions when a positive effective replication factor and the placement rebalancer are enabled. Each eligible active partition with an empty replica set first receives an explicit set of **all committed roster voters**. This preserves its existing quorum; it does not immediately replace that quorum with an arbitrary factor-sized subset. Normal placement trims then remove surplus replicas one step at a time toward the target. Conversion is bounded by `MaxReplicaMovesPerPass`, and a failed map commit is retried on a later pass.
+To move an existing fully replicated cluster to a replication factor:
 
-With rebalancing disabled the partitions stay fully replicated and a warning explains why conversion has not begun. Growing at that point adds copies rather than distributing the data. Full replication with an effective factor of zero remains an intentional mode, not pending migration. Old server versions without conversion support still require their earlier migration procedure.
+1. Enable a positive replication factor and the placement rebalancer (`--raft-replication-factor` and `--raft-enable-placement-rebalancer`).
+2. The server first gives each fully replicated partition an explicit replica set of all committed roster voters, so the existing quorum is preserved. It then trims surplus replicas one step at a time toward the target, within the per-pass move limit.
+3. Follow progress with `--cluster-placement`. On the [partition 0](/docs/glossary/#partition-0) leader, the `raft.placement.ranges_awaiting_initial` gauge reaches zero when assignment finishes; trimming and movement can continue after that.
 
-The P0 leader exposes `raft.placement.ranges_awaiting_initial` and the counter `raft.placement.initial_assignments_total` on the `Kommander` meter. Embedded hosts can inspect `node.Raft.GetPartitionsAwaitingPlacement()`. A zero pending count says assignment finished, not that all subsequent trimming and movement finished.
+With rebalancing disabled the partitions stay fully replicated, and a warning explains why conversion has not begun. Growing the cluster at that point adds copies rather than distributing the data. Old server versions without conversion support still require their earlier migration procedure.
 
-### Leader Removal and Rebalancing
-
-Removing a partition's leader replica requires a confirmed handoff to another replica before marking it `Removing`. If the requesting node is not that partition's leader, it sends a transfer suggestion and polls the confirmed leader within a bound. An unconfirmed handoff returns `LeadershipNotConfirmed`, leaving removal for a later placement pass. A replica excluded by the committed map is also treated as a vacated leader for election gating, even if its process remains alive.
-
-Trim selection prioritizes replica load and zone placement; leadership only breaks ties among equally loaded candidates. A balancing add is planned only when its predicted follow-up trim improves load distribution, avoiding repeatedly adding and removing the same replica. These are convergence safeguards, not an exact balancing deadline.
+If a learner added by placement stays unpromoted, `--raft-learner-promotion-stall-warning-after` (30,000 ms) logs the last failed promotion check. See [Replica Placement Internals](/docs/internals/replication/#replica-placement-internals) for conversion, leader removal, and promotion details.
 
 ## Snapshot Receive Capacity
 
-A learner below retained history receives a whole-partition snapshot. Pending-byte caps include memory and disk staging, so disk spill does not remove the maximum-snapshot-size limit. Current peers acknowledge staging separately from installation and poll the install outcome. While an install runs, a second snapshot of that partition is not staged. Configure a private staging directory and size acknowledgement budgets for transport/status calls and transfer-step budgets for expected progress stalls. See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for options and partial-install limitations.
+A learner below retained history receives a whole-partition snapshot. Size the snapshot receive caps and staging directory for your largest partition; see [Snapshot Options](/docs/snapshot-and-raft-recovery/#snapshot-options) for the settings and partial-install limitations.
 
-## Learner Promotion Diagnostics
+## Kubernetes
 
-Placement accepts restarted nodes' fresh load-report incarnations even when their report version counters reset. If the gossiped leader hint is absent or dead, learner-lag checks can resolve a quorum-confirmed leader before deciding promotion readiness. These are recovery paths, not permission to promote an unconfirmed learner.
-
-`--raft-learner-promotion-stall-warning-after` (30,000 ms) logs the last failed check when a placement-added learner stays unpromotable. It is diagnostic only; it does not relax the lag or stability requirements. A non-member range leader is reported as a stall condition. After a failed drain is confirmed rolled back to `Voter`, the node's departure latch is released so a later eviction can trigger automatic rejoin. A removal that may still commit keeps the latch.
-
-For Kubernetes deployment and traffic-driven node counts, use the [Kubernetes Operator](/docs/kubernetes-operator/). It combines placement with roster-gated changes. Current servers perform eligible legacy conversion; the operator can hold growth while that placement remains pending. Automatic PITR seeding of new pods remains a separate workflow.
+For Kubernetes deployment and traffic-driven node counts, use the [Kubernetes Operator](/docs/kubernetes-operator/). It combines placement with roster-gated changes. The server performs eligible legacy conversion; the operator can hold growth while that placement remains pending. Automatic PITR seeding of new pods remains a separate workflow.

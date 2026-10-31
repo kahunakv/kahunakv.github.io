@@ -1,19 +1,21 @@
 # Load-Based Range Splitting
 
-Key-range sharding can split one ordered range into two partitions. Kahuna supports two independent reasons to split:
+With [key-range sharding](/docs/distributed-keyvalue-store/key-range-sharding/), a range splits when it holds too many keys. But a small range can receive most of the cluster's writes, and one partition [leader](/docs/glossary/#leader-follower-and-learner) orders every write to it, so that one node becomes the bottleneck. Load-based splitting detects a range that stays overloaded and splits it, so another node can lead half of its writes. It is the automatic version of splitting a hot database shard.
+
+Kahuna has two independent reasons to split a range into two [partitions](/docs/glossary/#partition):
 
 | Trigger | Condition | Purpose |
 |---------|-----------|---------|
 | Count-based | The sampled key count reaches `RangeSplitThreshold` | Prevent one range from growing indefinitely |
 | Load-based | Write rate and WAL backlog remain high for a sustained window | Relieve a small but write-hot partition |
 
-Load-based splitting is disabled by default. It applies only to key spaces registered for [key-range sharding](/docs/distributed-keyvalue-store/key-range-sharding/).
+Load-based splitting is disabled by default. It applies only to [key spaces](/docs/glossary/#key-space-and-key-range-routing) registered for key-range sharding.
 
 ## Why Key Count Is Not Enough
 
-A partition can contain relatively few keys but receive most of the cluster's writes. A key-count threshold never splits it because the range is small, even though its single Raft leader has become a throughput bottleneck.
+A key-count threshold never splits a small range, however many writes its leader must order.
 
-Load-based splitting watches replication work and backlog. When a range remains overloaded, Kahuna chooses a split key near the **write centroid**, aiming to place approximately half of the observed writes on each child range.
+Load-based splitting watches replication work and the backlog of the [write-ahead log](/docs/glossary/#write-ahead-log-wal) (WAL). When a range remains overloaded, Kahuna chooses a split key near the **write centroid**, aiming to place approximately half of the observed writes on each child range.
 
 ```text
 Before
@@ -24,7 +26,9 @@ After
 [orders/6200, orders/9999) -> partition B
 ```
 
-The split point follows observed write distribution, not the alphabetical midpoint or median stored key. For monotonic append patterns, when the newest writes cluster at the ordinal tail, Kahuna can split closer to the 75th percentile so the hot tail moves to the new partition instead of staying concentrated on the right child.
+The split point follows where writes actually land, not the alphabetical midpoint or the median stored key.
+
+Monotonic appends, such as keys built from increasing IDs, put the newest writes at the end of the range. A split at the median would leave the lower child with cold keys and still send every new write to the upper child. Instead, Kahuna can split near the 75th-percentile key: the new partition takes only the hot tail, and the lower child keeps most of the cold keys.
 
 ## Leader Balancing Is Required
 
@@ -32,10 +36,10 @@ Enable the leader balancer whenever load-based splitting is enabled.
 
 There are two reasons:
 
-1. Cross-node partition load reports are gossiped only while leader balancing is enabled
+1. Nodes share partition load reports with each other only while leader balancing is enabled
 2. A split relieves a node only when one child can be led by a different, less-loaded node
 
-Without leader balancing, remotely led partitions appear to have no load from the split coordinator's perspective. A split whose children remain on the same node can also add consensus work without relieving that node's storage or CPU bottleneck.
+Without leader balancing, remotely led partitions appear to have no load from the split coordinator's perspective. A split whose children remain on the same node can also add replication work without relieving that node's storage or CPU bottleneck.
 
 For embedded multi-node deployments, set both options:
 
@@ -62,8 +66,6 @@ The queue-depth gate distinguishes a healthy busy partition from one that cannot
 The sustained window filters short bursts and delayed gossip reports. Keep the window near or above 10 seconds; the default is 15 seconds with a 5-second polling interval.
 
 After splitting, both children enter `RangeSplitSettleWindow`. This gives leadership time to stabilize and the balancer time to relocate a child before either range is evaluated again.
-
-Before copying keys out of the source partition, Kahuna compares the source leader's apply fingerprint with the other replicas. If a replica has more committed transactional heads than the source leader at the same applied log id, the source leader may be missing acknowledged state. The split is refused with the retryable outcome `SourceStateIncomplete`, and `kahuna.range.split.incomplete_source_refusals` increases. The split can be retried on a later cadence after leadership or replica state converges.
 
 ## Configuration
 
@@ -120,7 +122,7 @@ Confirm all of the following:
 - `RangeSplitLoadThreshold` is greater than zero
 - Leader balancing is enabled on every participating node
 - Both write rate and queue depth remain above their thresholds for the complete load window
-- The writes use persistent durability and therefore pass through Raft
+- The writes use persistent durability and therefore pass through [Raft](/docs/glossary/#raft)
 
 Reads and ephemeral writes do not contribute to the load-split rate.
 
@@ -133,3 +135,7 @@ Splitting distributes Raft leadership and write coordination. It does not reduce
 ### Ranges Merge and Split Repeatedly
 
 The warm-range merge guard normally prevents this cycle. If it occurs, increase the settle window or adjust the load threshold so a recently active range is not immediately considered cold enough to merge.
+
+### A Split Is Refused With `SourceStateIncomplete`
+
+This retryable refusal increments `kahuna.range.split.incomplete_source_refusals`. Before copying keys, Kahuna compares the source leader's apply fingerprint with the other replicas; if a replica has more committed transactional heads than the source leader at the same applied log id, the leader may be missing acknowledged state. The split can be retried on a later cadence after leadership or replica state converges.

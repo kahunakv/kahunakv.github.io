@@ -1,18 +1,18 @@
 # Single-Key Script Fast Path
 
-Kahuna automatically optimizes a common script shape: a short auto-commit script that touches one ephemeral key. This is the pattern behind high-throughput counters, flags, rate limiters, and temporary coordination state.
+Counters, flags, rate limiters, and temporary coordination state usually come down to the same short script: read one [ephemeral](/docs/glossary/#durability) key, decide, and write it back, the kind of job you might give a Redis Lua script. Kahuna recognizes this shape automatically and runs it with fewer internal steps than a general transaction. You write the script as usual; there is nothing to enable.
 
 The optimization changes cost, not behavior. The same script result, lock behavior, rollback behavior, and key state are preserved.
 
 ## When It Applies
 
-A script can run inside one actor turn when it:
+Inside a node, each key is owned by an [actor](/docs/glossary/#actor), a worker that processes one message at a time. A *turn* is one uninterrupted step of that actor. A script can run entirely inside one actor turn when it:
 
-- Uses ephemeral key/value commands: `EGET`, `ESET`, `EEXISTS`, `EDELETE`, or `EEXTEND`
+- Uses ephemeral key/value commands: `eget`, `eset`, `eexists`, `edelete`, or `eextend`
 - Touches exactly one key after parameter resolution
-- Runs as an auto-commit script, without explicit `BEGIN` options
-- Uses statements such as `LET`, `IF`, `SWITCH`, `RETURN`, and `THROW`
-- Runs on the node that currently leads that key's partition
+- Runs as an auto-commit script, without explicit `begin` options
+- Uses statements such as `let`, `if`, `switch`, `return`, and `throw`
+- Runs on the node that currently leads that key's [partition](/docs/glossary/#partition)
 
 Example:
 
@@ -20,7 +20,7 @@ Example:
 let current = eget @counter_key
 
 if not found then
-  eset @counter_key 1 ex @expires_ms
+  eset @counter_key 1 ex to_int(@expires_ms)
   return 1
 end
 
@@ -30,7 +30,7 @@ if count >= @limit then
   return 0
 end
 
-eset @counter_key count + 1 ex @expires_ms
+eset @counter_key count + 1 ex to_int(@expires_ms)
 return 1
 ```
 
@@ -42,9 +42,9 @@ Kahuna uses the general transaction path when the script:
 
 - Touches persistent keys
 - Touches more than one key
-- Uses `BEGIN ... COMMIT` or any `BEGIN` option
-- Uses `SLEEP`, `FOR`, bucket reads, prefix scans, or batched writes
-- Uses a range-routed key space
+- Uses `begin ... commit` or any `begin` option
+- Uses `sleep`, `for`, bucket reads, prefix scans, or batched writes
+- Uses a range-routed [key space](/docs/glossary/#key-space-and-key-range-routing)
 - Is routed to a node that does not lead the key's partition
 
 If Kahuna initially guesses that a script is eligible but later sees a different key or unsupported statement, it discards the in-turn attempt and reruns the script on the general path. Nothing from the abandoned attempt becomes visible.
@@ -60,7 +60,7 @@ Both optimizations are enabled by default:
 | Embedded script actor turns | enabled | `ScriptActorTurns = false` |
 | Embedded fused ephemeral finalize | enabled | `FusedEphemeralFinalize = false` |
 
-`ScriptActorTurns` controls the full one-key script turn. `FusedEphemeralFinalize` is a smaller optimization that finalizes a transaction whose whole write set is one ephemeral key in one actor turn instead of separate prepare, range-lock probe, and commit messages. It can also help interactive transactions.
+`ScriptActorTurns` controls the full one-key script turn. `FusedEphemeralFinalize` is a smaller optimization that finalizes a transaction whose whole write set is one ephemeral key in one actor turn instead of separate prepare, range-lock probe (a check that no transaction holds a range lock covering the key), and commit messages. It can also help interactive transactions.
 
 ## Metrics
 

@@ -1,39 +1,54 @@
 # Why Kahuna?
 
-Kahuna gives distributed applications three building blocks in one self-hosted cluster:
+Many teams build locks, counters, and shared state on Redis or Postgres and assume the edge cases are already covered. These tools work well on the happy path, but a server failure, a timeout, or a resize exposes the gaps. A lock can end up with two owners after a failover. A retried increment can give one order two numbers. Teams then write their own glue code to fill these gaps, and the cases they miss stay hidden until a production incident.
+
+Kahuna goes beyond the happy path. It handles these edge cases on the server, so you do not have to find them and patch them in every application. It is built for systems where downtime is not an option and consistency is critical, such as fintech, healthcare, airline reservations, hospitality, online games and many more. 
+
+It gives you three building blocks in one self-hosted cluster that [stays online](#built-to-stay-online) through node failures, upgrades, and scaling:
 
 | Solution | What it provides | Common uses |
 |----------|------------------|-------------|
-| [Distributed key/value store](/docs/distributed-keyvalue-store/) | Replicated shared state with conditional writes and transactions | Configuration, service metadata, feature flags, reservations |
+| [Distributed key/value store](/docs/distributed-keyvalue-store/) | Replicated shared state with conditional writes and multi-node transactions | Configuration, service metadata, feature flags, reservations |
 | [Distributed locks](/docs/distributed-locks/) | One active owner, expiring leases, and fencing tokens | Scheduled jobs, leader election, exclusive resource access |
 | [Distributed sequencer](/docs/distributed-sequencer/) | Retry-safe allocation of ordered values or ranges | Invoice numbers, tickets, order IDs, offsets |
 
-Use Kahuna when several application instances must agree on **state**, **ownership**, or **ordering**, especially when a wrong answer is worse than a temporary error.
+Use Kahuna when several application instances must agree on **state**, **ownership**, or **ordering**, especially when a wrong answer is worse than a temporary error. For the full story, read [Couldn't You Just Use Redis and Postgres?](/blog/redis-postgres-and-kahuna/).
 
-## Why Distribution Changes the Problem
+## Why Single-Server Patterns Break
 
 Commands such as `GET`, `SET`, expiration, and increment look sufficient until a server fails, a request times out, or the network splits.
 
 ### Shared State Needs an Authority
 
-Replicas do not automatically agree on which node may accept writes. During a network failure, different clients may reach different nodes and observe conflicting values.
+Without a single authority, replicas can accept conflicting writes during a network failure.
 
-Kahuna uses Raft consensus. Each partition has one leader, and persistent writes are committed by a quorum before they succeed. If the cluster cannot agree, Kahuna rejects or delays the operation instead of accepting two histories.
+In Kahuna, each [partition](/docs/glossary/#partition) has one [leader](/docs/glossary/#leader-follower-and-learner) that orders its writes. A persistent write succeeds only after a [quorum](/docs/glossary/#quorum) of replicas stores it. If the cluster cannot agree, Kahuna rejects or delays the write instead of keeping two histories.
 
-You also get revisions, compare-and-set updates, expiration, historical reads, and atomic transactions across several keys.
+In the flow below, node 1 commits the first write because two of three replicas store it. When a network split cuts node 1 off, it cannot reach a quorum, so it rejects the second write with a retryable error.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant N1 as Node 1 (leader)
+    participant N2 as Node 2
+    participant N3 as Node 3
+    C->>N1: set balance 100
+    N1->>N2: Replicate
+    N1->>N3: Replicate
+    N2-->>N1: Stored
+    Note over N1,N2: 2 of 3 replicas, quorum reached
+    N1-->>C: Committed
+    Note over N1: Network split cuts node 1 off
+    Note over N2,N3: Elect node 2 as new leader
+    C->>N1: set balance 50
+    N1--xC: Retryable error, no quorum
+```
 
 ### Expiration Alone Does Not Make a Safe Lock
 
-Consider an expiring key used as a lock:
+An expiring key frees a lock when its owner crashes, but it cannot stop an owner that only paused. If worker A pauses, its lease expires, and worker B acquires the lock, both workers believe they own the resource when A resumes.
 
-1. Worker A acquires it and then pauses.
-2. Its lease expires.
-3. Worker B acquires the same lock.
-4. Worker A resumes and continues working.
-
-Both workers now believe they own the resource.
-
-Kahuna issues a **fencing token** with every lock acquisition. The token always increases, allowing the protected resource to reject late operations from an older owner.
+Kahuna issues a **fencing token** with every lock acquisition. For persistent locks the token always increases, so the protected resource can reject late operations from an older owner. See [Leases](/docs/distributed-locks/leases/) and [Fencing Tokens](/docs/distributed-locks/fencing-tokens/).
 
 ```mermaid
 sequenceDiagram
@@ -57,15 +72,28 @@ sequenceDiagram
 
 Suppose a server allocates invoice number `501`, but the response is lost. The client cannot know whether it should retry. A second increment may allocate `502` for the same request.
 
-Kahuna sequences accept an **idempotency key**. Retrying the same request returns the same allocation. They can also reserve non-overlapping ranges to reduce network calls.
+Kahuna sequences accept an **[idempotency key](/docs/glossary/#idempotency-key)**. Retrying the same request returns the same allocation. They can also reserve non-overlapping ranges to reduce network calls. See [Idempotent Retries](/docs/distributed-sequencer/idempotency/).
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant K as Kahuna
+    C->>K: next-sequence invoices, key order-7
+    Note over K: Commits value 501
+    K--xC: 501, response lost
+    Note over C: Timeout, retry
+    C->>K: next-sequence invoices, key order-7
+    K-->>C: 501 again
+```
 
 ## One System for Coordination
 
-These features share the same replication, persistence, routing, and client model. Teams do not need to create their own lock format, renewal loop, counter retry rules, or multi-key commit protocol.
+All three building blocks share the same replication, persistence, and clients, so you do not build your own lock format, renewal loop, or multi-key commit protocol.
 
 | Kahuna advantage | Practical benefit |
 |------------------|-------------------|
 | First-class locks, key/value state, and sequences | Use documented operations instead of application-specific recipes. |
+| [Revisions](/docs/glossary/#revision), compare-and-set, and historical reads | Detect concurrent changes and read earlier values. |
 | Distributed transactions and scripts | Several keys can change together or roll back together. |
 | Native .NET and TypeScript clients | Async APIs, cancellation, transactions, and multiple endpoints fit normal .NET and Node.js services. |
 | REST, gRPC, CLI, and scripts | Applications and operators can choose the appropriate interface. |
@@ -74,25 +102,33 @@ These features share the same replication, persistence, routing, and client mode
 | Jepsen-tested correctness | Public Jepsen workloads exercise key/value registers, locks, interactive transactions, sequences, and membership churn under faults. |
 | MIT license | Use, modify, and redistribute Kahuna without proprietary runtime fees. |
 
+## Built to Stay Online
+
+Kahuna is built for systems that run 24/7:
+
+- **No single point of failure:** a partition keeps serving while a minority of its replicas is down. See [Raft Consensus](/docs/architecture/raft/).
+- **Rolling upgrades:** the [Kubernetes operator](/docs/kubernetes-operator/) replaces one node at a time.
+- **Online scaling:** nodes join and leave while the cluster serves traffic, and the operator can autoscale. See [Replica Placement](/docs/replica-placement/).
+- **Load balancing:** [leader balancing](/docs/leader-balancing/) and [load-based range splitting](/docs/distributed-keyvalue-store/load-based-range-splitting/) move work to spare capacity.
+- **Online backups** with [point-in-time recovery](/docs/backups-and-point-in-time-recovery/).
+
+During a leader election or a node restart, requests to that partition can briefly fail with a retryable error. A partition needs three replicas to survive the loss of one. Ephemeral keys and locks do not survive a restart or a leader change; use persistent [durability](/docs/glossary/#durability) for state that must.
+
+## Extend It With C#
+
+Kahuna is written in C#, so you extend it with ordinary .NET code:
+
+- **[User-defined functions](/docs/scripts/user-defined-functions/):** call your own C# functions from Kahuna Script, inside the transaction.
+- **[Custom storage engines](/docs/storage/custom-storage-engines/):** plug in your own storage backend.
+- **[Embedding](/docs/embedded-kahuna-node/):** run a Kahuna node inside your own .NET process.
+
+Extensions run with full server privileges, and every node that coordinates scripts must load the same set.
+
 ## Replacing a Cache and Database for Small State
 
-Applications often keep durable state in a database and copy hot values into a cache. The application must then coordinate both copies:
+Applications often keep durable state in a database and copy hot values into a cache. The application must then keep both copies in sync and decide which one is correct when they disagree.
 
-1. Write the database.
-2. Update or invalidate the cache.
-3. Handle a failure between those operations.
-4. Decide which value is correct when they disagree.
-
-For coordination and small shared state, Kahuna combines those roles:
-
-- Hot values remain in memory
-- Persistent values are replicated and stored in RocksDB or SQLite
-- No-revision writes reduce overhead for cache keys that only need the latest value
-- Evicted persistent values are loaded from storage when needed
-- One write path updates the accepted cluster state
-- Ephemeral values use the same API when durability is unnecessary
-
-Configuration, service metadata, locks, reservations, rate limits, and sequences often do not need a separate cache in front of a separate database.
+For coordination and small shared state, Kahuna combines both roles. Hot values stay in memory, persistent values are replicated to disk, and there is only one copy to update. Configuration, service metadata, locks, reservations, rate limits, and sequences often do not need a separate cache in front of a separate database.
 
 Kahuna does **not** replace a primary business database. Relational queries, document storage, analytics, large records, and bulk data belong in systems designed for those workloads.
 
@@ -107,6 +143,7 @@ Choose Kahuna when any of these would cause incorrect behavior:
 - Several nodes accepting conflicting values
 - A retried request allocating a second ID
 - A multi-key update becoming partially visible
+- The coordination layer going offline during a node failure, an upgrade, or a resize
 
 Consensus adds network communication and operational cost, so Kahuna is intentionally focused on coordination and small strongly consistent state.
 

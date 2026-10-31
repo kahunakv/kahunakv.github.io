@@ -3,9 +3,9 @@ import TabItem from '@theme/TabItem';
 
 # Inventory Reservation
 
-Use Kahuna transactions when multiple workers need to reserve limited inventory without overselling.
+If two checkouts read the same stock count at the same time, both can see one item left and both can sell it. Use Kahuna transactions when several workers reserve limited inventory and must not oversell.
 
-This recipe keeps the inventory count in one persistent key and applies the reservation atomically with a script.
+This recipe keeps the inventory count in one persistent key and checks and decrements it atomically in one Kahuna Script, much like a SQL transaction that reads and updates a row. The reserve script checks the reservation key first, so retrying it with the same reservation key does not reserve stock twice.
 
 ## Key Layout
 
@@ -17,9 +17,15 @@ inventory/{sku}/reservations/{reservation-id}
 ## Reserve Stock
 
 ```kahuna
+let reservation = get @reservation_key
+
+if reservation != null then
+  return "reserved"
+end
+
 let available = get @available_key
 
-if not available then
+if not found then
   throw "inventory key does not exist"
 end
 
@@ -43,9 +49,15 @@ Run it from a client:
 ```csharp
 KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransactionScript(
     """
+    let reservation = get @reservation_key
+
+    if reservation != null then
+      return "reserved"
+    end
+
     let available = get @available_key
 
-    if not available then
+    if not found then
       throw "inventory key does not exist"
     end
 
@@ -74,9 +86,15 @@ KahunaKeyValueTransactionResult result = await client.ExecuteKeyValueTransaction
 
 ```ts
 const script = client.loadScript(`
+let reservation = get @reservation_key
+
+if reservation != null then
+  return "reserved"
+end
+
 let available = get @available_key
 
-if not available then
+if not found then
   throw "inventory key does not exist"
 end
 
@@ -112,7 +130,7 @@ const status = firstValue ? new TextDecoder().decode(firstValue) : null;
 ```kahuna
 let reserved = get @reservation_key
 
-if not reserved then
+if not found then
   return "not-reserved"
 end
 
@@ -122,10 +140,12 @@ delete @reservation_key
 return "released"
 ```
 
+The release script is also safe to retry. It returns the stock and deletes the reservation key in one transaction, so a second run with the same reservation key finds nothing and returns `not-reserved` instead of adding the stock back twice.
+
 ## Operational Notes
 
 - Use persistent durability when reservations must survive restarts.
 - Keep the transaction short. Do not call external systems inside the reservation flow.
 - Use one inventory key per SKU or resource pool.
 - Store reservation keys separately so you can release or audit them later.
-- If reservation history is not needed, write reservation marker keys with `NOREV` to reduce revision storage.
+- If reservation history is not needed, write reservation marker keys with [`NOREV`](/docs/scripts/commands/set/#norev) to reduce revision storage.

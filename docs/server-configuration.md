@@ -1,6 +1,8 @@
 # Server Configuration
 
-Kahuna server options are passed as command-line flags to `kahuna-server`. The table below documents the options currently exposed by `KahunaCommandLineOptions`.
+This page is the reference for every `kahuna-server` command-line flag currently exposed by `KahunaCommandLineOptions`. Feature pages explain when to use a setting and link here for the full flag list.
+
+Most sections are a table of flags, descriptions, and defaults. Sections are grouped by area: network, security, and health surfaces first; then storage, cluster identity, and replica placement; then workers, key/value, range, backup, and retention settings; then the [Raft](/docs/glossary/#raft) groups; and finally general configuration notes.
 
 Most options have safe defaults, and a typical deployment sets only a few groups:
 
@@ -11,6 +13,8 @@ Most options have safe defaults, and a typical deployment sets only a few groups
 - **Backups**: `--pitr-backup-dir`. See [Backups and Point-in-Time Recovery](#backups-and-point-in-time-recovery).
 
 The remaining sections are for tuning. Change those options after you measure a specific problem, not in advance.
+
+Boolean options are bare switches: passing the flag turns the option on, and the CLI cannot express `false`. Options whose default is enabled therefore cannot be turned off from the command line. Check-quorum, the shared executor pool, auto-rejoin, and quiescence each have an environment variable that turns them off, listed in their rows.
 
 See [Backend I/O Scheduler](/docs/backend-io-scheduler/) for how backend read/write pools relate to Raft WAL I/O.
 
@@ -62,9 +66,9 @@ The JSON response includes:
 
 Use readiness for traffic routing. Membership can be available before the node is initialized, so a node may answer membership queries while still refusing key/value requests.
 
-## Operator Dashboard
+## Status Dashboard
 
-Kahuna serves a read-only operator dashboard at the HTTP root by default. Open `http://host:port/` or `https://host:port/` in a browser to inspect node identity, readiness, storage, replication factor, hosted partitions, backup configuration, and selected engine metrics.
+Kahuna serves a read-only Status Dashboard at the HTTP root by default. Open `http://host:port/` or `https://host:port/` in a browser to inspect node identity, readiness, storage, replication factor, hosted partitions, backup configuration, and selected engine metrics.
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
@@ -95,19 +99,23 @@ The route is always advisory: the receiving server re-resolves the resource and 
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
-| `--storage` | Materialized Kahuna state backend for persistent locks, key/value entries, revisions, and sequences. Supported values are `rocksdb`, `sqlite`, and `memory`. | `rocksdb` |
+| `--storage` | Materialized Kahuna state backend for persistent locks, key/value entries, revisions, and sequences. Built-in values are `rocksdb`, `sqlite`, and `memory`; an extension can register another name. | `rocksdb` |
 | `--storage-path` | File system path for materialized state storage. Use a durable local disk for `rocksdb` or `sqlite`. If omitted, Kahuna resolves it under `KAHUNA_HOME/data`, `$XDG_DATA_HOME/kahuna/data`, or `~/.local/share/kahuna/data` depending on the environment. | resolved user data path |
 | `--storage-revision` | Revision name used to select a materialized state database or file set under `--storage-path`. If omitted, the server uses `v1` so restarts reopen the same data set. | `v1` |
-| `--wal-storage` | Raft WAL backend used by Kommander. Supported values are `rocksdb`, `sqlite`, and `memory`. | `rocksdb` |
+| `--wal-storage` | Raft WAL backend used by Kommander. Built-in values are `rocksdb`, `sqlite`, and `memory`; an extension can register another name. | `rocksdb` |
 | `--wal-path` | File system path for Raft WAL storage. Use a durable local disk. If omitted, Kahuna resolves it under `KAHUNA_HOME/wal`, `$XDG_DATA_HOME/kahuna/wal`, or `~/.local/share/kahuna/wal` depending on the environment. | resolved user data path |
 | `--wal-revision` | Revision name used to select the WAL database or file set under `--wal-path`. | `v1` |
 | `--wal-sync-writes` | Keep synchronous durable WAL writes enabled. This is the default behavior. | enabled |
 | `--disable-wal-sync-writes` | Disable synchronous durable WAL writes for faster non-critical local or test runs. | disabled |
-| `--rocksdb-shared-memory` | Share one RocksDB block cache and write-buffer manager between the materialized state backend and Raft WAL. Applies only when both `--storage` and `--wal-storage` are `rocksdb`. | disabled |
-| `--rocksdb-shared-memory-budget-mb` | Total shared RocksDB block-cache budget in MiB. The memtable sub-budget is charged inside this total. | `320` |
-| `--rocksdb-shared-memtable-budget-mb` | Shared RocksDB memtable sub-budget in MiB. Must be less than or equal to `--rocksdb-shared-memory-budget-mb`. | `128` |
+| `--rocksdb-shared-memory` | Share one RocksDB block cache and write-buffer manager when both storage layers use RocksDB. Requires positive shared cache and memtable budgets. | disabled |
+| `--storage-shared-cache-mb` | Cache budget in MiB available to both storage layers. With shared RocksDB memory, this is the total block-cache budget. | `0` (none) |
+| `--storage-shared-memtable-budget-mb` | Shared memtable budget in MiB. When a shared cache is set, this is charged inside it and must not exceed it. | `0` (none) |
+| `--storage-compaction-rate-mbps` | Throughput budget in MB/s for materialized store flush and compaction writes. The built-in RocksDB backend applies it; SQLite and memory ignore it. | `0` (unlimited) |
+| `--storage-max-background-compactions` | Maximum concurrent materialized store compactions. The built-in RocksDB backend applies it; SQLite and memory ignore it. | `0` (backend default) |
 | `--disable-rocksdb-direct-reads` | Disable RocksDB direct I/O reads for the materialized state backend and use buffered reads through the operating-system page cache. Direct reads are enabled by default. Applies only when `--storage` is `rocksdb`. | disabled |
 | `--rocksdb-statistics` | Enable RocksDB internal statistics collection and LOG dumps every 60 seconds for tuning or diagnosis. This adds per-operation overhead. Applies only when `--storage` is `rocksdb`. | disabled |
+
+`--rocksdb-shared-memory-budget-mb` and `--rocksdb-shared-memtable-budget-mb` remain accepted as legacy aliases when the corresponding `--storage-shared-*` option is absent. Their former implicit defaults of 320 MiB and 128 MiB no longer apply: set both budgets explicitly when enabling shared RocksDB memory. See [Storage Engines](/docs/storage/overview/) for sizing and compaction trade-offs.
 
 ## Cluster Identity and Discovery
 
@@ -129,8 +137,8 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
 | `--raft-replication-factor` | Desired voter replicas per partition. `0` means full replication. Prefer odd values such as `3` or `5`. | `0` |
-| `--raft-enable-placement-rebalancer` | Enable ongoing replica-placement repair and balancing on the partition `0` leader. Initial placement still applies when `--raft-replication-factor` is positive. | disabled |
-| `--raft-placement-pass-interval` | Interval between placement-controller passes on the partition `0` leader, in milliseconds. `0` disables the timer, but commit-triggered passes still run. | `5000` |
+| `--raft-enable-placement-rebalancer` | Enable ongoing replica-placement repair and balancing on the leader of partition 0 (the system partition). Initial placement still applies when `--raft-replication-factor` is positive. | disabled |
+| `--raft-placement-pass-interval` | Interval between placement-controller passes on the partition 0 leader, in milliseconds. `0` disables the timer, but commit-triggered passes still run. | `5000` |
 | `--raft-max-replica-moves-per-pass` | Maximum new replica add/remove sequences started in one placement-controller pass across repair and balance priorities. | `4` |
 | `--raft-max-concurrent-replica-transfers` | Maximum partitions with an in-flight learner catch-up or replica removal caused by balance moves. Durability repair uses a separate budget. | `1` |
 | `--raft-max-concurrent-replica-repairs` | Maximum in-flight repair moves for under-replicated partitions or replicas stranded on departed nodes. | `3` |
@@ -146,14 +154,14 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--locks-workers` | Number of lock actors per durability ring. `0` auto-sizes to `max(32, CPU cores * 4)`. | `0` |
 | `--keyvalue-workers` | Number of key/value actors per durability ring. `0` auto-sizes to `max(32, CPU cores * 4)`. | `0` |
 | `--sequencer-workers` | Number of sequence actors. `0` auto-sizes to `max(8, CPU cores)`. | `0` |
-| `--sequencer-block-size` | Values reserved per sequence compare-and-swap for sequences without their own `blockSize`. Larger blocks amortize one Raft commit across more sequence values but can leave larger gaps if a block is abandoned. | `1000` |
+| `--sequencer-block-size` | Values reserved per sequence compare-and-set (CAS) for sequences without their own `blockSize`. Larger blocks amortize one Raft commit across more sequence values but can leave larger gaps if a block is abandoned. | `1000` |
 | `--sequencer-idempotency-retention-max` | Maximum idempotency entries retained per sequence record. `0` disables the count cap. | `256` |
 | `--sequencer-idempotency-retention-ttl` | Seconds within which retrying a keyed sequence reservation replays the same allocation. `0` disables age pruning. | `600` |
 | `--sequencer-max-sequences-per-actor` | Maximum resident sequences per actor before least-recently-used sequence state is evicted. `0` is unbounded. | `10000` |
 | `--sequencer-block-lease` | Seconds a reserved sequence block may be served from memory before revalidating against the durable record. Safe sequence updates wait this long and refuse new allocations during the wait. `0` disables revalidation and therefore refuses sequence updates. | `5` |
 | `--background-writer-workers` | Number of background persistence writer workers. Values less than or equal to `0` are normalized to `1`. | `1` |
-| `--backend-read-io-threads` | Dedicated Kahuna backend read pool threads for point gets, existence checks, read-before-write work, and scans. Separate from the Raft WAL read pool. Values less than or equal to `0` auto-size to the processor count. | `8` |
-| `--backend-write-io-threads` | Dedicated Kahuna backend writer pool threads for background batch writes and pruning. Keep this small because backend writes are fsync-heavy. Values less than or equal to `0` auto-size to the processor count. | `1` |
+| `--backend-read-io-threads` | Dedicated Kahuna backend read pool threads for point gets, existence checks, read-before-write work, and scans. Separate from the Raft WAL read pool. Must be positive; the node refuses to start with `0` or a negative value. | `8` |
+| `--backend-write-io-threads` | Dedicated Kahuna backend writer pool threads for background batch writes and pruning. The background writer submits every batch to a single queue, so writes run one at a time and values above `1` only add idle threads. Must be positive; the node refuses to start with `0` or a negative value. | `1` |
 | `--backend-read-queue-depth` | Per-partition pending queue depth for the backend read scheduler before reads receive retryable backpressure. | `4096` |
 | `--default-transaction-timeout` | Default transaction timeout in milliseconds. | `5000` |
 | `--max-concurrent-transactions` | Script transactions that may execute concurrently before further ones queue and start in priority order. `0` disables the script admission gate. | `0` |
@@ -168,18 +176,19 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--max-script-depth` | Deepest transaction script syntax tree accepted. This bounds parser and evaluator stack use for deeply nested expressions or very long statement lists. | `256` |
 | `--disable-script-actor-turns` | Run every script on the general transaction path. By default, eligible auto-commit scripts over one ephemeral key run inside one actor turn. | disabled |
 | `--disable-fused-ephemeral-finalize` | Finalize every ephemeral transaction with separate prepare, range-lock probe, and commit messages. By default, a transaction whose whole write set is one ephemeral key can finalize in one actor turn. | disabled |
-| `--extension-assembly` | Path to an assembly publishing user-defined script functions through `IKahunaFunctionProvider`. Repeatable. Every cluster node that may coordinate scripts should load the same function set. | none |
+| `--extension-assembly` | Path to an assembly publishing user-defined script functions through `IKahunaFunctionProvider`, or storage engines for `--storage` and `--wal-storage` through `IPersistenceBackendProvider` and `IWalProvider`. Repeatable. Every cluster node that may coordinate scripts should load the same function set. Dependencies load from the assembly's directory. An extension cannot replace a built-in storage engine name. The assembly runs as fully trusted code in the server process. See [Custom Storage Engines](/docs/storage/custom-storage-engines/). | none |
+| `--extension-option` | Settings for extension storage engines as `key=value` pairs after one flag, for example `--extension-option acme.mode=fast acme.region=west`. Values may contain `=`; duplicate or empty keys stop startup. Kahuna passes the map to storage provider contexts without interpreting it. | none |
 | `--function-slow-warn-ms` | Log a warning when a user-defined script function takes longer than this many milliseconds. `0` disables the warning. | `50` |
 | `--revisions-to-cache` | Recent revisions retained per key in memory; must be at least 1. Older persistent revisions can fall back to disk; older ephemeral revisions have no disk history. | `4` |
 | `--cache-entry-ttl` | Age threshold used by lock cleanup and legacy cleanup paths, in seconds. Key/value LRU eviction is budget-based. | `1800` |
 | `--cache-entries-to-remove` | Maximum entries removed by cleanup paths that use this cap. Values less than or equal to `0` are normalized from the key/value collection batch size. | `100` |
 | `--dirty-objects-writer-delay` | Delay between dirty object writer flush passes, in milliseconds. | `200` |
 | `--checkpoint-interval` | Period, in seconds, at which dirty partitions checkpoint after flushes so the Raft WAL retention floor can advance and old log entries can compact. | `30` |
-| `--fail-fast-on-oom` | Terminate the process on `OutOfMemoryException` so an orchestrator restarts the node with a clean heap. When disabled, Kahuna marks the process unhealthy through `/v1/cluster/health` after the first fatal fault. | enabled |
+| `--fail-fast-on-oom` | Terminate the process on `OutOfMemoryException` so an orchestrator restarts the node with a clean heap. Enabled by default; the server CLI cannot turn it off. | enabled |
 
 ## Key/Value Watch and History
 
-Persistent key/value watches work with the defaults. To resume from a progress watermark after a disconnect, enable the commit admission window on **every** node with the same value. This also bounds how far a commit timestamp may trail the log entry that carries it; entries outside the window receive a retryable refusal. Choose the bound with your transaction duration and clock skew in mind. See [Watch Key Changes](/docs/recipes/watch-key-changes/) for a consumer example.
+[Key/value watches](/docs/distributed-keyvalue-store/watches/) on persistent keys work with the defaults. To resume from a progress watermark after a disconnect, enable the commit admission window on **every** node with the same value. This also bounds how far a commit timestamp may trail the log entry that carries it; entries outside the window receive a retryable refusal. Choose the bound with your transaction duration and clock skew in mind. See [Watch Key Changes](/docs/recipes/watch-key-changes/) for a consumer example.
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
@@ -188,6 +197,11 @@ Persistent key/value watches work with the defaults. To resume from a progress w
 | `--history-hold-max-per-holder` | Maximum history holds for one holder; `0` removes the bound. | `4096` |
 | `--history-hold-max-total` | Maximum history holds in the cluster; `0` removes the bound. | `65536` |
 | `--transaction-origin-tags` | Retain a transaction's origin label in its prepared intents and watch events. Enable only when every node understands it. | disabled |
+| `--watch-max-capacity` | Largest frame capacity a watch may request. A request above it is refused as invalid, so a caller cannot make the node buffer without bound. | `65536` |
+| `--watch-max-buffered-bytes` | Bytes of keys and values one watch may buffer for a slow reader, including frames held back during a replay or behind a pending intent. A watch over the limit ends with an overflow. | `67108864` (64 MiB) |
+| `--watch-max-per-node` | Most watches open on the node at once, across every client surface. `0` removes the bound. | `65536` |
+| `--watch-max-per-call` | Most watches one gRPC watch call may hold open. One call can carry many watches, and HTTP/2 stream limits do not count them. `0` removes the bound. | `1024` |
+| `--watch-max-concurrent-replays` | Most watch replays (one per resumed partition) the node runs at once. A resume that finds no free slot is refused with a retry. `0` removes the bound. | `64` |
 
 History holds keep the relevant partition WAL available for replay until the holds are advanced, released, or purged. They increase log retention and do not guarantee that a resume will succeed if a replica already lost the needed history.
 
@@ -213,7 +227,7 @@ These options tune persistent partition writes before they are proposed to Raft.
 | `--persistence-max-unflushed-bytes` | Maximum value bytes held in memory awaiting background flush before ordinary writes receive retryable backpressure. `0` disables the byte bound. | `536870912` |
 | `--persistence-write-stall-warn-ms` | Milliseconds an in-flight backend store write may remain unacknowledged before Kahuna logs a stall warning. `0` disables the log warning, but the stall metrics are still published. | `500` |
 
-Durable transaction decision, materialization, settlement, recovery, and range-metadata handoff records use terminal scheduler admission with reserved headroom. The terminal reserve and node-global queue settings are `KahunaConfiguration` fields today and are not exposed as server command-line flags.
+Durable transaction decision, materialization, settlement, recovery, and range-metadata handoff records use terminal scheduler admission with reserved headroom. The terminal reserve and node-global queue settings are `KahunaConfiguration` fields and are not exposed as server command-line flags.
 
 ## Key-Range Split and Merge
 
@@ -236,15 +250,15 @@ These options tune automatic splitting and merging for key spaces registered wit
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
-| `--pitr-window` | Recoverable WAL history in seconds. Values are normalized to a range greater than `0` and no more than `21600` seconds (6 hours). Increasing this value increases retained WAL storage. | `3600` |
-| `--base-snapshot-interval` | Intended interval between base checkpoints per partition, in seconds. It must be positive and no greater than `--pitr-window`. This setting contributes to the protected WAL floor but does not schedule backups automatically. | `1800` |
-| `--pitr-backup-dir` | Root directory for backup catalog manifests and artifacts. Backup REST/gRPC, client, and CLI operations are disabled when this is empty. It is required by `--pitr-bootstrap-from`. | empty |
+| `--pitr-window` | Recoverable WAL history in seconds: how far back a restore target may be. Values are normalized at startup: a non-positive value becomes `3600` (one hour) and a value over `21600` (6 hours) is capped at `21600`. Increasing this value increases retained WAL storage. | `3600` |
+| `--base-snapshot-interval` | Intended interval between base checkpoints per partition, in seconds. A shorter interval reduces WAL replay during restore. Values are normalized at startup: a non-positive value becomes `1800` (30 minutes) and a value longer than `--pitr-window` is reduced to the window. This setting contributes to the protected WAL floor but does not schedule backups automatically. | `1800` |
+| `--pitr-backup-dir` | Root directory for backup catalog manifests and artifacts. Kahuna creates it when needed. Backup REST/gRPC, client, and CLI operations are disabled when this is empty. It is required by `--pitr-bootstrap-from`. | empty |
 | `--pitr-backup-target` | Backup storage target. `local` stores manifests and artifacts under `--pitr-backup-dir`. Other values require a host-registered backup storage provider. | `local` |
 | `--pitr-backup-scratch-dir` | Local staging directory used when the selected backup target cannot be written to directly by the storage engine. Size it for one full backup. | empty |
 | `--pitr-backup-cluster-id` | Operator-assigned cluster identity stamped into backup manifests. Set the same value on every node to prevent cross-cluster chain resolution. | empty |
-| `--pitr-backup-mac-key-file` | Path to the HMAC-SHA-256 key file used to authenticate backup manifests. Keep it outside `--pitr-backup-dir` and readable only by the server user. | empty |
+| `--pitr-backup-mac-key-file` | Path to the HMAC-SHA-256 key file used to authenticate backup manifests. Deploy the same key contents to every node, keep it outside `--pitr-backup-dir`, and make it readable only by the server user. | empty |
 | `--pitr-restore-root` | Server-owned root directory that restore targets must be contained within. Setting this enables confined remote restore. | empty |
-| `--pitr-allow-unconfined-remote-restore` | Allows remote restore requests without `--pitr-restore-root`. Use only for trusted administrative environments. | `false` |
+| `--pitr-allow-unconfined-remote-restore` | Allows remote restore requests without `--pitr-restore-root`. Use only for trusted administrative environments; do not enable it on shared nodes. | `false` |
 | `--backup-retention-max-chains` | Keep at most this many most-recent backup chains. `0` is unbounded and retention remains off unless at least one retention bound is set. | `0` |
 | `--backup-retention-max-age` | Delete chains whose newest backup is older than this many seconds. `0` is unbounded. | `0` |
 | `--backup-retention-max-bytes` | Keep the most-recent backup chains whose artifact bytes fit this budget. The newest chain is always kept. `0` is unbounded. | `0` |
@@ -286,11 +300,13 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 
 ## Raft Communication
 
+Snapshot receive staging, deadline, compatibility, and compression flags (`--raft-snapshot-max-pending-bytes`, `--raft-snapshot-max-pending-sessions`, `--raft-snapshot-receive-session-ttl`, `--raft-snapshot-staging-directory`, `--raft-snapshot-staging-memory-bytes`, `--raft-snapshot-chunk-ack-timeout`, `--raft-snapshot-transfer-step-timeout`, `--raft-reseed-request-timeout`, `--raft-allow-legacy-snapshot-senders`, and `--raft-grpc-enable-snapshot-compression`) are documented in [Snapshot Options](/docs/snapshot-and-raft-recovery/#snapshot-options).
+
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
 | `--read-io-threads` | Number of Raft WAL read I/O threads. Kahuna backend reads use the separate backend read pool. | `4` |
 | `--write-io-threads` | Number of Raft write I/O threads. | `16` |
-| `--raft-enable-shared-executor-pool` | Share a bounded worker pool across Raft partitions instead of using one OS thread per partition. Useful for very high partition counts. | enabled |
+| `--raft-enable-shared-executor-pool` | Share a bounded worker pool across Raft partitions instead of using one OS thread per partition. Useful for very high partition counts. Set `KAHUNA_SHARED_POOL=0` to fall back to one thread per partition, for diagnostics. | enabled |
 | `--raft-executor-pool-size` | Number of shared Raft executor workers. `0` auto-sizes to the processor count. | `0` |
 | `--raft-http-scheme` | HTTP scheme used by Raft REST communication. | `https://` |
 | `--raft-http-auth-bearer-token` | Bearer token sent with Raft REST communication. | empty |
@@ -299,20 +315,9 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 | `--raft-grpc-scheme` | URL scheme prepended to bare peer endpoints when opening Raft gRPC channels. Kahuna inter-node gRPC forwarding uses the same scheme so Raft traffic and leader-forwarded key/value, lock, and sequence calls dial peers consistently. Use `http://` only when peers advertise cleartext HTTP/2 ports. | `https://` |
 | `--raft-grpc-channels-per-node` | Pooled gRPC channels opened per peer. Values are clamped between `1` and `64`; each channel holds a connection and handler for the process lifetime. | `4` |
 | `--raft-grpc-enable-multiple-http2-connections` | Allow each pooled gRPC channel to open multiple HTTP/2 connections for additional concurrent streams. | disabled |
-| `--raft-grpc-enable-snapshot-compression` | Compress Raft snapshot transfers sent over gRPC. | disabled |
 | `--raft-grpc-max-message-bytes` | Largest gRPC message this node accepts from or sends to a peer. Raise on every receiver before increasing outbound or backfill batch byte caps beyond it. | `16777216` |
-| `--raft-snapshot-receive-session-ttl` | Idle snapshot-receive session lifetime in milliseconds before the receiver drops buffered bytes. | `30000` |
-| `--raft-snapshot-max-pending-sessions` | Maximum concurrent snapshot-receive sessions across all partitions. Older inactive sessions can be evicted after the cap. | `8` |
-| `--raft-snapshot-max-pending-bytes` | Total staged bytes across receive sessions, including installing sessions and disk-backed bytes. Size above the largest expected partition snapshot. | `536870912` |
-| `--raft-snapshot-staging-directory` | Private per-node spill directory. Unset keeps all received snapshot bytes in memory. Spill files are deleted at startup. | empty |
-| `--raft-snapshot-staging-memory-bytes` | Resident receive-staging byte budget when a directory is configured; `0` stages entirely on disk. Does not bound decoded state or total heap. | `67108864` |
-| `--raft-reseed-request-timeout` | Repair-request apply hold and leader checkpoint-request timeout, in milliseconds. | `180000` |
-| `--raft-allow-legacy-snapshot-senders` | Accept snapshot chunks from older senders that omit session metadata. Use only for temporary mixed-version upgrades. | disabled |
-| `--raft-snapshot-transfer-step-timeout` | No-progress limit in milliseconds for export/read/send steps and reported importer bytes read. Progress resets the install stall clock; this is not a total install deadline. | `120000` |
-| `--raft-snapshot-chunk-ack-timeout` | Milliseconds for a chunk acknowledgement or install-status call. Current peers poll installation separately; the effective call bound is the smaller of this and transfer-step timeout. | `15000` |
 | `--raft-grpc-enable-append-logs-coalescing` | Coalesce multiple AppendLogs calls into one gRPC frame per write cycle for write-heavy multi-partition workloads. | disabled |
 | `--raft-grpc-append-logs-max-coalesce-batch` | Maximum AppendLogs items drained into one coalesced gRPC frame when coalescing is enabled. | `256` |
-| `--raft-transport-security` | Structured transport security JSON accepted by the CLI. The current server startup path does not parse or apply this field yet. | empty |
 | `--raft-allow-insecure-certificate-validation` | Skip TLS certificate validation for inter-node Raft gRPC traffic. Use only in development or test environments. | disabled |
 | `--raft-max-pre-auth-request-body-bytes` | Maximum Raft REST request body buffered before authentication, in bytes. Bounds unauthenticated memory use independently of host limits. | `33554432` |
 | `--raft-max-outbound-queue-bytes-per-peer` | Maximum buffered outbound bytes queued per peer before excess AppendLogs entries are dropped and later resent by heartbeat or backfill retry. `0` disables the cap. | `67108864` |
@@ -357,7 +362,7 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 |---------------------|-------------|---------------|
 | `--raft-fan-out-before-local-write` | Queue leader WAL write and follower sends concurrently. Quorum completion still waits for local durability; failure after fan-out can leave an unknown outcome. | enabled |
 | `--raft-follower-apply-in-own-turn` | Acknowledge follower append before ordered application in separate executor turns. Partition 0 applies inline. | enabled |
-| `--raft-follower-apply-turn-time` | Cooperative apply-turn time budget in **microseconds**, with at least one entry delivered. `0` leaves only the entry budget. | `100` |
+| `--raft-follower-apply-turn-time` | Cooperative apply-turn time budget in **microseconds**, with at least one entry delivered. `0` leaves only the entry budget. A long callback can exceed the time budget. | `100` |
 | `--raft-follower-apply-turn-budget` | Entries per follower apply turn. Nonpositive removes the count bound; backlog can increase the effective budget. | `1024` |
 | `--raft-max-queued-client-proposals` | Maximum queued client proposals per partition before backpressure applies. | `2048` |
 | `--raft-max-wal-queue-depth-per-partition` | Per-partition WAL write queue depth limit. | `4096` |
@@ -386,7 +391,7 @@ These options bound retained durable two-phase-commit metadata. Terminal records
 |---------------------|-------------|---------------|
 | `--raft-enable-leader-balancer` | Enable advisory leader balancing. Configure it consistently on every cluster node. | disabled |
 | `--raft-leader-balancer-report-interval` | Interval between node load reports, in milliseconds. | `5000` |
-| `--raft-leader-balancer-interval` | Interval between planning passes on the partition `0` leader, in milliseconds. | `30000` |
+| `--raft-leader-balancer-interval` | Interval between planning passes on the partition 0 leader, in milliseconds. | `30000` |
 | `--raft-leader-balancer-report-ttl` | Maximum accepted load-report age, in milliseconds. Must exceed the report interval. | `20000` |
 | `--raft-count-deadband` | Allowed leader-count deviation from the ideal before count balancing starts. | `1` |
 | `--raft-load-imbalance-threshold` | Fractional load skew that triggers load-based swaps after counts are balanced. | `0.25` |
@@ -414,7 +419,7 @@ Admission/initialization and learner promotion have separate join budgets. Promo
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
 | `--raft-backfill-threshold` | Committed-entry lag that triggers active follower backfill. | `10` |
-| `--raft-backfill-enabled` | Enable leader catch-up batches and snapshot fallback for lagging followers. Disable only when another deployment layer owns follower catch-up. | enabled |
+| `--raft-backfill-enabled` | Enable leader catch-up batches and snapshot fallback for lagging followers. Enabled by default; the server CLI cannot turn it off. | enabled |
 | `--raft-max-backfill-entries-per-round` | Maximum committed entries sent to one stale follower per heartbeat interval. | `128` |
 | `--raft-max-backfill-bytes-per-round` | Maximum serialized bytes sent to one stale follower per backfill round, in addition to the entry limit. | `4194304` |
 | `--raft-follower-saturation-backoff` | Milliseconds a leader waits before retrying backfill to a peer that reported a saturated WAL queue. | `1000` |
@@ -437,9 +442,9 @@ Admission/initialization and learner promotion have separate join budgets. Promo
 | `--raft-ping-timeout` | Direct SWIM probe timeout, in milliseconds. | `500` |
 | `--raft-indirect-ping-fanout` | Intermediary nodes used for indirect probing after a direct ping timeout. | `2` |
 | `--raft-suspicion-timeout` | Time a node may remain `Suspect` before becoming `Dead`, in milliseconds. | `5000` |
-| `--raft-dead-member-eviction-grace` | Time a dead node remains in the roster before partition `0` commits its removal, in milliseconds. | `30000` |
-| `--raft-enable-auto-rejoin` | Let a restarted node that finds itself removed from the roster re-run join against the remaining members. Disable only when removed live nodes must stay out. | enabled |
-| `--raft-enable-quiescence` | Stop per-partition heartbeats after an idle period and rely on SWIM for node liveness. Requires `0 < --raft-ping-interval < --raft-start-election-timeout`. | enabled |
+| `--raft-dead-member-eviction-grace` | Time a dead node remains in the roster before partition 0 commits its removal, in milliseconds. | `30000` |
+| `--raft-enable-auto-rejoin` | Let a restarted node that finds itself removed from the roster re-run join against the remaining members. Set `KAHUNA_AUTO_REJOIN=0` to turn it off when removed live nodes must stay out. | enabled |
+| `--raft-enable-quiescence` | Stop per-partition heartbeats after an idle period and rely on SWIM for node liveness. Requires `0 < --raft-ping-interval < --raft-start-election-timeout`. Set `KAHUNA_QUIESCENCE=0` to turn it off. | enabled |
 | `--raft-quiesce-after` | Required partition idle time before heartbeat quiescence, in milliseconds. | `1500` |
 
 ## Raft Logging and Compaction
@@ -458,15 +463,14 @@ Admission/initialization and learner promotion have separate join budgets. Promo
 - `--wal-storage` and `--storage` configure different layers. WAL storage persists Raft logs; materialized storage persists Kahuna object state after committed operations are applied.
 - Use stable `--storage-revision` and `--wal-revision` values for existing data directories. Changing revisions points the server at different local storage files.
 - RocksDB WAL shard tuning flags apply only when `--wal-storage rocksdb`. Numeric `0` values leave Kommander's shipped defaults in force; invalid combinations are still rejected at startup so a bad tuning value is not hidden by a backend switch.
-- The server CLI still does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, durable-decision deadline knobs, durable deferred-settlement and prepared-intent bounds, terminal write-aggregator reserve knobs, and some advanced range-split policy internals remain code-level or embedded-node configuration today. Transaction priority admission, durable record-retention budgets, and the primary key-range split/merge knobs are exposed as server flags.
+- The server CLI does **not** expose every `KahunaConfiguration` field. In-memory collector knobs, script-cache entry limits, durable-decision deadline knobs, durable deferred-settlement and prepared-intent bounds, terminal write-aggregator reserve knobs, and some advanced range-split policy internals remain code-level or embedded-node configuration. Transaction priority admission, durable record-retention budgets, and the primary key-range split/merge knobs are exposed as server flags.
+- `DurableMaterializeOnResolve` and `DurableMaterializeByReference` are core/embedded configuration fields with no server CLI flag. Precise wakes and fill-target dispatch have the server switches listed above.
 - The embedded node exposes the broader runtime surface, including collector and persistent-revision settings. See [Embedded Kahuna Node](/docs/embedded-kahuna-node/) for the full embedded configuration options.
 
 ## Snapshot Configuration Semantics
 
-Current peers can acknowledge staged final chunks with `InstallPending` and poll installation separately. Chunk-ack timeout bounds transport/status calls, while transfer-step timeout also bounds lack of reported importer byte progress. A progressing install can exceed both durations in total. Older non-polling senders wait for install on the final chunk. Receive byte/session caps remain active with disk staging; no second session is staged for a partition whose install is running.
-
-See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for receive staging, validation, partial-install behavior, compaction-window semantics, and server/embedded differences. `DurableMaterializeOnResolve` and `DurableMaterializeByReference` are core/embedded configuration fields with no server CLI flag today. Precise wakes and fill-target dispatch have the server switches listed above.
+Snapshot acknowledgement, install polling, deadlines, and staging caps are explained in [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/#snapshot-options), together with partial-install behavior and server/embedded differences. Leader-side log retention and compaction holds are explained in [Snapshot Catch-Up and Log Retention](/docs/architecture/raft/#snapshot-catch-up-and-log-retention).
 
 ## Shared Server Configuration Mapping
 
-Clustered and standalone server startup now share the embedded configuration mapping before server-only listener and routing settings are added. Backup/PITR settings, durable-record retention/maintenance, checkpoint interval, published-head reads, and revision retention therefore reach the clustered configuration too. Settings previously parsed but ignored on that path can now affect a deployment; review existing flags when upgrading. This does not add CLI flags for runtime-only fields.
+Clustered and standalone server startup share the embedded configuration mapping before server-only listener and routing settings are added. Backup/PITR settings, durable-record retention/maintenance, checkpoint interval, published-head reads, and revision retention therefore reach the clustered configuration too. Older releases parsed some of these settings on the clustered path but ignored them, so review existing flags when you upgrade: they take effect on the clustered path. This mapping does not add CLI flags for runtime-only fields.

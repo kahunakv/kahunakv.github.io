@@ -1,6 +1,6 @@
 # Key-Range Sharding
 
-By default, Kahuna decides which partition stores a key by hashing the key's key space (the part before the last `/`). This spreads unrelated data evenly without any planning, but it keeps each key space on exactly one partition. For a large key space such as `users/...` or `orders/2026/...`, that one partition then holds all of its data and takes all of its writes, and it cannot be split.
+By default, Kahuna decides which [partition](/docs/glossary/#partition) stores a key by hashing the key's key space (the part before the last `/`). This spreads unrelated data evenly without any planning, but it keeps each key space on exactly one partition. For a large key space such as `users/...` or `orders/2026/...`, that one partition then holds all of its data and takes all of its writes, and it cannot be split.
 
 Key-range sharding removes that limit for the key spaces you choose. Keys stay in sorted order, the key space is cut into contiguous ranges that can live on different partitions, and Kahuna splits a range when it grows too large or too busy. Use it when:
 
@@ -10,24 +10,11 @@ Key-range sharding removes that limit for the key spaces you choose. Keys stay i
 
 Keep the default hash routing for small key spaces, caches, configuration, and data you only access by exact key. If you only need a small group of related keys on one partition, [buckets](/docs/distributed-keyvalue-store/buckets/) are simpler.
 
-Kahuna supports two routing models for key/value data:
-
-- **Hash routing**: the default. A key space is mapped to a partition by hash.
-- **Key-range routing**: opt-in for key spaces that need locality, ordered reads, and range-scoped concurrency.
-
-The two models coexist in the same cluster.
-
 ## Key Spaces
 
-A **key space** is the part of a key before the last `/`.
+A **key space** is the same boundary that defines a [bucket](/docs/distributed-keyvalue-store/buckets/#what-a-bucket-means): the part of a key before the last `/`. For example, `orders/2026/0001` belongs to key space `orders/2026`.
 
-Examples:
-
-- `services/auth` belongs to key space `services`
-- `users/0001` belongs to key space `users`
-- `orders/2026/0001` belongs to key space `orders/2026`
-
-Kahuna decides the routing mode per key space, not per individual key.
+Kahuna decides the routing mode per key space, not per individual key, so hash-routed and range-routed key spaces coexist in the same cluster.
 
 ## Hash Routing
 
@@ -42,19 +29,7 @@ That works well for:
 
 In hash mode, all keys in the same key space route to the same partition because Kahuna hashes the key space boundary, not the full leaf key. That is what makes `get by bucket` possible for prefixes such as `services/`.
 
-### Placement Groups
-
-Hash routing can also co-locate related key spaces with a placement group. The group is the part of a key space before the first `|`.
-
-| Key | Key space | Placement group |
-|-----|-----------|-----------------|
-| `orders|rows/1001` | `orders|rows` | `orders` |
-| `orders|by_customer/customer-7/1001` | `orders|by_customer/customer-7` | `orders` |
-| `sessions/user-42` | `sessions` | `sessions` |
-
-Keys in `orders|rows/...` and `orders|by_customer/...` remain separate key spaces for bucket reads, prefix locks, and range registration, but hash routing places both under the `orders` group. This is useful when an application keeps rows and secondary indexes in separate prefixes but wants most transactions over them to stay single-partition.
-
-Add the group marker when the key space is created. Changing it later changes placement for new requests, while existing keys remain stored under their old names.
+Hash routing can also co-locate related key spaces with a [placement group](/docs/distributed-keyvalue-store/buckets/#placement-groups), so that rows and their secondary indexes stored under separate prefixes land on the same partition.
 
 ## Key-Range Routing
 
@@ -74,67 +49,84 @@ This gives Kahuna three things hash routing cannot provide:
 - **range-scoped reads** that only touch the ranges they overlap
 - **range-scoped locking and contention**, so unrelated slices of a large key space do not block each other
 
-## Why It Matters
-
-With plain hash routing, all keys of a space such as `users/*` share one partition. A large or hot space can concentrate storage and write load there; hash routing does not split that space into independently placed ordered ranges.
-
-With key-range routing, those keys stay in contiguous slices. Kahuna can then split a hot or large slice into two smaller slices and move the upper half to a different partition while preserving key order.
-
-This is the model used by systems such as Spanner and CockroachDB.
+When a slice grows hot or large, Kahuna can split it into two smaller slices and move the upper half to a different partition while preserving key order. This is the model used by systems such as Spanner and CockroachDB.
 
 ## Splits, Merges, and Fencing
 
 When a key-range space grows, Kahuna can split one range into two smaller ranges. When two neighboring ranges become too small, Kahuna can merge them.
 
-Automatic splitting has two independent triggers. The count trigger splits a range after it reaches a configured number of keys. The opt-in load trigger splits a range whose persistent write rate and WAL backlog remain high, even when the range contains relatively few keys. Load-based splitting selects a split key from observed write distribution and requires [leader balancing](/docs/leader-balancing/) to relocate work across nodes.
+For example, splitting the range `[users/0250, users/0700)` at `users/0500` keeps the lower half on its partition and gives the upper half to a new partition:
+
+```mermaid
+flowchart TD
+    subgraph Before[Before the split]
+        R["[users/0250, users/0700)<br/>partition B"]
+    end
+    subgraph After[After the split at users/0500]
+        Lo["[users/0250, users/0500)<br/>partition B"]
+        Up["[users/0500, users/0700)<br/>new partition D"]
+    end
+    R -->|lower half| Lo
+    R -->|upper half| Up
+```
+
+Automatic splitting has two independent triggers. The count trigger splits a range after it reaches a configured number of keys. The opt-in load trigger splits a range whose persistent write rate and [write-ahead log](/docs/glossary/#write-ahead-log-wal) (WAL) backlog remain high, even when the range contains relatively few keys. Load-based splitting selects a split key from observed write distribution and requires [leader balancing](/docs/leader-balancing/) to relocate work across nodes.
 
 See [Load-Based Range Splitting](/docs/distributed-keyvalue-store/load-based-range-splitting/) for configuration, metrics, and limitations.
 
-Range moves are protected by a **generation fence**:
+Range moves are protected by a **generation fence**. The client or coordinator routes each write with the range descriptor generation it knows. If the range split or moved before the write is replicated, the write is rejected with `MustRetry`, and the caller resolves the key again and retries against the new range owner:
 
-- the client or coordinator routes a write using the current range descriptor generation
-- if the range split or moved before the write is replicated, the write is rejected with `MustRetry`
-- the caller resolves the key again and retries against the new range owner
+```mermaid
+sequenceDiagram
+    participant C as Client or coordinator
+    participant B as Partition B (old owner)
+    participant D as Partition D (new owner)
+    C->>B: Write users/0600 with generation g
+    Note over B: Range split, users/0600 moved to D
+    B-->>C: MustRetry
+    Note over C: Resolve the key again
+    C->>D: Write users/0600 with new generation
+    D-->>C: Success
+```
 
 This prevents writes from silently landing on stale partitions after a split or merge.
 
-Splits and merges also quiesce the moving key interval during the copy and cutover window. Kahuna combines a range lock on the source partition with a replicated descriptor deadline, so writes that race with movement are refused retryably instead of being acknowledged on the old partition and lost after routing changes.
+Splits and merges also pause writes to the moving key interval during the copy and cutover window. Kahuna combines a range lock on the source partition with a replicated descriptor deadline, so writes that race with movement are refused retryably instead of being acknowledged on the old partition and lost after routing changes.
 
-## Meta Partition
+In short, a write that races a split or merge gets a retryable error and is never lost. Committed data, transaction records, and prepared [write intents](/docs/glossary/#write-intent) are replicated to the destination before cutover, and the partition IDs that a merge retires are never reused. The mechanics are in [Internals: Handoff and Retirement](#internals-handoff-and-retirement).
 
-The range-descriptor map is replicated on the **meta partition** so every node can resolve key-range ownership consistently.
+## Partition 0
+
+The range-descriptor map is replicated on **partition 0 (the system partition)** so every node can resolve key-range ownership consistently.
 
 At a high level:
 
-- partition `0` is the system and meta partition
+- partition `0` is the system partition
 - the range map is committed on partition `0` beside the cluster partition-map coordinator
 - data ranges live on data partitions starting at partition `1`
 
 That detail matters for maintainers and operators because the descriptor map is itself durable cluster state, not a local cache.
 
-## Buckets vs Key Ranges
+## Buckets or Key Ranges?
 
 These features are related, but they are not the same thing:
 
-- **Buckets** are a single-partition grouping technique. They are ideal when a prefix such as `services/` should stay together and be read with `get by bucket`.
-- **Key ranges** are a scalable locality technique. They are ideal when a key space may grow large enough that one partition should eventually split into several ordered ranges.
+- **[Buckets](/docs/distributed-keyvalue-store/buckets/)** are a single-partition grouping technique. They are ideal when a small or moderate prefix such as `services/` should stay together on one partition and be read with `get by bucket`.
+- **Key ranges** are a scalable locality technique. They are ideal when keys must stay ordered, the key space may grow beyond one partition, and you need range-scoped locality and future splits.
 
-Use buckets when you want a small related working set on one partition. Use key-range routing when you want ordered locality that can scale out over time.
+Key spaces that often want key-range routing:
 
-## Current User-Facing Caveat
+- `users/0001`, `users/0002`, `users/0003`
+- `orders/2026/000001`, `orders/2026/000002`
+- time-ordered event or ledger keys
 
 `get by bucket` is a **single-partition** operation. It remains the right tool for hash-routed bucket prefixes and for small unsplit key spaces.
 
-Once a key-range space has actually split, you should think in terms of **ordered range reads**, not "fetch the whole bucket from one partition". The cluster can still serve the data consistently, but the request may span multiple ranges.
+Once a key-range space has actually split, treat it as a multi-range ordered space and think in terms of **ordered range reads**, not "fetch the whole bucket from one partition". The cluster can still serve the data consistently, but the request may span multiple ranges.
 
 ## How a Key Space Becomes Range-Routed
 
-Key-range routing is an explicit opt-in. The key space must be registered so Kahuna flips that space from hash mode to key-range mode and seeds its initial whole-space descriptor.
-
-Registration has two parts:
-
-- registration flips the answering node locally, then seeds the initial descriptor through the meta-partition leader and waits for local visibility
-- startup, live range-map apply, restore, and partition-0 snapshot installation reconcile each node's local routing registry from the committed descriptor map
+Key-range routing is an explicit opt-in. The key space must be registered so Kahuna flips that space from hash mode to key-range mode and seeds its initial whole-space descriptor. You register once; every node picks up the routing mode from the committed descriptor map (see [Registration and reconciliation](#registration-and-reconciliation)).
 
 The CLI contacts the configured endpoints to register and verify their local routing views:
 
@@ -206,7 +198,7 @@ Content-Type: application/json
 {"keySpace":"users","splitKey":"users/0500"}
 ```
 
-Split is leader-only for the partition that owns the range map. A non-leader refuses with `NotLeader` and may include `leaderHint`.
+Only the [leader](/docs/glossary/#leader-follower-and-learner) of the partition that owns the range map can split. A non-leader refuses with `NotLeader` and may include `leaderHint`.
 
 The split response includes `determinate`. Use it before taking action:
 
@@ -236,8 +228,21 @@ Merge scans every key-range space and folds adjacent ranges that are below the c
 
 Range admin is also available through gRPC, `Kahuna.Client`, and the TypeScript client.
 
-## Handoff and Retirement
+## Internals: Handoff and Retirement
+
+This section describes the mechanics behind splits, merges, and registration. You do not need it to use key-range sharding.
+
+### Handoff
 
 Split/merge quiesce uses a leader-local `WriteFence` range lock: it blocks new mutations while allowing Shared readers and does not plant per-key intents. Descriptor transitions retain a generation fence and deadline. Data and completion receipts, transaction records, and prepared intents must be replicated at the destination before cutover. Handoff uses bounded batches (512 items, with a 1 MiB intent-byte target); a single oversized intent or same-key group can exceed those targets.
 
-Merge cutover records `RetiredPartitionIds` in replicated metadata. A later system-partition leader can finish removing the retired groups; partition identifiers are not reused. The backend remains node-global and range ownership determines slices to move or purge. With explicit replica placement, node-global storage does not mean every node stores every partition.
+### Retirement
+
+Merge cutover records `RetiredPartitionIds` in replicated metadata. A later partition 0 leader can finish removing the retired groups; partition identifiers are not reused. The backend remains node-global and range ownership determines slices to move or purge. With explicit replica placement, node-global storage does not mean every node stores every partition.
+
+### Registration and reconciliation
+
+Registration has two parts:
+
+- registration flips the answering node locally, then seeds the initial descriptor through the partition 0 leader and waits for local visibility
+- startup, live range-map apply, restore, and partition-0 snapshot installation reconcile each node's local routing registry from the committed descriptor map

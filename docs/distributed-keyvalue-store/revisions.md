@@ -1,13 +1,12 @@
-
 # Revisions
 
-In Kahuna, a `revision` is a monotonic version number that tracks when a key was last modified. `SET` and `DELETE` advance the revision, including staged transactional mutations. `EXTEND` changes expiry without advancing it. The counter is per key; it does not establish an order across keys or replace the commit HLC.
+A **revision** is a key's version number. Every write increases it, so you can answer two questions about a key: *has it changed since I read it?* and *what did it look like before?* It plays the same role as a version column that a SQL application checks for optimistic concurrency, except that Kahuna maintains it for every key and can also return older values. Use revisions to:
 
-Revisions let you answer two questions about a key: *has it changed since I read it?* and *what did it look like before?* Use them to:
-
-- **Update safely under concurrency.** Write only if the key is still at the revision you read ([compare-and-swap](/docs/distributed-keyvalue-store/cas/)), so two clients cannot silently overwrite each other's changes.
+- **Update safely under concurrency.** Write only if the key is still at the revision you read ([compare-and-set](/docs/distributed-keyvalue-store/cas/)), so two clients cannot silently overwrite each other's changes.
 - **Detect changes cheaply.** Compare a stored revision number with the current one instead of comparing whole values.
-- **Look back in time.** Read earlier values of a key for audits, debugging, and rolling back a bad configuration change.
+- **Look back in time.** Read earlier values of a key for audits, compliance, and postmortems, for debugging how a system reached a bad state, for comparing values across deploys or A/B tests, and for rolling back a bad configuration change.
+
+`SET` and `DELETE` advance the revision, including writes staged inside a transaction. `EXTEND` changes the expiry without advancing it, and reads never change it. The counter is per key: it does not order writes across keys, it does not replace the commit timestamp ([HLC](/docs/glossary/#hybrid-logical-clock-hlc)), and it is separate from [Raft](/docs/glossary/#raft) leader terms and from [fencing tokens](/docs/distributed-locks/fencing-tokens/).
 
 ## Understanding revisions
 
@@ -15,6 +14,8 @@ Keys are always created at revision `r0`:
 
 ```kahuna
 set `example` 'value1'
+```
+```text
 r0 set 17ms
 ```
 
@@ -22,19 +23,31 @@ Modify the key and revision will change to `r1` and then to `r2`:
 
 ```kahuna
 set `example` 'value2'
+```
+```text
 r1 set 12ms
+```
 
+```kahuna
 set `example` 'value3'
+```
+```text
 r2 set 9ms
 ```
 
-Deletes also allocate a revision. The delete writes a tombstone, so historical reads before the delete can still find the previous value:
+Deletes also allocate a revision. The delete writes a [tombstone](/docs/glossary/#tombstone) (a marker that records the delete), so historical reads before the delete, and [point-in-time recovery](/docs/glossary/#point-in-time-recovery-pitr), can still find the previous value:
 
 ```kahuna
 delete `example`
+```
+```text
 r3 deleted 8ms
+```
 
+```kahuna
 set `example` 'value4'
+```
+```text
 r4 set 10ms
 ```
 
@@ -42,21 +55,33 @@ When querying a key, you can see its current revision. The revision does not cha
 
 ```kahuna
 get `example`
+```
+```text
 r4 value4 10ms
+```
 
+```kahuna
 get `example`
+```
+```text
 r4 value4 9ms
 ```
 
 ## Skipping Historical Revisions
 
-Some workloads only need the latest value. For example, a pure key/value cache may overwrite the same key frequently and never read older versions. In that case, use `SET ... NOREV` to skip the historical revision record for that write:
+Some workloads only need the latest value. For example, a cache may overwrite the same key often and never read older versions. In that case, use `SET ... NOREV` to skip the historical revision record for that write:
 
 ```kahuna
 set `cache/user/1001` '{"name":"Ada"}' ex 60000 norev
+```
+```text
 r0 set 8ms
+```
 
+```kahuna
 set `cache/user/1001` '{"name":"Ada Lovelace"}' ex 60000 norev
+```
+```text
 r1 set 7ms
 ```
 
@@ -70,22 +95,28 @@ Kahuna can query an archived revision while that revision remains retained:
 
 ```kahuna
 get `example` at 0
+```
+```text
 r0 value1 11ms
+```
 
+```kahuna
 get `example` at 1
+```
+```text
 r1 value2 13ms
 ```
 
-This lets you inspect historical data, trace config or state changes historically, debug changes over time, investigate what value caused a bug or revert to stable known-good values.
-
 ## `AT` Revision vs `AS OF` Timestamp
 
-Kahuna supports two different historical read models:
+Kahuna has two kinds of historical read:
 
 - **`AT <revision>`** reads one exact archived revision for a key.
 - **`AS OF <timestamp>`** reads the value that was visible at a specific **HLC snapshot time**.
 
 Use `AT` when you already know the precise revision you want. Use `AS OF` to select revisions committed at or before `T`, subject to retained history, safe-time fences, and current TTL filtering.
+
+In Kahuna Script, `AS OF` works with `GET`, `EXISTS`, `GET BY BUCKET`, and `SCAN BY PREFIX`. The .NET and TypeScript clients take the snapshot time as `snapshotMs` on point, bucket, prefix, and range reads (see the [Key/Value API Reference](/docs/distributed-keyvalue-store/api/)). Prefix and range scans without an explicit timestamp read the current committed view page by page.
 
 Examples:
 
@@ -103,29 +134,15 @@ Snapshot timestamps must be non-zero. `AT` and `AS OF` cannot be combined on the
 
 For long-lived historical views, use [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/) to keep the required persistent revisions from being pruned while the view remains active.
 
-## Practical Uses of Retrieving Old Revisions
+## Retention
 
-While many systems only care about the latest value, Kahuna's ability to retrieve old revisions opens up some powerful, practical use cases, especially in distributed systems, debugging, auditing and observability:
+Old revisions are not kept forever, and retention depends on the key's durability:
 
-- **Audit Trails and Change History:** Kahuna stores each change at a new revision, so you can inspect historical values. Useful for debugging, compliance, or postmortem analysis. With revisions we can see how a config flag looked at a specific point in time. Helps trace misconfigurations or unauthorized changes.
-- **Debugging State Changes Over Time**: Understand how and why a system entered a bad state. Distributed systems can be hard to debug after the fact and Retrieving old revisions helps you reconstruct the timeline of state changes. It's useful when investigating failures that occurred hours or days ago.
-- **Safe Rollbacks of Configuration or State**: Roll back to a previous known-good configuration. If a new config breaks the system, you can pull a previous value and restore it. Provides a quick and clean rollback mechanism.
-- **Data Versioning for CI/CD or Experiments**: Compare previous and current values during deploys or A/B tests. You can track how configs or feature flags evolved over time. Useful for debugging failed deployments or verifying that changes had intended effects.
+- **Ephemeral** keys live only in the memory of the partition leader. The server keeps a limited number of recent revisions, and under memory pressure an ephemeral key that has not been accessed recently may be evicted.
+- **Persistent** keys are stored on disk. History is retained according to the configured count and age limits and any [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/); not every revision is kept unconditionally.
 
-> **Kahuna** supports two types of durability: `ephemeral`, which uses only the volatile memory (RAM) of the leader node where the key/value is stored, and `persistent`, which uses durable disk-based storage. In case of memory pressure, ephemeral keys may be evicted if they haven’t been accessed recently. In the case of ephemeral storage, the server stores a limited number of recent revisions. Persistent storage retains history according to configured count/age limits and snapshot holds; it does not retain all revisions unconditionally. Learn more in the [supported durabilities](/docs/architecture/durability-levels) section
-
-## Summary
-
-- Revision tracks when a key was last modified.
-- `SET` and `DELETE` advance it; `EXTEND` and reads leave it unchanged.
-- `SET ... NOREV` still advances the current revision but skips historical revision storage.
-- Key/value revisions are distinct from Raft terms and distributed-lock fencing tokens.
-- Essential for Compare-And-Swap (CAS) operations.
+Learn more in [Durability Levels](/docs/architecture/durability-levels/).
 
 ## Historical Read Limits
 
-A live writer that may commit at or before `T` can cause an as-of read to wait. Persistent-history fallback returns `MustRetry` while relevant revisions are unflushed. Reads more than five seconds ahead of the serving node's HLC return `MustRetry` instead of an unfenced answer. Retry the same cluster-minted timestamp after the serving clock catches up. TTL filtering uses the current read time, so `AS OF` does not freeze expiration. See [fixed-timestamp reads](/docs/distributed-keyvalue-store/read-and-lock-semantics/#fixed-timestamp-reads).
-
-## Modification Timestamps and Equal Revisions
-
-Every set, delete, extend, and transactional stage stamps its modification strictly after the head it replaces, including a head loaded from another leader or materialized from a coordinator-stamped durable intent. `EXTEND` retains the revision but advances `LastModified`; replicas order equal-revision heads by that timestamp. A later extend therefore supersedes a lingering committed intent for latest reads, while a fixed snapshot before the extend can still use the earlier intent. Revision equality alone does not establish which expiry is current.
+A historical read can wait for a live writer or return a retryable `MustRetry` instead of answering from incomplete history, and `AS OF` does not freeze expiration. The exact rules are in [fixed-timestamp reads](/docs/distributed-keyvalue-store/read-and-lock-semantics/#fixed-timestamp-reads). How `EXTEND` and other mutations at the same revision are ordered is described in [committed intents and newer heads](/docs/distributed-keyvalue-store/read-and-lock-semantics/#committed-intents-and-newer-heads).

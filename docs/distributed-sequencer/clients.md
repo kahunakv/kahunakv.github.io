@@ -1,6 +1,6 @@
 # Clients
 
-Kahuna exposes the distributed sequencer through the .NET client, the TypeScript client, and `kahuna-cli`.
+This page shows the sequencer calls in the .NET client, the TypeScript client, and the Kahuna CLI (`kahuna-cli`), so you can allocate IDs from application code or from shell scripts.
 
 ## .NET Client
 
@@ -123,8 +123,23 @@ createSequence(
     initialValue?: number;
     increment?: number;
     maxValue?: number | null;
+    blockSize?: number | null;
     signal?: AbortSignal;
   }
+): Promise<SequenceEntry>;
+
+updateSequence(
+  name: string,
+  update: {
+    currentValue?: number;
+    increment?: number;
+    initialValue?: number;
+    maxValue?: number;
+    removeMaxValue?: boolean;
+    blockSize?: number;
+    removeBlockSize?: boolean;
+  },
+  options?: { signal?: AbortSignal }
 ): Promise<SequenceEntry>;
 
 getSequence(name: string, options?: { signal?: AbortSignal }): Promise<SequenceEntry | null>;
@@ -145,7 +160,7 @@ deleteSequence(name: string, options?: { signal?: AbortSignal }): Promise<boolea
 
 ## CLI Interactive Mode
 
-```bash
+```text
 kahuna-cli> create-sequence orders 0 1
 r0 created orders current 0 increment 1 max - block default incarnation 0
 
@@ -180,4 +195,4 @@ kahuna-cli --delete-sequence orders
 
 Use `--format json` with single-command mode for JSON output where supported.
 
-Sequence updates are exposed by the .NET client, REST, gRPC, and `kahuna-cli`. They take about one server `SequencerBlockLease` to complete, and allocations return `MustRetry` during that window.
+Sequence updates are exposed by the .NET client, the TypeScript client, REST, gRPC, and `kahuna-cli`. An update takes about one server `SequencerBlockLease`, and allocations return `MustRetry` meanwhile; see [Updating a Sequence](/docs/distributed-sequencer/model/#updating-a-sequence).

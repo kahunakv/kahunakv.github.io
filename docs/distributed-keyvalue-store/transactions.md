@@ -4,66 +4,60 @@ import TabItem from '@theme/TabItem';
 
 # Transactions
 
-A **transaction** groups several reads and writes so they take effect together or not at all. Use one when a single business change touches more than one key, or when a write depends on a value you read first.
+A **transaction** groups several reads and writes so they take effect together or not at all, like `BEGIN` ... `COMMIT` in a SQL database. Use one when a single business change touches more than one key, or when a write depends on a value you read first.
 
-For example, moving 50 credits from Alice to Bob means reading two balances, checking that Alice has enough, and writing both balances back. Without a transaction, two things can go wrong:
+For example, a job dispatcher assigns job `jobs/1042` to worker `w-7` only if the job is still pending and the worker runs fewer than three jobs. That means reading two keys, checking both, and writing both back. Without a transaction, three things can go wrong:
 
-- The process crashes after debiting Alice but before crediting Bob, and 50 credits disappear.
-- Another client changes Alice's balance between your read and your write, and one of the two updates is silently lost.
+- The dispatcher crashes after marking the job as assigned but before updating the worker's job count, so the job and the worker disagree (a partial update).
+- Two dispatchers both read `pending` and assign the same job to different workers, and one assignment silently overwrites the other (a lost update).
+- Another dispatcher assigns jobs while you read, so you see the job from before its change and the worker's count from after it (read skew).
 
-Inside a Kahuna transaction, both writes commit together or neither does. With read validation or locks, a conflicting change by another client makes the transaction abort instead of producing a wrong result, and you retry it. This holds even when the keys live on different partitions and nodes.
+Inside a Kahuna transaction, both writes commit together or neither does. With read validation or locks, a conflicting change by another client makes the transaction abort instead of producing a wrong result, and you retry it. This holds even when the keys live on different [partitions](/docs/glossary/#partition) and nodes.
+
+The main differences from a SQL transaction: you choose pessimistic or optimistic [locking](#locking-modes); a normal read keeps the committed value it first saw for each key, instead of reading every key from one snapshot taken at `BEGIN`; and a commit can return `MustRetry`, an unknown outcome that you resolve by retrying the same commit.
 
 Kahuna offers two ways to run a transaction:
 
 - **[Scripts](/docs/scripts/)**: send the whole read-check-write logic to the cluster as one request. This is the simplest and fastest option when the logic fits in Kahuna Script.
 - **Interactive transactions**: open a session from the [.NET](/docs/dotnet-client/) or [TypeScript](/docs/typescript-client/) client, run operations one by one with application code in between, and then commit or roll back.
 
-**You do not need a transaction** for a single-key update. A plain `SET`, or a [compare-and-swap](/docs/distributed-keyvalue-store/cas/) when the new value depends on the old one, is cheaper.
-
-## Why Transactions Matter?
-
-In a distributed system, multiple clients might access and modify overlapping sets of keys. Without transactions, you risk:
-
-- **Lost updates** (e.g., one client overwriting another)
-- **Read skew** (inconsistent reads during writes)
-- **Partial updates** (only some keys being modified)
-
-Kahuna’s transactional engine addresses these issues by:
-
-- Isolating reads and writes from each other using **MVCC** versions
-- Detecting conflicts during point operations and final validation
-- Optionally acquiring **locks** to serialize conflicting transactions
-- Deduplicating retried interactive operations with stable operation IDs
-- Closing the transaction to new work before commit or rollback finalizes
+**You do not need a transaction** for a single-key update. A plain `SET`, or a [compare-and-set](/docs/distributed-keyvalue-store/cas/) when the new value depends on the old one, is cheaper.
 
 ## How Kahuna Runs Transactions
 
-Kahuna coordinates reads and writes across partition leaders. Persistent write sets use replicated prepared intents and a canonical commit or abort record. A committed decision makes the prepared values visible even when background settlement has not installed them yet. Ephemeral values and mixed persistent/ephemeral transactions do not have the same process-loss guarantees.
-
-Latest transactional reads pin the first committed observation **per key**; they do not share a transaction-start snapshot. Fixed-timestamp historical reads use a separate read-only path. Read validation and pessimistic locks govern conflicts and predicate protection. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) for exact visibility, lock compatibility, and failover limits.
+Kahuna coordinates reads and writes across partition [leaders](/docs/glossary/#leader-follower-and-learner). For persistent keys, each partition stages the transaction's changes as replicated [write intents](/docs/glossary/#write-intent), and one commit-or-abort record (the [canonical decision](/docs/internals/transaction-lifecycle/#basic-concepts)) decides the outcome for all of them. Once that record says commit, the new values are visible, even if background cleanup (settlement) has not yet installed them as normal values. Ephemeral values, and transactions that mix persistent and ephemeral keys, do not have the same guarantees when a process is lost.
 
 For interactive transactions, Kahuna uses a server-side **transaction coordinator**. The client keeps a session handle, but the server owns the authoritative working set: confirmed reads, writes, locks, range locks, prefix locks, and cleanup state. Commit and rollback use that server-owned state instead of trusting the client to send a final list of touched keys.
+
+## What Isolation You Get
+
+A Kahuna transaction does not read every key from one snapshot taken at `BEGIN`. What it sees, and which conflicts it catches, depends on how it reads and on its options:
+
+| Reads and options | What you get |
+|---|---|
+| Latest reads (the default) | The first read of each key pins the committed value it sees, or that the key is absent. Later reads of that key in the same transaction compare against the pin. Reads of different keys can observe different moments. |
+| `pessimistic` locking (the default) | The transaction locks each key before it reads or writes it; a script takes its locks up front. Another transaction cannot change a locked key until this one commits or rolls back. |
+| `optimistic` locking, or `readValidation: trackAndValidate` | At commit, Kahuna re-checks every key the transaction read. If one changed, or another transaction holds a concurrent write intent on it, the transaction aborts instead of committing against a stale read. This prevents lost updates and write skew. |
+| Bucket and range reads under `pessimistic` locking | A prefix or range lock blocks inserts, deletes, and updates inside the bucket or range, so keys cannot appear in or vanish from what you already read (phantoms). |
+| Fixed `ReadTimestamp`, or `snapshot` in a script | Default fixed-timestamp reads return committed state at or before one past timestamp, within retained history, and do not register read validation. A script with `snapshot` is read-only. The lower-level `StatementSnapshot` read mode has different transactional behavior; see [Statement snapshot reads](/docs/distributed-keyvalue-store/read-and-lock-semantics/#statement-snapshot-reads). |
+
+Transaction locks, including prefix and range locks, live in the partition leader's memory. A leader change drops them. The commit then refuses instead of committing work the lock no longer protected; see [Retry Outcomes](#retry-outcomes).
+
+[Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) gives the exact visibility rules, lock compatibility, and failover limits.
 
 ## Core Concepts
 
 | Concept | Description |
 |--------|-------------|
-| **Transaction Coordinator** | The server component that owns the transaction lifecycle, working set, finalization, cleanup, and optional durable commit decision. |
-| **Transaction Handle** | Client-side identity that routes later operations, commit, and rollback back to the correct coordinator. |
-| **Historical Reads** | A fixed `ReadTimestamp` selects retained revisions committed at or before that HLC; historical sessions cannot write. |
-| **Predicate Protection** | Pessimistic prefix and range locks block conflicting mutations while held. They are leader-local; renewal is best-effort and final validation remains necessary. |
-| **MVCC** | Latest reads record per-key observations; historical reads select revisions by commit HLC. A transaction reads its own staged writes. |
-| **Transaction Timestamp** | A [Hybrid Logical Clock (HLC)](../architecture/hybrid-logical-clocks.md) identity assigned at transaction start. It is distinct from an explicitly requested historical read timestamp. |
-| **Write Set** | The keys the server has confirmed as modified by the transaction. |
-| **Read Set** | The keys the server observed during latest-state reads, used for conflict detection when validation is enabled. |
-| **Operation ID** | Stable identity assigned to an interactive operation so a retry can return the same result without applying the mutation twice. |
-| **Locks** | Optional. Acquired for pessimistic or serialized transactions. Locks have expiration to prevent being held forever. |
-| **Durable Decision** | Persistent modifications use a canonical transaction record and replicated prepared intents. Explicit `DecisionDurability.Durable` rejects ephemeral modified keys. |
-| **Priority Admission** | Optional per-node start gate that can queue transactions by priority when script or session concurrency ceilings are enabled. |
+| **Session** | One transaction attempt. A script runs as one session on the server. An interactive transaction is a session you open from a client; its handle sends later operations, commit, and rollback to the server that owns it. |
+| **Locking mode** | `pessimistic` (the default) takes locks as the transaction reads and writes. `optimistic` reads without exclusive locks and checks for conflicts at commit. See [Locking Modes](#locking-modes). |
+| **Retry outcome** | A transaction that does not commit tells you how to retry. `Aborted` means start a new transaction. `MustRetry` means the outcome is not known yet: retry the same commit or rollback with the same handle. See [Retry Outcomes](#retry-outcomes). |
+
+The internal terms used on the architecture and internals pages, such as coordinator, write intent, and canonical decision, are defined in the [transaction glossary](/docs/internals/transaction-lifecycle/#basic-concepts).
 
 ## Transaction API
 
-Multi-statement scripts use the transaction machinery. Eligible single-command scripts can dispatch directly without opening a transaction:
+A script with several statements, like the one below, normally runs as a transaction even without `begin`. An eligible single-command script runs directly, without opening a transaction.
 
 ```kahuna
 set "services/auth" "localhost:8081"
@@ -73,13 +67,15 @@ set "services/inventory" "localhost:8083"
 
 ### Basic Usage
 
+The job assignment from the introduction, as one script. Values read with `get` arrive as strings, so the script converts the job count with `to_int`:
+
 ```kahuna
 begin
- let current_alice = get "balance:alice"
- let current_bob = get "balance:bob"
- if current_alice >= 50 then
-  set "balance:alice" current_alice - 50
-  set "balance:bob" current_bob + 50
+ let job = get "jobs/1042"
+ let load = get "workers/w-7"
+ if job == "pending" && to_int(load) < 3 then
+  set "jobs/1042" "w-7"
+  set "workers/w-7" to_int(load) + 1
  end
  commit
 end
@@ -97,25 +93,11 @@ begin
 end
 ```
 
-The first read pins the committed observation of `feature-x`. With validation enabled, a competing change can abort a later operation or commit; retry the business operation in a new transaction after a definite abort.
+The transaction keeps the committed value of `settings/feature-x` from its first read. With validation enabled, a competing change can abort a later operation or commit; retry the business operation in a new transaction after a definite abort.
 
 ## Using `get by bucket` inside a Transaction
 
-All keys in a given **bucket prefix** (e.g., `services/`) are guaranteed to be on the same partition in the default hash-routed model. This enables **bucket reads** to be consistent and transactional:
-
-```kahuna
-begin
- let services = get by bucket "services"
- if count(services) == 3 then
-  set "services/users" "localhost:8084"
- end
- commit
-end
-```
-
-Learn more about buckets and routing in the [Buckets](/docs/distributed-keyvalue-store/buckets/) and [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) sections.
-
-Use `get by bucket` when the prefix is intentionally a **single-partition group**. If a key space is configured for key-range routing and later splits into multiple ranges, whole-space traversal should be treated as an ordered range-read problem rather than a single bucket read.
+In the default hash-routed model, all keys under one bucket prefix (for example `services/`) live on the same partition, so `get by bucket` is a consistent, transactional read of that group. See [Buckets and Transactions](/docs/distributed-keyvalue-store/buckets/#buckets-and-transactions) for an example and [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) for key spaces that may split into several ranges; there, use an ordered range read instead of a bucket read.
 
 In a **pessimistic** transaction, `get by bucket` also acquires a **prefix lock** for that bucket. That means concurrent inserts, deletes, or updates under the same bucket are blocked or aborted while the transaction is open, repeated reads of the same bucket stay idempotent, and `commit` or `rollback` releases the lock.
 
@@ -141,32 +123,61 @@ KeyValueGetByRangePageResult page = await session.GetByRange(
 
 `GetByRange(...)` is the right primitive when the working set is an ordered slice rather than a whole single-partition bucket.
 
-In a **pessimistic** transaction, `GetByRange(...)` acquires a **range lock** over the requested interval. While held, the lock blocks conflicting inserts, deletes, and updates inside the interval; writes outside it can proceed. Leadership loss clears these actor-local locks, and renewal can leave gaps. `rollback` releases the recorded lock set. See [lock and failure semantics](/docs/distributed-keyvalue-store/read-and-lock-semantics/#transaction-locks).
+In a **pessimistic** transaction, `GetByRange(...)` acquires a **range lock** over the requested interval. While held, the lock blocks conflicting inserts, deletes, and updates inside the interval; writes outside it can proceed. These locks live in the partition leader's memory: a leader change clears them, and renewal can leave gaps. `rollback` releases the recorded lock set. See [lock and failure semantics](/docs/distributed-keyvalue-store/read-and-lock-semantics/#transaction-locks).
 
 Within the same transaction session, range reads also follow **read-your-own-writes** semantics: uncommitted inserts and updates made by the session are visible to later reads from that session, and uncommitted deletes stay hidden from that session's later reads.
 
+## Locking Modes
+
+Kahuna supports pessimistic and optimistic transactions. Choose the mode with the `locking` option.
+
+| Mode | Behavior | Best fit |
+|---|---|---|
+| `pessimistic` (default) | Locks keys up front. Point reads can use point locks, bucket reads can use prefix locks, and ordered range reads can use range locks. | Hot keys, workflows where retries are expensive, and reads that must block phantoms. |
+| `optimistic` | Reads proceed without exclusive locks and writes lock only the keys they modify. At commit, Kahuna revalidates the observed revisions and aborts on concurrent write intents over the read set. | Read-heavy workloads with low write contention. |
+
+Pessimistic locking is the default. It is more conservative and can avoid wasted work under contention, but it can hold locks longer. Optimistic locking allows more read concurrency but relies on conflict detection at commit.
+
+Optimistic reads avoid exclusive locks. The first latest read of each key records its committed value, or that the key is absent; this includes a value whose transaction committed but is not settled yet. Later point operations can abort immediately when that observation is stale; commit still validates dependencies. Retry definite aborts with a new transaction.
+
+Transaction locks live in the partition leader's memory and have expiration, so they are not held forever. A leader change can drop them; see [Retry Outcomes](#retry-outcomes).
+
 ## Transaction Lifecycle
 
-1. **Begin**: Kahuna assigns an HLC transaction ID and creates a coordinator-owned session.
-2. **Read/Write**: Operations run on the responsible partition leaders. Confirmed effects are folded into the server-owned working set.
-3. **Retry deduplication**: Interactive operations carry stable operation IDs, so a retried request can return the original result instead of applying the same mutation twice.
-4. **Validation**:
-   - Optimistic transactions re-check committed read dependencies and abort if a key changed since it was read.
-   - Optimistic transactions also abort if another transaction holds a concurrent write intent on a key that was read but not written, preventing write-skew anomalies.
-   - Pessimistic transactions lock keys, buckets, or ranges ahead of time to avoid conflicts and phantoms.
-5. **Close before finalization**: The first commit, rollback, close, or cleanup attempt stops the transaction from accepting new operations, waits for already registered operations, and freezes the working set.
-6. **Commit or rollback**:
-   - Commit prepares and applies the confirmed write set through two-phase commit.
-   - Rollback releases staged writes, locks, and MVCC read entries from the frozen working set.
-   - Retryable finalization failures return `MustRetry` and should be retried with the same handle, without adding more operations.
+1. **Begin**: Kahuna assigns a transaction ID based on a [hybrid logical clock](/docs/glossary/#hybrid-logical-clock-hlc) (HLC) timestamp and creates a coordinator-owned session.
+2. **Read and write**: Operations run on the responsible partition leaders, and the server records each confirmed effect. A retried interactive operation carries the same operation ID, so it returns the original result instead of applying the mutation twice.
+3. **Validate**: Optimistic transactions, and transactions with read validation, re-check the keys they read and abort if one changed. They also abort if another transaction holds a concurrent write intent on a key that was read but not written, which prevents write skew. Pessimistic transactions lock keys, buckets, or ranges ahead of time to avoid conflicts and phantoms.
+4. **Finalize**: The first commit, rollback, close, or cleanup attempt closes the transaction to new operations and freezes its working set. Commit then applies the write set through [two-phase commit](/docs/glossary/#two-phase-commit-2pc); rollback releases staged writes, locks, and [MVCC](/docs/glossary/#mvcc) read entries.
 
-Learn more about transaction lifecycle in the [architecture](../architecture/distributed-transactions.md) section.
+See [Distributed Transactions](/docs/architecture/distributed-transactions/) for the design, and [Transaction Lifecycle](/docs/internals/transaction-lifecycle/) for the step-by-step mechanics.
+
+## Retry Outcomes
+
+A transaction that does not commit returns a result that tells you what to do next. The diagram shows where each outcome sends you:
+
+```mermaid
+flowchart TD
+    B[Begin] -->|admitted| RW[Reads and writes]
+    B -->|AdmissionRefused| BO[Back off] --> B
+    RW --> C[Commit]
+    C -->|Committed| Done([Done])
+    C -->|Aborted| New["Start a new<br/>transaction"] --> B
+    C -->|"MustRetry<br/>(outcome may be unknown)"| Same["Retry the commit<br/>with the same handle"] --> C
+```
+
+- **`Aborted`** is definite: the transaction did not commit, for example because of a conflict. To retry the business operation, start a **new** transaction and recompute from new reads.
+- **`MustRetry`** means the outcome is not known yet, or transient work remains. The transaction **may have committed**. Retry the same commit or rollback with the **same** transaction or session handle, without adding new operations. Starting a fresh transaction is not a substitute for resolving an unknown commit, and a `MustRetry` or a transport timeout is not proof of rollback.
+- **`AdmissionRefused`** means the node did not start the transaction because its admission queue was full or the admission wait expired. Retrying is safe; back off first. See [Transaction Priority Admission](/docs/distributed-keyvalue-store/transaction-priority-admission/).
+
+A partition leader change can drop transaction locks, and reacquiring a lock cannot protect values read earlier. Commit then refuses instead of committing unprotected work: an interactive session returns `Aborted` with a `Lost lock: …` reason, and a self-contained script returns `MustRetry` so it can rerun as a new transaction. Detected data conflicts still return `Aborted`. See [Detecting Locks Lost During Failover](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover) and [Staged Writes and Commit Probes](/docs/distributed-keyvalue-store/read-and-lock-semantics/#staged-writes-and-commit-probes).
+
+The [outcome contract](/docs/internals/transaction-lifecycle/#outcome-contract) lists every result, including `Committed`, `RolledBack`, and `Errored`.
 
 ## Durability Modes in Transactions
 
 | Mode | Behavior |
 |------|----------|
-| **Persistent** | Commit depends on the replicated Raft WAL and durable decision. The materialized backend flush is asynchronous; process-loss durability requires persistent WAL storage and durable write settings. |
+| **Persistent** | Commit depends on the replicated [Raft](/docs/glossary/#raft) [WAL](/docs/glossary/#write-ahead-log-wal) and durable decision. The materialized backend flush is asynchronous; process-loss durability requires persistent WAL storage and durable write settings. |
 | **Ephemeral** | Leader-memory state; values and unprepared transaction staging can be lost on leadership or process loss. |
 
 Example: `eset` stores `session:abc` with ephemeral durability (in memory), and `set` stores `session:xyz` with persistent durability (disk):
@@ -179,13 +190,9 @@ begin
 end
 ```
 
-Learn more about durabilities in the [dedicated section](../architecture/durability-levels.md)
+See [Durability Levels](/docs/architecture/durability-levels/).
 
-Key durability is separate from transaction **decision durability**. `KeyValueDurability.Persistent` controls whether a value is replicated and stored. `DecisionDurability.Durable` controls whether durable finalization state, including the canonical record and prepared persistent intents, can be recovered if the live coordinator disappears.
-
-Durable decision mode is useful for all-persistent write sets that need recovery after finalization starts. It rejects transactions that confirmed ephemeral modifications because ephemeral values, prepared intents, and receipts cannot survive process loss.
-
-By default, durable commits can return success once the canonical decision record is durable. Materialization and intent settlement run in the background, and intent-aware reads, scans, and writes resolve committed-but-unsettled intents through the canonical record instead of serving stale data. Materialization is value-free by default: Kahuna records a `MaterializeIntent` that points at the prepared intent already stored on every replica, reducing write amplification for durable transactions.
+Key durability is separate from transaction **decision durability**. Persistent writes are crash-atomic in both the default `BestEffort` mode and `Durable` mode. `Durable` adds stricter rules: it rejects transactions that modify ephemeral keys. See [Durable Commit Decisions](/docs/architecture/distributed-transactions/#durable-commit-decisions) for the differences and when to use each.
 
 ## Best Practices
 
@@ -193,7 +200,7 @@ By default, durable commits can return success once the canonical decision recor
 - Use **key-range routing** for large ordered spaces that may need to split over time.
 - Use **ephemeral keys** for high-speed, non-critical paths.
 - Consider **pessimistic locking** for highly contended keys to avoid retries.
-- Use **durable decisions** only when all modified keys are persistent and recovering durable finalization matters.
+- Use **durable decisions** when the server should reject any transaction that modifies an ephemeral key.
 - Use **transaction priority** to keep latency-critical transactions from waiting behind bulk work when admission ceilings are enabled.
 - Use **yielding transactions** for background maintenance that should lose to foreground writers instead of making them fail.
 - Retry `MustRetry` with the same transaction/session handle and do not add new operations after finalization starts.
@@ -201,183 +208,9 @@ By default, durable commits can return success once the canonical decision recor
 
 ## Transaction Options
 
-You can specify **transaction options** to fine-tune how the transaction is executed. These options provide greater flexibility and control over **performance**, **consistency**, and **responsiveness**:
+Options control a transaction's locking, timeout, reads, durability, and admission. Script transactions set them in `begin (...)`; see [BEGIN Options](/docs/scripts/semantics/#begin-options) for every script option with its values, default, and matching client option.
 
-Kahuna Script `begin (...)` options are listed below. .NET interactive sessions expose additional options in `KahunaTransactionOptions`, and TypeScript sessions expose the same concepts through `TransactionOptions`.
-
-### Timeout
-
-Specifies the **maximum duration (in milliseconds)** that the transaction is allowed to run.
-If the transaction does not complete within this time, it will be **automatically rolled back**.
-
-- Kahuna Scripts are designed for **short executions**, so increasing this value significantly is **not recommended**.
-- **Default value:** `5000ms`
-
-```kahuna
-begin (timeout=3000)
-  set `config1` 'some value 1'
-  set `config2` 'some value 2'
-  set `config3` 'some value 3'
-  commit
-end
-```
-
-### Locking
-
-Defines the **locking strategy** used by the transaction.
-
-- `pessimistic`: Locks keys upfront and can also acquire prefix or range locks during transactional reads.
-- `optimistic`: Locks only on write, revalidates read dependencies during commit, and aborts on concurrent write intents over the read set.
-
-- **Default value:** `pessimistic`
-
-```kahuna
-begin (locking="optimistic")
-  set `config1` 'some value 1'
-  set `config2` 'some value 2'
-  set `config3` 'some value 3'
-  commit
-end
-```
-
----
-
-### Snapshot
-
-Specifies that every read inside the transaction should be served **as of one fixed HLC timestamp**.
-
-- `snapshot=<timestamp>` makes the whole transaction **read-only**.
-- Plain reads inside the transaction use that snapshot automatically.
-- A per-statement `AS OF <other timestamp>` overrides the transaction-level snapshot for that statement.
-
-```kahuna
-begin (snapshot=1718392012345)
-  let old_config = get `config/feature-x`
-  let old_services = get by bucket `services`
-  commit
-end
-```
-
-Snapshot transactions are useful for audits, debugging, and historical queries where you need several reads to line up against the same past instant.
-
-Even though snapshot transactions are read-only, the `begin ... end` block still requires an explicit `commit`.
-
-Important behavior:
-
-- snapshot reads are **historical views**, not read-your-own-writes views
-- if a key existed at the snapshot time and was updated later, the snapshot read returns the older visible value
-- keys created after the snapshot time stay hidden from that snapshot
-- writes are not allowed inside a snapshot transaction
-
----
-
-### AsyncRelease
-
-Indicates whether acquired locks should be **released asynchronously** (in the background) or **synchronously** (blocking the client until fully released).
-
-- `true`: Faster response to the client, locks released in background.
-- `false`: Locks must be released before returning to the client.
-
-- **Default value:** `false`
-
-```kahuna
-begin (asyncRelease="true")
-  set `config1` 'some value 1'
-  set `config2` 'some value 2'
-  set `config3` 'some value 3'
-  commit
-end
-```
-
-### Priority
-
-Sets the transaction's admission priority when the node is at its configured transaction concurrency ceiling.
-
-- Accepted values: `background`, `low`, `normal`, `high`, `critical`
-- Default value: `normal`
-- Priority affects only when a transaction starts. It does not change locking, MVCC, two-phase commit, or commit semantics.
-- If the admission gates are disabled, priority is recorded for metrics but does not queue or reorder work.
-
-```kahuna
-begin (priority="high", locking="optimistic")
-  let current = get `inventory/item-42`
-  set `inventory/item-42` current - 1
-  commit
-end
-```
-
-Learn more in [Transaction Priority Admission](/docs/distributed-keyvalue-store/transaction-priority-admission/).
-
-### Admission Wait
-
-Sets how long the transaction waits for an admission slot before it starts.
-
-- Value is in milliseconds.
-- Default value: server `DefaultAdmissionWaitMs`.
-- The server clamps the value to `MaxAdmissionWaitMs`.
-- If the budget expires before a slot opens, Kahuna returns `AdmissionRefused`. No transaction was started.
-
-```kahuna
-begin (priority="high", admissionWait=2000, timeout=10000)
-  let current = get `inventory/item-42`
-  set `inventory/item-42` current - 1
-  commit
-end
-```
-
-### AutoCommit
-
-Specifies whether an **implicit `commit`** should be executed automatically if all operations in the transaction succeed, or if an **explicit `commit`** is required to finalize the transaction.
-
-- `true`: The transaction will **automatically commit** if no errors occur.
-- `false`: A manual `commit()` is required to indicate when the transaction should be finalized.
-
-- **Default behavior:**
-  - `false` when using a `begin` block
-  - `true` when no `begin` block is used
-
-**Example:**
-
-```kahuna
-begin (autoCommit=false)
-  ...
-  commit
-end
-```
-
-### Read Validation
-
-`readValidation="trackAndValidate"` records latest reads and validates them when the transaction commits. If another transaction changes a key that was read, the transaction aborts instead of committing against a stale read set.
-
-Optimistic locking validates reads automatically. This option adds the same read-set validation to pessimistic script transactions.
-
-```kahuna
-begin (locking="pessimistic", readValidation="trackAndValidate")
-  let current = get `inventory/item-42`
-  set `inventory/item-42` current - 1
-  commit
-end
-```
-
-Do not combine read validation with `snapshot`. A historical snapshot is intentionally pinned to the past, so it cannot validate against writes that happen later.
-
-### Decision Durability
-
-`decisionDurability="durable"` asks Kahuna to finalize an all-persistent write set through the durable transaction decision path. Kahuna records a canonical transaction decision and prepared intents so recovery can finish materialization and settlement if the live coordinator disappears after durable finalization starts.
-
-```kahuna
-begin (decisionDurability="durable")
-  set `accounts/alice` "90"
-  set `accounts/bob` "110"
-  commit
-end
-```
-
-A durable script transaction cannot commit ephemeral modifications. An `eset`, `edelete`, or `eextend` inside a durable transaction aborts the transaction.
-
-### Client Interactive Session Options
-
-The .NET client exposes these options on `KahunaTransactionOptions`. The TypeScript client exposes the same options using camel-case names on `TransactionOptions`.
+Interactive sessions take the options from the client. The .NET client exposes them on `KahunaTransactionOptions`; the TypeScript client exposes the same options using camel-case names on `TransactionOptions`.
 
 | .NET option | TypeScript option | Default | Description |
 |-------------|-------------------|---------|-------------|
@@ -387,25 +220,23 @@ The .NET client exposes these options on `KahunaTransactionOptions`. The TypeScr
 | `AutoCommit` | `autoCommit` | `true` | Carried in the protocol options, but interactive sessions still require an explicit commit. Disposal of a pending session rolls back. |
 | `ReadValidation` | `readValidation` | `None` / `"none"` | Set to `TrackAndValidate` or `"trackAndValidate"` to record latest reads and validate them against revision or write-intent changes at commit. |
 | `ReadTimestamp` | `readTimestamp` | zero HLC | Uses a fixed historical HLC timestamp for transaction point, bucket, range, and paginated-range reads. Do not combine it with read validation. |
-| `DecisionDurability` | `decisionDurability` | `BestEffort` / `"bestEffort"` | Use durable mode when an all-persistent write set needs durable finalization through a canonical transaction record and prepared intents. |
+| `DecisionDurability` | `decisionDurability` | `BestEffort` / `"bestEffort"` | Persistent writes are crash-atomic in both modes. `Durable` also rejects ephemeral modifications and requires a record anchor. |
 | `Priority` | `priority` | `Normal` / `"normal"` | Admission priority used when `MaxConcurrentSessions` is enabled on the receiving node. |
 | `AdmissionWaitMs` | `admissionWaitMs` | server default when `0` | Maximum time to wait for an admission slot before the transaction starts. The server clamps it to `MaxAdmissionWaitMs`. |
 | `ConflictPolicy` | not yet exposed | `Normal` | Set to `Yield` in the .NET client when retryable maintenance work should yield point-key intents to foreground writers. See [Yielding Transactions](/docs/distributed-keyvalue-store/yielding-transactions/). |
 
+`Priority` and the admission wait matter only when an operator enables a per-node transaction concurrency ceiling, which is disabled by default. Priority decides when a transaction starts, never how it locks or commits. See [Transaction Priority Admission](/docs/distributed-keyvalue-store/transaction-priority-admission/) for the queueing behavior and tuning.
+
 ## Interactive Transactions
 
-Interactive transactions are an option for developers who prefer not to use Kahuna Scripts and instead want access to the libraries and functions of their favorite programming language.
+Use an interactive transaction when your logic needs your own language and libraries between reads and writes. As with a database transaction, you start it, run operations, and then commit or roll back. The difference is that Kahuna's server-side coordinator owns the confirmed working set and finalization state.
 
-These transactions work similarly to traditional database transactions, where the client manually starts a transaction and then commits or rolls it back as needed. The difference is that Kahuna's server-side coordinator owns the confirmed working set and finalization state.
+Interactive transaction sessions are available through both the gRPC and REST transports.
 
-Interactive transaction sessions are available through the gRPC transport. The REST transport does not expose session start, commit, or rollback.
+<Tabs groupId="client-examples">
+<TabItem value="dotnet" label=".NET">
 
-<Tabs>
-<TabItem value="C#">
-
-The Kahuna client for C# offers full support for interactive transactions.
-
-This allows developers to start, manage, and complete transactions directly from their C# applications, giving them fine-grained control over the flow of operations while maintaining strong consistency guarantees provided by Kahuna:
+Start a session with `StartTransactionSession`, run operations on it, and commit:
 
 ```csharp
 await using KahunaTransactionSession session = await client.StartTransactionSession(
@@ -416,13 +247,13 @@ await using KahunaTransactionSession session = await client.StartTransactionSess
     }
 );
 
-KahunaKeyValue balance1 = await session.GetKeyValue(userA);
-KahunaKeyValue balance2 = await session.GetKeyValue(userB);
+KahunaKeyValue job = await session.GetKeyValue("jobs/1042");
+KahunaKeyValue load = await session.GetKeyValue("workers/w-7");
 
-if (balance1.ValueAsLong() >= 50)
+if (job.ValueAsString() == "pending" && load.ValueAsLong() < 3)
 {
-    await session.SetKeyValue(userA, balance1.ValueAsLong() - 50);
-    await session.SetKeyValue(userB, balance2.ValueAsLong() + 50);
+    await session.SetKeyValue("jobs/1042", "w-7");
+    await session.SetKeyValue("workers/w-7", (load.ValueAsLong() + 1).ToString());
 }
 
 await session.Commit();
@@ -432,7 +263,7 @@ Call `Commit` explicitly when the work should become visible. Disposing a still-
 
 The session exposes `Status`, `TransactionId`, `Handle`, and `RecordAnchorKey` for diagnostics and advanced integrations. Most applications should keep using the session object and let the SDK carry the routing identity.
 
-In case of conflicts or encountering exclusive locks under pessimistic locking, transactions can be aborted so they can be retried on the client side.
+A transaction can abort on a conflict, or when it meets another transaction's exclusive lock under pessimistic locking. Retry it from the client.
 
 The clients provide helpers that rerun a transaction body with a short jittered backoff. Use them for operations whose repeated execution is safe:
 
@@ -445,13 +276,13 @@ KahunaTransactionOptions txOptions = new()
 
 await client.RetryableTransaction(txOptions, async (session, cancellationToken) =>
 {
-    KahunaKeyValue balance1 = await session.GetKeyValue(userA);
-    KahunaKeyValue balance2 = await session.GetKeyValue(userB);
+    KahunaKeyValue job = await session.GetKeyValue("jobs/1042");
+    KahunaKeyValue load = await session.GetKeyValue("workers/w-7");
 
-    if (balance1.ValueAsLong() >= 50)
+    if (job.ValueAsString() == "pending" && load.ValueAsLong() < 3)
     {
-        await session.SetKeyValue(userA, balance1.ValueAsLong() - 50);
-        await session.SetKeyValue(userB, balance2.ValueAsLong() + 50);
+        await session.SetKeyValue("jobs/1042", "w-7");
+        await session.SetKeyValue("workers/w-7", (load.ValueAsLong() + 1).ToString());
     }
 
     await session.Commit();
@@ -475,15 +306,15 @@ await using KahunaTransactionSession session =
     await client.StartTransactionSession(options, cancellationToken);
 
 await session.SetKeyValue(
-    "accounts/alice",
-    "90",
+    "jobs/1042",
+    "w-7",
     durability: KeyValueDurability.Persistent,
     cancellationToken: cancellationToken
 );
 
 await session.SetKeyValue(
-    "accounts/bob",
-    "110",
+    "workers/w-7",
+    "3",
     durability: KeyValueDurability.Persistent,
     cancellationToken: cancellationToken
 );
@@ -497,7 +328,7 @@ if (!committed)
 `Commit(...)` and `Rollback(...)` return `true` when the requested terminal outcome is reached. A `false` result means the outcome is not known yet and the same finalization action should be retried with the same session handle. After commit or rollback starts, do not add new operations to the session.
 
 </TabItem>
-<TabItem value="TypeScript">
+<TabItem value="typescript" label="TypeScript">
 
 The TypeScript client exposes interactive transactions through `beginTransaction(...)` and `withTransaction(...)`.
 
@@ -507,12 +338,12 @@ await using session = await client.beginTransaction({
   timeout: 5000
 });
 
-const balance1 = await session.get(userA);
-const balance2 = await session.get(userB);
+const job = await session.get("jobs/1042");
+const load = await session.get("workers/w-7");
 
-if (balance1.valueAsNumber() >= 50) {
-  await session.set(userA, String(balance1.valueAsNumber() - 50));
-  await session.set(userB, String(balance2.valueAsNumber() + 50));
+if (job.valueAsString() === "pending" && load.valueAsNumber() < 3) {
+  await session.set("jobs/1042", "w-7");
+  await session.set("workers/w-7", String(load.valueAsNumber() + 1));
 }
 
 await session.commit();
@@ -529,12 +360,12 @@ await client.withTransaction(
     timeout: 5000
   },
   async (session) => {
-    const balance1 = await session.get(userA);
-    const balance2 = await session.get(userB);
+    const job = await session.get("jobs/1042");
+    const load = await session.get("workers/w-7");
 
-    if (balance1.valueAsNumber() >= 50) {
-      await session.set(userA, String(balance1.valueAsNumber() - 50));
-      await session.set(userB, String(balance2.valueAsNumber() + 50));
+    if (job.valueAsString() === "pending" && load.valueAsNumber() < 3) {
+      await session.set("jobs/1042", "w-7");
+      await session.set("workers/w-7", String(load.valueAsNumber() + 1));
     }
 
     await session.commit();
@@ -552,8 +383,8 @@ await using session = await client.beginTransaction({
   decisionDurability: "durable"
 });
 
-await session.set("accounts/alice", "90", { durability: "persistent" });
-await session.set("accounts/bob", "110", { durability: "persistent" });
+await session.set("jobs/1042", "w-7", { durability: "persistent" });
+await session.set("workers/w-7", "3", { durability: "persistent" });
 
 const committed = await session.commit();
 if (!committed) {
@@ -564,22 +395,15 @@ if (!committed) {
 </TabItem>
 </Tabs>
 
-This approach gives developers more flexibility to build complex logic in the application layer while still benefiting from Kahuna’s consistency and durability guarantees.
-
 ## Interactive Transactions vs Kahuna Scripts
 
-Both Interactive Transactions and Kahuna Scripts offer powerful ways to work with Kahuna’s distributed system, each with distinct trade-offs.
-Interactive Transactions provide greater flexibility and ease of integration with application code but at the cost of higher network latency and complexity in failure scenarios.
-
-Kahuna Scripts, on the other hand, deliver atomicity, reduced latency, and automatic lock management, making them ideal for critical operations that need to execute entirely on the server, although they require familiarity with a specialized scripting environment.
-
-Choosing between the two approaches depends on the specific needs of your application, the complexity of your logic, and your tolerance for latency versus maintenance effort:
+Interactive transactions integrate more easily with application code, at the cost of more network round trips and more care when a failure leaves the outcome unresolved. Kahuna Scripts run entirely on the server, with fewer round trips and automatic lock management, but you write the logic in Kahuna Script. Choose based on how complex the logic is and how much latency you can accept:
 
 ### Interactive Transactions
 
 **Advantages**
 - **Familiarity and Easier Debugging**: You write the logic in your primary programming language (C#, JavaScript, etc.), making it easier to debug, maintain, and integrate with your development tools.
-- **Better Integration**: Interactive transactions work seamlessly with application-level logic, error handling, and native data structures.
+- **Better Integration**: Interactive transactions work directly with application-level logic, error handling, and native data structures.
 
 **Disadvantages**
 - **Increased Latency**: Requires multiple round-trips between the client and server, which can introduce additional delays.
@@ -589,7 +413,7 @@ Choosing between the two approaches depends on the specific needs of your applic
 ### Kahuna Scripts
 
 **Advantages**
-- **Atomic Execution**: The entire script executes atomically on the server (transaction coordinator), as long as there are no node failures or abnormal inter-node network conditions.
+- **Atomic Execution**: The entire script executes atomically on the server (transaction coordinator). Writes to persistent keys stay atomic through node failures; writes to ephemeral keys are atomic only as long as there are no node failures or abnormal inter-node network conditions.
 - **Automatic Lock Management**: Kahuna Scripts automatically release acquired locks in the presence of conflicts, reducing complexity and avoiding unwanted delays or retries.
 - **Supports Complex Logic**: Scripts can include conditionals (`if`, `while`, etc.), loops, functions, and branching logic directly on the server.
 - **Shared and Portable Logic**: The same Kahuna Script can be executed from multiple programming languages without modification or extra maintenance.
@@ -598,13 +422,3 @@ Choosing between the two approaches depends on the specific needs of your applic
 **Disadvantages**
 - **Potentially Harder to Maintain**: Kahuna Script syntax may be less familiar and harder to debug or test compared to your main programming language.
 - **Script Size Limitations**: Large or complex business logic may be difficult to express and maintain within Kahuna Scripts.
-
-## Locks Lost During Failover
-
-A participant leader change can discard transaction locks. Renewing or upgrading one on a new leader cannot preserve the exclusion under which an earlier value was read. The coordinator records grant terms and checks them at commit, including read-only commit; a failed proof returns `Aborted` with `Lost lock: …` for an interactive session, or `MustRetry` for a script. Restart the transaction and recompute from new reads. Recorded range-lock lease lapses also abort within the same term, even after renewal. Explicit range-lock leases use monotonic elapsed time while held by an actor, but write intents and session-owned age ceilings remain HLC-based. Expiry between one-phase validation and apply, and grants from older nodes without term reporting, remain outside this proof. See [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/#detecting-locks-lost-during-failover).
-
-## Lost Exclusion and Retryable Commit Checks
-
-An interactive transaction that loses a lock, staging, or the original write intent returns terminal `Aborted`; start a new session and recompute from new reads. A self-contained script maps this lost-exclusion abort to `MustRetry`, preserving its reason, so SDK retry handling can rerun the script as a new transaction. Detected data conflicts still return `Aborted`. This distinction does not turn a general `MustRetry` or a transport timeout into proof of rollback.
-
-Commit probes also fail closed with `MustRetry` when leadership, containment, or a peer response prevents proving a key clean or conflicting. An interactive durable finalize retains prepares for retry under the same transaction identity. Successful staged-intent probes hold the intent through commit instead of merely renewing its ordinary lease, and one-phase bundles fence the anchor leadership term before append. See [Staged Writes and Commit Probes](/docs/distributed-keyvalue-store/read-and-lock-semantics/#staged-writes-and-commit-probes) for semantics and metrics.

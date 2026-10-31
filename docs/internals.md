@@ -4,11 +4,11 @@ This section describes how Kahuna works inside a running node. It is intended fo
 
 Kahuna is built around a few core ideas:
 
-- **Raft-backed partition ownership** decides which node is allowed to commit mutations for a key, lock, or sequence.
-- **Actors** serialize access to in-memory state and isolate concurrency-sensitive code.
-- **Write-ahead logs** make committed Raft operations recoverable.
+- **[Raft](/docs/glossary/#raft)-backed [partition](/docs/glossary/#partition) ownership** decides which node is allowed to commit mutations for a key, lock, or sequence.
+- **[Actors](/docs/glossary/#actor)** serialize access to in-memory state and isolate concurrency-sensitive code.
+- **[Write-ahead logs](/docs/glossary/#write-ahead-log-wal)** make committed Raft operations recoverable.
 - **Materialized persistence** stores locks and key/value entries so a node can avoid replaying every log forever.
-- **MVCC, write intents, operation registration, priority admission, durable decisions, and deferred settlement** provide transactional isolation for key/value scripts and interactive transactions.
+- **Transaction machinery** provides isolation for key/value scripts and interactive transactions: [MVCC](/docs/glossary/#mvcc) (several versions per key), [write intents](/docs/glossary/#write-intent) (staged, uncommitted changes), operation registration (deduplicated retries), priority admission, durable decisions, and deferred [settlement](/docs/internals/transaction-lifecycle/#basic-concepts).
 
 ## Main Components
 
@@ -25,44 +25,20 @@ Kahuna is built around a few core ideas:
 
 ## Request Flow
 
-For a typical persistent key/value write:
-
-1. A client sends a REST, gRPC, or in-process request.
-2. `KahunaManager` delegates to `KeyValuesManager`.
-3. The locator determines the partition leader for the key.
-4. If the current node is not the leader, the request is forwarded through inter-node communication.
-5. The leader routes the request to a consistent-hash actor for that key.
-6. The actor validates state, creates a proposal, and submits the mutation through Raft.
-7. Once Raft commits the log entry, the replicator applies it to the in-memory state machine.
-8. The background writer eventually flushes the materialized entry to the persistence backend.
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant N as Receiving node
-    participant L as Partition leader
-    participant F as Followers
-    participant D as Storage backend
-    C->>N: Write k
-    N->>L: Forward if this node is not the leader
-    L->>F: Replicate log entry
-    F-->>L: Quorum acknowledges
-    Note over L: Committed. Apply to actor memory
-    L-->>N: Committed
-    N-->>C: Success
-    L-)D: Background writer materializes state
-```
-
-Transactions add another layer: the `TransactionCoordinator` records confirmed reads, writes, locks, and cleanup state as the request runs. Commit and rollback close the session to new operations, drain already registered operations, freeze the server-owned working set, and then finalize from that snapshot. Persistent durable transactions commit by writing a canonical transaction record and prepared intents through Raft, then settlement can finish in the background while intent-aware reads preserve visibility.
-
-For the complete flow, including reads, scripts, interactive transaction operations, durable-intent two-phase commit, deferred settlement, and background recovery, see [Transaction Lifecycle](internals/transaction-lifecycle.md).
+A persistent write is routed to its partition leader, committed through Raft, applied to actor memory, and later flushed to storage by the background writer. [Request Flow](/docs/internals/request-flow/) follows that path step by step, and [Transaction Lifecycle](/docs/internals/transaction-lifecycle/) covers reads, scripts, interactive transactions, durable two-phase commit, and deferred settlement.
 
 More detail:
 
-- [Request flow](internals/request-flow.md)
-- [Transaction lifecycle](internals/transaction-lifecycle.md)
-- [Actor model](internals/actor-model.md)
-- [WAL and persistence](internals/wal-and-persistence.md)
-- [Replication and recovery](internals/replication.md)
-- [MVCC and transactions](internals/mvcc.md)
-- [Sequences](internals/sequences.md)
+- [Request flow](/docs/internals/request-flow/)
+- [Point reads](/docs/internals/point-reads/)
+- [Range-scan observations](/docs/internals/range-scan-observations/)
+- [Batched point and range probes](/docs/internals/batched-probes/)
+- [Transaction lifecycle](/docs/internals/transaction-lifecycle/)
+- [Durable settlement](/docs/internals/durable-settlement/)
+- [Actor model](/docs/internals/actor-model/)
+- [WAL and persistence](/docs/internals/wal-and-persistence/)
+- [Backup, restore, and PITR](/docs/internals/backups-and-pitr/)
+- [Snapshot transfer](/docs/internals/snapshot-transfer/)
+- [Replication and recovery](/docs/internals/replication/)
+- [MVCC and transactions](/docs/internals/mvcc/)
+- [Sequences](/docs/internals/sequences/)

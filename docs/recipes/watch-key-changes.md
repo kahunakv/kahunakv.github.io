@@ -19,15 +19,15 @@ In another session, change a flag:
 set `config/prod/search/enable-new-ranking` "true"
 ```
 
-The first session prints a `set` event with the key and revision. `keys-only` omits value bytes; leave it off when your consumer needs the new value. The shell command watches a **prefix**, so it also reports changes to other keys under `config/prod/search/`.
+The first session prints a `set` event with the key and revision. `keys-only` omits value bytes; leave it off when your consumer needs the new value. The CLI `watch` command watches a **prefix**, so it also reports changes to other keys under `config/prod/search/`.
 
 For a terminal command, use `kahuna-cli --watch config/prod/search/ --watch-keys-only`. Press Ctrl+C to close the watch.
 
 ## Keep One Flag Current
 
-Open the watch **before** reading the initial value. Once the opening call returns, it has registered the scope on every relevant partition. A write during the first read will also be queued as an event. Re-reading on each event makes duplicate deliveries harmless.
+Open the watch **before** reading the initial value. Once the opening call returns, it has registered the scope on every relevant [partition](/docs/glossary/#partition). A write during the first read will also be queued as an event. Re-reading on each event makes duplicate deliveries harmless.
 
-<Tabs groupId="watch-client-examples">
+<Tabs groupId="client-examples">
 <TabItem value="dotnet" label=".NET">
 
 ```csharp

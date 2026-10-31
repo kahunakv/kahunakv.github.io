@@ -9,6 +9,16 @@ historical reads, to protect a scan with range or prefix locks, or to understand
 `Aborted` or `MustRetry`. If you are new to Kahuna transactions, start with
 [Transactions](/docs/distributed-keyvalue-store/transactions/).
 
+**Terms used on this page:**
+
+- **Pin:** the committed value, or absence, that a transaction records the first time it reads a key. Later operations on that key compare against it.
+- **Intent:** a [write intent](/docs/glossary/#write-intent), a change a transaction has staged but not finished.
+- **Canonical decision** and **settlement:** the single record that says whether a transaction committed or aborted, and the background step that then installs committed values and removes the intents. See the [transaction glossary](/docs/internals/transaction-lifecycle/#basic-concepts).
+- **Anchor:** the [partition](/docs/glossary/#partition) that stores a transaction's canonical decision, chosen from the first persistent key the transaction modifies. Its leader is the **anchor leader**.
+- **Head:** the newest committed version of a key in the normal key/value data.
+- **Term:** a [Raft](/docs/glossary/#raft) leadership epoch. It changes each time a partition elects a new leader.
+- **WriteFence:** a range lock that Kahuna takes during a range split or merge. It stops new writes in the range but still allows shared readers.
+
 The main rules in short:
 
 - A transaction's first read of each key pins that key's committed value. Reads of different keys can
@@ -20,23 +30,20 @@ The main rules in short:
 - Transaction locks live in the partition leader's memory. A leader change drops them, and the
   commit then refuses with a `Lost lock` reason instead of committing unprotected work.
 
-Kahuna has two distinct read paths: latest reads under a transaction identity, and historical reads
-at a fixed `ReadTimestamp`. MVCC does not make every transaction a single historical snapshot.
-This guide describes their visibility and conflict rules, including the deferred-settlement window.
 For finalization and retries, see the [coordinator guide](/docs/architecture/distributed-transactions/)
 and [transaction lifecycle](/docs/internals/transaction-lifecycle/).
 
 ## Latest transactional reads
 
-A first transactional `GET` or `EXISTS` with no read timestamp records an MVCC observation **per key**.
+A first transactional `GET` or `EXISTS` with no read timestamp records an [MVCC](/docs/glossary/#mvcc) observation **per key**.
 It pins a committed value or absence, including a committed prepared intent that has not yet settled.
 An undecided durable intent requires decision resolution before the read can choose its base.
 The routed path can consult the intent's anchor leader when the canonical decision is not local;
 an unresolved decision is retryable rather than permission to serve an older value.
 
-The transaction reads its own staged value or tombstone. Otherwise, if the committed revision moves
+The transaction reads its own staged value or [tombstone](/docs/glossary/#tombstone) (delete marker). Otherwise, if the committed revision moves
 past its pin, a follow-up point read or write can answer `Aborted` immediately. This check uses the
-whole transaction HLC identity, including a nonzero logical counter. It also detects an observed
+whole transaction [HLC](/docs/glossary/#hybrid-logical-clock-hlc) identity, including a nonzero logical counter. It also detects an observed
 absence followed by another transaction creating the key. Commit still validates the registered
 read dependencies; early detection does not replace final validation.
 
@@ -69,7 +76,10 @@ reads and scans then use the **strictly newer revision**, including a newer dele
 the old intent must not resurrect the key. The same rule applies after a persistent cache miss.
 
 Equality alone does not prove an intent is materialized. `EXTEND` keeps the revision while changing
-expiry, but every mutation is stamped strictly after the head it replaces. At equal revision, a head
+expiry, but every mutation (set, delete, extend, and transactional stage) is stamped strictly after the
+head it replaces, including a head loaded from another leader or materialized from a coordinator-stamped
+durable intent. `EXTEND` advances `LastModified`, and replicas order equal-revision heads by that
+timestamp, so revision equality alone does not establish which expiry is current. At equal revision, a head
 whose `LastModified` is strictly later than the intent's commit timestamp supersedes the intent for
 latest reads and snapshots at or after that later stamp. The intent remains authoritative for a
 snapshot before the later head, or when the head's stamp is equal or older. `SET` and `DELETE` advance the revision.
@@ -94,11 +104,19 @@ History suppression (`SetNoRevision`) and reclaimed revisions also limit histori
 A [snapshot hold](/docs/distributed-keyvalue-store/snapshot-holds/) protects retained history; it does not turn a caller's
 arbitrary timestamp into a safe cluster cut or recreate already-pruned history.
 
+### Statement snapshot reads
+
+The lower-level `KeyValueReadMode.StatementSnapshot` is for a transaction that wants one fixed timestamp **per statement**, while still seeing its own staged writes. Point reads, batched probes, range pages, and scans that carry this mode use the supplied timestamp for other keys. They do not reuse or check an earlier latest-read pin, and they leave no new pin. A later statement can use a later timestamp and see newer commits.
+
+A registered statement read still records the revision it served for commit-time validation. If a later write changes a registered key, an optimistic commit can abort. A read of the transaction's own staged key is validated as a write instead. This mode requires a nonzero read timestamp; without one, the request returns `InvalidInput`. Outside a transaction it behaves like the default mode. All serving nodes must understand the mode before an application relies on it; an older node can serve the default behavior.
+
+The current high-level .NET and TypeScript client methods use the default read mode. `StatementSnapshot` is available through the lower-level in-process, gRPC, and REST read requests.
+
 ## Transaction locks
 
 These are key/value transaction locks, separate from the
-[distributed lock subsystem](/docs/distributed-locks/). They are leader-local actor state,
-not replicated lease records. Quorum-confirmed admission fences stale leaders, but leadership loss
+[distributed lock subsystem](/docs/distributed-locks/). They are leader-local [actor](/docs/glossary/#actor) state,
+not replicated lease records. [Quorum](/docs/glossary/#quorum)-confirmed admission fences stale leaders, but leadership loss
 purges staging and locks. Locks reduce contention; validation and staging-continuity checks remain
 necessary for correctness after a leader change.
 
@@ -137,32 +155,34 @@ separately from these in-memory locks.
 unestablished outcome, not proof of rollback. Retry an unresolved durable finalize with the same
 identity; see the coordinator guide for session and operation deduplication limits.
 
-The edge cases above are exercised by `TestEarlyWriteConflictAbort`, `TestSupersededIntentReads`,
-`TestSnapshotReadRepeatability`, `TestSnapshotCommitClockFence`,
-`TestPointLockOverCommittedUnsettledWrite`, `TestRangeLockOverDecidedIntent`,
-`TestLeaderChangeLostStaging`, `TestRangeLockLeaseLapse`, and `TestRangeLockLeaseHandoff` in `Kahuna.Server.Tests`.
+The edge cases on this page are covered by regression tests in `Kahuna.Server.Tests`.
 
 ## Detecting Locks Lost During Failover
 
-A lock grant now carries the partition and Raft term in which it was issued. A term identifies a leadership epoch. The coordinator keeps the first grant term for each partition; a later grant or renewal under another term records lost exclusion rather than silently replacing that evidence.
+A lock grant carries the partition and Raft term in which it was issued. The coordinator keeps the first grant term for each partition; a later grant or renewal under another term records lost exclusion rather than silently replacing that evidence.
 
 Commit checks that each recorded grant still routes to the same partition and that its confirmed leader still leads under the grant's term. This check also runs for read-only transactions. A changed term, moved range, or inability to confirm leadership after bounded attempts refuses an interactive commit with terminal `Aborted` and a `Lost lock: …` reason. A self-contained script instead returns `MustRetry` with the reason so the client can rerun it as a new transaction; real conflicts remain `Aborted`. Start a new transaction and repeat its reads and computation; reacquiring a lock cannot make the earlier computation safe.
 
-For example:
+For example, an interactive session loses its lock in a failover, and its commit is refused even after it renews the lock:
 
-```text
-A: interactive session reads k under a Shared range lock
-   partition leader changes; its actor-local locks disappear
-B: acquire exclusion, change k, commit
-A: renew or upgrade its range lock on the new leader
-A: commit -> Aborted (Lost lock: ...)
+```mermaid
+sequenceDiagram
+    participant A as Session A
+    participant K as Kahuna
+    participant B as Transaction B
+    A->>K: Read k under a Shared range lock
+    Note over K: Partition leader changes, its actor-local locks disappear
+    B->>K: Acquire exclusion, change k, commit
+    A->>K: Renew or upgrade the range lock on the new leader
+    A->>K: Commit
+    K-->>A: Aborted (Lost lock)
 ```
 
 The proof also rejects a transaction when the leader has recorded that one of its range locks lapsed, even if the term is unchanged. A later renewal or regrant does not erase that record. The actor records the holder in the same turn that first observes the dead lock, before permitting work that relies on its absence. This includes a session-owned range lock exceeding its configured ceiling.
 
-Explicit range-lock leases held by an actor use the node's monotonic elapsed-time clock. A forward wall-clock or HLC jump no longer immediately expires those leases. Export for split/merge or listing converts the remaining duration into an HLC deadline; import converts that deadline back into a local monotonic lease. Transfer is therefore still sensitive to HLC differences while the lock is in transit. Write-intent expiry and the age ceiling for session-owned locks remain HLC-based.
+Explicit range-lock leases held by an actor use the node's monotonic elapsed-time clock. A forward wall-clock or HLC jump does not immediately expire those leases. Export for split/merge or listing converts the remaining duration into an HLC deadline; import converts that deadline back into a local monotonic lease. Transfer is therefore still sensitive to HLC differences while the lock is in transit. Write-intent expiry and the age ceiling for session-owned locks remain HLC-based.
 
-This is an observed-lapse check, not an apply-time proof of continuous lease ownership: a lease expiring between one-phase bundle validation and apply remains outside it. Lapse records are node-local and retained for the configured session-owned ceiling, or ten minutes when that ceiling is disabled; they are not permanent revocations. Older nodes that do not report grant terms supply no evidence for their grants, so this protection is incomplete during a mixed-version rollout. Upgrade all lock-granting replicas and coordinators before relying on it. Script and interactive transaction paths carry the evidence automatically; application lock method signatures are unchanged.
+This is an observed-lapse check, not an apply-time proof of continuous lease ownership: a lease expiring between one-phase bundle validation and apply remains outside it. Lapse records are node-local and retained for the configured session-owned ceiling, or ten minutes when that ceiling is disabled; they are not permanent revocations. Older nodes that do not report grant terms supply no evidence for their grants, so this protection is incomplete during a mixed-version rollout. Upgrade all lock-granting replicas and coordinators before relying on it. Script and interactive transaction paths carry the evidence automatically, so application lock calls need no extra arguments.
 
 With one-phase apply-time validation, the commit bundle carries the anchor partition's grant term and replicas reject a bundle proposed in another term. Without that validation, a multi-process transaction carrying lock evidence uses the two-phase path.
 
@@ -176,7 +196,7 @@ With one-phase apply-time validation, the commit bundle carries the anchor parti
 
 Every staged `SET`, `DELETE`, and `EXTEND` plants a write intent, regardless of the conflict policy. Commit checks that the exact intent the first stage used still owns the key, is live, and was never observed lapsing. Renewal cannot repair a lapse. A lost intent is a lost-exclusion refusal: interactive sessions return `Aborted`, while scripts return `MustRetry` and rerun their computation.
 
-A successful probe claims the intent for commit. Its ordinary staged-write lease no longer expires; commit or rollback clears it, and the session-owned liveness ceiling bounds abandoned holds. This prevents a slow one-phase append from opening a snapshot-read gap merely because the original lease elapsed. The probe reports the confirmed participant term; one-phase replication checks the anchor's expected term before append, even with apply-time validation disabled. A different term refuses the bundle before durable entries exist; a missing term disables bundling and uses the standard flow.
+A successful probe claims the intent for commit. From then on, its ordinary staged-write lease does not expire; commit or rollback clears it, and the session-owned liveness ceiling bounds abandoned holds. This prevents a slow one-phase append from opening a snapshot-read gap merely because the original lease elapsed. The probe reports the confirmed participant term; one-phase replication checks the anchor's expected term before append, even with apply-time validation disabled. A different term refuses the bundle before durable entries exist; a missing term disables bundling and uses the standard flow.
 
 A probe passes a key only on its clean `DoesNotExist` answer. An answer such as `MustRetry`, `WaitingForReplication`, or an unknown response proves neither cleanliness nor conflict and returns `MustRetry`. Two-phase prepares remain available for an interactive retry under the same identity. An actually detected conflict still aborts; a missing result for a requested key is treated as a broken probe contract and aborts too.
 

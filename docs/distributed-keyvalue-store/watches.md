@@ -3,7 +3,7 @@ import TabItem from '@theme/TabItem';
 
 # Watch Persistent Key Changes
 
-A service that keeps local copies of Kahuna data needs to know when those copies are stale. A key/value watch streams committed changes to one key, a prefix, or a key range. It can prompt a cache refresh, update a search index, or feed another service without repeatedly polling Kahuna.
+A service that keeps local copies of Kahuna data needs to know when those copies are stale. A key/value watch streams committed changes to one key, a prefix, or a key range. It can prompt a cache refresh, update a search index, or feed another service without repeatedly polling Kahuna. The idea is the same as an etcd watch. Unlike Redis keyspace notifications, each event carries the key's [revision](/docs/glossary/#revision), and with progress watermarks enabled a consumer can resume after a disconnect. Watches cover persistent keys only.
 
 For a working CLI and client cache example, follow the [Watch Key Changes recipe](/docs/recipes/watch-key-changes/).
 
@@ -11,7 +11,7 @@ For a working CLI and client cache example, follow the [Watch Key Changes recipe
 
 The clients open watches over persistent keys and return after registering them on every partition in the scope:
 
-<Tabs groupId="watch-client-examples">
+<Tabs groupId="client-examples">
 <TabItem value="dotnet" label=".NET">
 
 ```csharp
@@ -60,13 +60,28 @@ for await (const frame of watch) {
 
 Open the watch before reading the initial state. The watch reports changes after registration; it does not send the current value when it opens. Dispose it when done to close the streams on its serving nodes (`await using` in TypeScript, or `await watch.close()`).
 
+In this order, any change committed after your read still reaches you as an event:
+
+```mermaid
+sequenceDiagram
+    participant S as Service
+    participant K as Kahuna
+    participant W as Writer
+    S->>K: Open watch on config/prod/search/
+    K-->>S: Registered on every partition
+    S->>K: Read the current values
+    K-->>S: Initial state
+    W->>K: Set config/prod/search/limit
+    K-->>S: Event Set, with revision
+```
+
 | Scope | .NET factory | TypeScript factory | Matches |
 |---|---|---|---|
 | Key | `ForKey("orders/42")` | `watchKey("orders/42")` | One exact key. |
 | Prefix | `ForPrefix("orders/")` | `watchPrefix("orders/")` | Any key beginning with that text. |
 | Range | `ForRange("orders", "orders/100", "orders/200")` | `watchRange("orders", "orders/100", "orders/200")` | Direct children of the `orders` key space from `orders/100` inclusive to `orders/200` exclusive. |
 
-Prefix comparisons are ordinal. A range covers one key space: `orders/150` matches the example, while `orders/150/lines` does not. A prefix can span many partitions. The client opens streams on the replicas needed to cover them, even when no single node hosts the whole scope.
+Prefix comparisons are ordinal. A range covers one key space: `orders/150` matches the example, while `orders/150/lines` does not. A prefix can span many [partitions](/docs/glossary/#partition). The client opens streams on the [replicas](/docs/glossary/#replica-and-replication-factor) needed to cover them, even when no single node hosts the whole scope.
 
 ## What the Stream Reports
 

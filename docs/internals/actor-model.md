@@ -1,6 +1,8 @@
 # Actor Model
 
-Kahuna uses the Nixie actor system to isolate mutable state and serialize operations that must not run concurrently. The actors are not just a concurrency convenience; they define the ownership boundaries for locks, key/value entries, proposals, and background persistence.
+An actor is a single-threaded owner of state: it holds part of a node's in-memory data and processes one message at a time, so the code inside it needs no locks. Read this page to understand where a request waits inside a node and why work on one key never races with other work on the same key.
+
+Kahuna builds its actors on the Nixie actor library. They are not just a concurrency convenience; they define the ownership boundaries for locks, key/value entries, proposals, and background persistence.
 
 ## Why Actors
 
@@ -23,17 +25,18 @@ Actors give Kahuna:
 - `BackgroundWriterActor`
 - the selected `IPersistenceBackend`
 
-The managers are responsible for locating partition leaders, forwarding remote requests, and choosing the right actor ring or router.
+The managers are responsible for locating [partition](/docs/glossary/#partition) leaders, forwarding remote requests, and choosing the right actor ring or router.
 
 ## Lock Actors
 
-`LockManager` starts separate routers for ephemeral and persistent lock actors:
+`LockManager` starts separate fixed rings for ephemeral and persistent lock actors:
 
 - `ephemeral-lock-*`
 - `persistent-lock-*`
-- `proposal-lock-*`
 
-`LockActor` keeps lock state in memory in a dictionary keyed by resource name. It processes operations such as acquire, extend, release, and get. Because each actor processes one message at a time, lock ownership and fencing-token updates are serialized for the resources routed to that actor.
+Like key/value routing, a `LockActorRing` resolves the owning actor by consistent hash at the call site, so a lock request reaches its actor without a router-actor mailbox hop.
+
+`LockActor` keeps lock state in memory in a dictionary keyed by resource name. It processes operations such as acquire, extend, release, and get. Because each actor processes one message at a time, lock ownership and [fencing-token](/docs/glossary/#fencing-token) updates are serialized for the resources routed to that actor.
 
 Persistent locks queue dirty state to `BackgroundWriterActor` after committed changes.
 
@@ -46,24 +49,37 @@ Persistent locks queue dirty state to `BackgroundWriterActor` after committed ch
 
 `KeyValueActor` keeps an ordered in-memory B-tree of `KeyValueEntry` values. It also tracks:
 
-- Write intents for individual keys
+- [Write intents](/docs/glossary/#write-intent) for individual keys
 - Prefix write intents for bucket reads
 - Range locks and range-oriented routing state
 - Active proposals
 - Recent revisions
-- MVCC entries
+- [MVCC](/docs/glossary/#mvcc) entries
 
-Consistent-hash routing keeps operations for the same key or bucket stable across a worker set. Key/value routing now resolves the target actor directly at the call site instead of passing every request through a separate router actor. That removes one mailbox hop from the hot path while preserving the same key-to-actor mapping.
+Consistent-hash routing keeps operations for the same key or bucket stable across a worker set. Key/value routing resolves the target actor directly at the call site rather than through a separate router actor. This avoids an extra mailbox hop on the hot path and keeps the same key-to-actor mapping.
 
 Each key/value actor can also reject ordinary user messages when its bounded inbox is full. Kahuna maps that rejection to retryable `MustRetry` backpressure. Control messages such as proposal completions, cache-coherence updates, flush acknowledgements, collection, and snapshot-floor probes are exempt so a hot-key flood cannot strand already in-flight work.
 
 ## Replication Submission
 
-Persistent lock mutations still use lock proposal actors. Persistent key/value mutations use the partition write aggregator instead.
+Persistent lock mutations and persistent key/value mutations both use the shared partition write aggregator.
 
-For a direct persistent key/value write, the owning `KeyValueActor` validates the mutation, installs the replication intent, serializes the log record, and submits a compact request to the aggregator. The aggregator performs the Raft `ReplicateEntries` call off the actor mailbox and sends completion back to the owning actor.
+For a direct persistent key/value write or a persistent lock mutation, the owning `KeyValueActor` or `LockActor` validates the mutation, installs the replication intent, serializes the log record, and submits a compact request to the aggregator. The aggregator performs the [Raft](/docs/glossary/#raft) `ReplicateEntries` call off the actor mailbox and sends completion back to the owning actor.
 
 A request that changes durable state is not considered committed simply because a local actor accepted it. The mutation must be replicated and committed through Raft first.
+
+The diagram follows a persistent write through these actors, from the manager to the materialized backend.
+
+```mermaid
+flowchart TD
+    M["Manager<br/>finds partition leader"] --> Ring["Actor ring<br/>(consistent hash)"]
+    Ring --> Act["Owning actor<br/>validates, installs intent"]
+    Act --> Agg[Partition write aggregator]
+    Agg --> Raft[Raft ReplicateEntries]
+    Raft -->|completion| Done["Owning actor<br/>applies commit"]
+    Done -->|dirty item| BW[BackgroundWriterActor]
+    BW --> DB[(Persistence backend)]
+```
 
 ## Transaction Coordination
 
@@ -78,4 +94,4 @@ For interactive transactions, the coordinator records operation registration, co
 
 `BackgroundWriterActor` is a dedicated actor for materialized persistence. Lock and key/value actors enqueue dirty items, and the background writer flushes them in batches. This avoids blocking request actors on every backend write.
 
-The background writer also tracks partitions that need checkpoints after dirty objects are flushed. For durable transaction decisions, checkpointing must persist completion receipts and coordinator decision snapshots before advancing the WAL retention floor for the relevant partition.
+The background writer also tracks partitions that need checkpoints after dirty objects are flushed. For durable transaction decisions, checkpointing must persist completion receipts and coordinator decision snapshots before advancing the [write-ahead log (WAL)](/docs/glossary/#write-ahead-log-wal) retention floor for the relevant partition.

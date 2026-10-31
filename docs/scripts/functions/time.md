@@ -1,6 +1,6 @@
 # Functions: Time
 
-Kahuna Script exposes two clock sources.
+Use these functions to timestamp records and to compute deadlines, such as a lease expiry, that other nodes compare later. Kahuna Script exposes two clock sources: the node's wall clock and Kahuna's [hybrid logical clock (HLC)](/docs/glossary/#hybrid-logical-clock-hlc).
 
 | Function | Description | Example |
 |----------|-------------|---------|

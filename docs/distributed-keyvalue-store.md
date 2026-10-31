@@ -4,11 +4,9 @@ import TabItem from '@theme/TabItem';
 
 # Distributed Key/Value Store
 
-<div style={{textAlign: 'center'}}>
-<img src={Kahuna4} height="350" />
-</div>
+Kahuna's **distributed key/value store** lets many application instances share state safely. If you have used Redis or etcd, the model is familiar: you `set` and `get` keys, optionally with an expiry. Unlike a single Redis node, persistent keys are replicated across several nodes, and every key carries a [revision](/docs/glossary/#revision) that you can use for compare-and-set (CAS) updates, historical reads, and multi-key transactions.
 
-Kahuna's **distributed key/value store** lets many application instances share state safely. Each entry is a **key**, a unique name such as `config/prod/payments/max-refund`, and a **value**, which can be any bytes: a string, a number, or a JSON document. Any instance can read or write any key from any machine, and every reader sees the latest committed value, even while some cluster nodes are down.
+Each entry is a **key**, a unique name such as `config/prod/payments/max-refund`, and a **value**, which can be any bytes: a string, a number, or a JSON document. Any instance can read or write any key from any machine. For persistent keys, every reader sees the latest committed value, even while some cluster nodes are down. Ephemeral keys skip replication and live only in the memory of the node that leads their partition, so they are faster but are lost when that node restarts or leadership moves.
 
 Use it for state that several processes must agree on:
 
@@ -18,147 +16,59 @@ Use it for state that several processes must agree on:
 - Job, workflow, and reservation state, where two workers must not both act on the same item.
 - Counters, quotas, and session data shared by a fleet of servers.
 
-Compared with keeping this state in each process or in a single-node cache, Kahuna adds replication across nodes, strongly consistent reads, revision history, compare-and-swap updates, and multi-key transactions. It is not a general-purpose database: it has no SQL or secondary indexes, and it works best with small values and small transactional working sets.
+Compared with keeping this state in each process or in a single-node cache, Kahuna adds replication across nodes, strongly consistent reads, revision history, CAS updates, and multi-key transactions. It is not a general-purpose database: it has no SQL or secondary indexes, and it works best with small values and small transactional working sets.
+
+<div style={{textAlign: 'center'}}>
+<img src={Kahuna4} height="250" />
+</div>
 
 ## Key Characteristics
 
-1. **Scalability**: The system distributes data across partitions and can spread partition leadership across multiple machines.
-2. **Fault Tolerance**: Persistent data is replicated through Raft, so committed state can survive node failures.
-3. **High Availability**: Clients can contact any node, and Kahuna routes requests to the current partition leader.
-4. **Strong Consistency**: Partition leaders serialize writes through Raft-backed ordering.
-5. **Low Latency**: Hot state is served from actor-owned memory, with background persistence for materialized state.
-6. **Distributed Transactions**: Supports multi-node transactions with MVCC, pessimistic or optimistic locking, server-owned working sets, operation retry deduplication, two-phase commit, and optional durable commit decisions.
+1. **Scalability**: Kahuna spreads keys across [partitions](/docs/glossary/#partition), and it can spread partition leadership across several machines.
+2. **Fault Tolerance**: Persistent data is replicated with [Raft](/docs/glossary/#raft), so committed state can survive node failures.
+3. **High Availability**: Clients can contact any node, and Kahuna routes each request to the current partition [leader](/docs/glossary/#leader-follower-and-learner).
+4. **Strong Consistency**: For persistent keys, the partition leader orders every write and commits it through Raft. Ephemeral keys are ordered by the same leader but are not replicated.
+5. **Low Latency**: Kahuna serves frequently used keys from memory and writes persistent state to disk in the background.
+6. **Distributed Transactions**: [Transactions](/docs/distributed-keyvalue-store/transactions/) can change keys on several nodes at once:
+   - [MVCC](/docs/glossary/#mvcc) (Kahuna keeps several versions of each key) provides snapshot reads and conflict detection, with pessimistic or optimistic locking.
+   - The server, not the client, records which keys a transaction read, wrote, and locked (its [working set](/docs/internals/transaction-lifecycle/#basic-concepts)). Commit and rollback use that record.
+   - Retried operations are deduplicated, so a retry does not apply a change twice.
+   - When a transaction modifies several partitions, it commits with [two-phase commit](/docs/glossary/#two-phase-commit-2pc): every partition prepares its changes, then one commit or abort decision applies to all of them.
+   - Optionally, the commit decision is stored durably, so a transaction whose writes are all persistent can be recovered after durable finalization starts.
+   - [Priority admission](/docs/distributed-keyvalue-store/transaction-priority-admission/) lets latency-critical transactions start ahead of bulk work when a node is saturated and admission ceilings are enabled.
 
-Each key belongs to one partition. The partition leader orders every write to the key and replicates it to the followers before the write succeeds:
+Each key belongs to one partition. For a persistent key, the partition leader orders every write and replicates it to the followers before the write succeeds. In this example, Kahuna 1 leads the partition that owns key `k`:
 
-<ReplicaRing
-  center="Partition for key k"
-  client="Client"
-  nodes={['Kahuna 1', 'Kahuna 2', 'Kahuna 3']}
-  title="A client writes key k through Kahuna 1, the leader of the partition that owns k. The leader replicates the write to the followers Kahuna 2 and Kahuna 3."
-/>
-
-## Use Cases
-
-- **Configuration Management** – Storing dynamic settings for applications (e.g., feature flags).
-- **Metadata Storage** – Keeping track of distributed system metadata (e.g., leader election in Raft).
-- **Session Management** – Storing user sessions across distributed servers.
-- **Caching** – Speeding up data access by storing frequently used data.
-- **Distributed Coordination** – Managing distributed locks and leader election.
-- **Transactional Workloads** – Ensuring atomicity and consistency across distributed transactions.
-
-## Kahuna Distributed Store
-
-In the context of **Kahuna**, its **distributed key/value store** capability allows applications to store and retrieve data efficiently, ensuring **strong consistency, high availability, and low latency**. Additionally, **Kahuna supports distributed transactions**, enabling applications to execute atomic and isolated operations across multiple nodes. This is achieved using:
-
-- **Multi-Version Concurrency Control (MVCC)** for snapshot reads and conflict detection.
-- **Pessimistic and Optimistic Locking** for different contention profiles.
-- **Server-owned transaction coordination** so commit and rollback use the working set recorded by Kahuna, not a client-built summary.
-- **Two-Phase Commit (2PC)** for atomicity across modified participants.
-- **Durable Commit Decisions** when an all-persistent write set needs recovery after durable finalization starts.
-- **Transaction Priority Admission** so latency-critical transactions can start ahead of bulk work when a node is saturated and admission ceilings are enabled.
-
-These features make Kahuna a great solution for small transactional workloads requiring **data integrity, consistency, and high availability**.
-
-## Revisions
-
-In Kahuna, a [revision](/docs/distributed-keyvalue-store/revisions) is a monotonic version number for a key. Updates advance the key's revision. Deletes also advance the revision by writing a tombstone revision, which keeps pre-delete historical reads and PITR exact. Revisions are useful for compare-revision updates, debugging, and historical reads.
-
-## Routing Model
-
-Kahuna supports two routing models for key/value data:
-
-- **Hash routing** is the default. It spreads key spaces across partitions and is the usual choice for service configuration, metadata, caches, and general-purpose key/value state.
-- **Key-range routing** is an opt-in model for ordered key spaces that need locality, ordered scans, and range-scoped concurrency.
-
-For grouped prefixes such as `services/auth` and `services/payments`, Kahuna can keep the whole bucket on one partition and serve it with `get by bucket`. For larger ordered spaces such as `users/000001` or `orders/2026/000001`, key-range routing allows the space to split into contiguous ranges over time instead of forcing the whole prefix to stay on one partition forever.
-
-Learn more in [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) and [Buckets](/docs/distributed-keyvalue-store/buckets/).
-
-To react to persistent key changes, see [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/).
-
-## API
-
-Kahuna provides an API for performing various operations on key/value pairs:
-
-### Payload Values
-
-Values are byte payloads. A `null` payload means the key exists without a value, while an empty byte array means the key exists with a zero-byte value. Kahuna preserves that difference over both REST and gRPC, including compare-value operations and transaction results.
-
-In REST JSON, `null` stays `null` and any byte array is encoded as base64. That means a zero-byte payload is the empty base64 string `""`.
-
-### Set
-
-Sets or overwrites key/value pairs. The behavior of the API is modified based on the provided flags, which determine whether the operation occurs depending on the key's existence, current value, or current revision.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<KahunaKeyValue> SetKeyValue(
-    string key,
-    byte[]? value,
-    int expiryTime = 0,
-    KeyValueFlags flags = KeyValueFlags.Set,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
+```mermaid
+flowchart TD
+    C([Client]) -->|write k| L["Kahuna 1<br/>leader for k's partition"]:::leader
+    L -->|replicate| F1["Kahuna 2<br/>follower"]
+    L -->|replicate| F2["Kahuna 3<br/>follower"]
 ```
 
-- **key:** A unique identifier for the key/value pair.
-- **value:** The data object associated with the key. `null` is distinct from an empty byte array.
-- **expiresMs:** The expiration time of the key in milliseconds.
-- **flags:**
-  - If `KeyValueFlags.SetIfExists` is specified, the value is set only if the key already exists.
-  - If `KeyValueFlags.SetIfNotExists` is specified, the value is set only if the key does not exist.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+## Quick Example
 
-**Returns:**
-- **Success:** `true` if the key's value was modified.
-- **Revision:** The key's current revision after the operation.
+Write a key, then read it back with its [revision](/docs/distributed-keyvalue-store/revisions/):
 
-</TabItem>
-<TabItem value="CLI">
-
-Sets a key/value only if not exists:
+<Tabs groupId="client-examples">
+<TabItem value="cli" label="CLI">
 
 ```kahuna
-kahuna-cli> set `my-config` "my-value" nx
-r3 set 11ms
+set `my-config` "my-value"
 ```
-
-Sets a key/value only if exists:
+```text
+r0 set 11ms
+```
 
 ```kahuna
-kahuna-cli> set `my-config` "my-value" xx
-r4 set 10ms
+get `my-config`
 ```
-
-Sets a key/value:
-
-```kahuna
-kahuna-cli> set `my-config` "my-value"
-r5 set 13ms
-```
-
-Sets a key/value with an expiration of 10 sec:
-
-```kahuna
-kahuna-cli> set `my-config` "my-value" ex 10000
-r6 set 12ms
-```
-
-Sets a key/value using command line arguments:
-
-```bash
-~> kahuna-cli --set my-config --value my-value
-r3 set 11ms
-
-~> kahuna-cli --set my-config --value my-value --expires 30000
-r4 set 10ms
+```text
+r0 my-value 13ms
 ```
 
 </TabItem>
-<TabItem value="C#">
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 // Create or update a key/value pair and set an expiration of 10 seconds:
@@ -172,237 +82,7 @@ var result = await client.SetKeyValue(
 if (result.Success)
   Console.WriteLine("Key/value updated successfully with revision {0}", result.Revision);
 
-// Update a key/value pair without expiration
-result = await client.SetKeyValue(
-  "my-config",
-  "some-value",
-  0,
-  durability: KeyValueDurability.Persistent
-);
-
-// Create a key/value pair only if it does not exist
-result = await client.SetKeyValue(
-  "my-config",
-  "some-value",
-  0,
-  flags: KeyValueFlags.SetIfNotExists,
-  durability: KeyValueDurability.Persistent
-);
-
-// Update a key/value pair only if it does exist
-result = await client.SetKeyValue(
-  "my-config",
-  "some-value",
-  0,
-  flags: KeyValueFlags.SetIfExists,
-  durability: KeyValueDurability.Persistent
-);
-
-// Create or update an ephemeral key/value pair
-result = await client.SetKeyValue(
-  "my-config",
-  "some-value",
-  10000,
-  durability: KeyValueDurability.Ephemeral
-);
-
-```
-
-</TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const result = await client.set("my-config", "some-value", {
-  expiry: 10_000,
-  durability: "persistent"
-});
-
-if (result.success) {
-  console.log(`Key/value updated with revision ${result.revision}`);
-}
-
-await client.set("my-config", "some-value", { mode: "ifNotExists" });
-await client.set("my-config", "some-value", { mode: "ifExists" });
-await client.set("my-config", "some-value", { durability: "ephemeral" });
-```
-
-</TabItem>
-</Tabs>
-
----
-
-### Compare-Value-And-Swap (CVAS)
-
-Sets or overwrites key/value pairs but only if the current value matches a specified comparison value.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<KahunaKeyValue> TryCompareValueAndSetKeyValue(
-    string key,
-    byte[] value,
-    byte[] compareValue,
-    int expiryTime = 0,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** A unique identifier for the key/value pair.
-- **value:** The data object associated with the key.
-- **compareValue:** The value is changed only if the current value matches the provided one.
-- **expiresMs:** The expiration time of the key in milliseconds.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the comparison matched and the key was modified.
-- **Revision:** The key's current revision after the operation.
-
-</TabItem>
-<TabItem value="CLI">
-
-Sets a key/value only if the current value is "current-value":
-
-```kahuna
-kahuna-cli> set `my-config` "current-value"
-r2 set 10ms
-
-kahuna-cli> set `my-config` "my-value" cmp "current-value"
-r3 set 11ms
-
-kahuna-cli> set `my-config` "my-value" cmp "current-value"
-r3 not set 12ms
-```
-
-</TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const result = await client.compareValueAndSet(
-  "my-config",
-  "my-value",
-  "current-value"
-);
-
-if (!result.success) {
-  console.log("Current value did not match");
-}
-```
-
-</TabItem>
-</Tabs>
-
----
-
-### Compare-Revision-And-Swap (CRAS)
-
-Sets or overwrites key/value pairs but only if the current revision matches a specified comparison revision.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<KahunaKeyValue> TryCompareRevisionAndSetKeyValue(
-    string key,
-    byte[]? value,
-    long compareRevision,
-    int expiryTime = 0,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** A unique identifier for the key/value pair.
-- **value:** The data object associated with the key.
-- **compareRevision:** The value is changed only if the current revision matches the provided one.
-- **expiresMs:** The expiration time of the key in milliseconds.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the revision matched and the key was modified.
-- **Revision:** The key's current revision after the operation.
-
-</TabItem>
-<TabItem value="CLI">
-
-Sets a key/value only if the current value is the current revision is **4**:
-
-```kahuna
-kahuna-cli> set `my-config` "my-value"
-r4 set 12ms
-
-kahuna-cli> set `my-config` "my-value" cmprev 4
-r5 set 11ms
-
-kahuna-cli> set `my-config` "other-value" cmprev 4
-r5 not set 10ms
-```
-
-</TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const result = await client.compareRevisionAndSet(
-  "my-config",
-  "my-value",
-  4
-);
-
-if (!result.success) {
-  console.log("Revision changed before this write");
-}
-```
-
-</TabItem>
-</Tabs>
-
----
-
-### Get
-
-Retrieves the value of a key along with its revision. If the key does not exist, the special value `nil` is returned.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<KahunaKeyValue> GetKeyValue(
-    string key,
-    KeyValueDurability durability = KeyValueDurability.Persistent,
-    long snapshotMs = 0,
-    CancellationToken cancellationToken = default
-);
-```
-
-- **key:** The key to be queried.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
-
-**Returns:**
-- **`KahunaKeyValue`**: Result object with success state, value, revision, and `LastModified`.
-
-</TabItem>
-<TabItem value="CLI">
-
-Gets key/values:
-
-```kahuna
-kahuna-cli> get `my-config`
-r-1 not found 12ms
-
-kahuna-cli> set `my-config` "my-value"
-r0 set 11ms
-
-kahuna-cli> get `my-config`
-r0 my-value 13ms
-```
-
-</TabItem>
-<TabItem value="C#">
-
-Gets key/value pair:
-
-```csharp
-var result = await client.GetKeyValue(
+result = await client.GetKeyValue(
   "my-config",
   KeyValueDurability.Persistent
 );
@@ -415,11 +95,14 @@ if (result.Success)
 ```
 
 </TabItem>
-<TabItem value="TypeScript">
-
-Gets key/value pair:
+<TabItem value="typescript" label="TypeScript">
 
 ```ts
+await client.set("my-config", "some-value", {
+  expiry: 10_000,
+  durability: "persistent"
+});
+
 const result = await client.get("my-config", {
   durability: "persistent"
 });
@@ -433,378 +116,28 @@ if (result.success) {
 </TabItem>
 </Tabs>
 
----
-
-### Get Revision
-
-Retrieves the value of a key at the specific revision. If the key/revision combination does not exist in the key/value store, the special value `nil` is returned.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<KahunaKeyValue> GetKeyValueRevision(
-    string key,
-    long revision,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** The key to be queried.
-- **revision:** The revision to be returned.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Found:** `true` if the key exists.
-- **Value:** The value associated with the key.
-- **Revision:** The queried revision.
-
-</TabItem>
-<TabItem value="CLI">
-
-Gets key/values:
-
-```kahuna
-kahuna-cli> set `my-config` "my-value"
-r0 set 11ms
-
-kahuna-cli> set `my-config` "my-value-1"
-r1 set 12ms
-
-kahuna-cli> set `my-config` "my-value-3"
-r2 set 15ms
-
-kahuna-cli> get `my-config` at 0
-r0 my-value 13ms
-
-kahuna-cli> get `my-config` at 1
-r0 my-value-1 13ms
-```
-
-</TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const result = await client.getRevision("my-config", 1, {
-  durability: "persistent"
-});
-
-if (result.success) {
-  console.log(result.valueAsString());
-}
-```
-
-</TabItem>
-</Tabs>
-
-For **timestamp-based** historical reads, Kahuna Script supports `GET key AS OF <hlc-timestamp>`, `EXISTS ... AS OF`, `GET BY BUCKET ... AS OF`, and `SCAN BY PREFIX ... AS OF`. The .NET and TypeScript clients also support snapshot reads directly through `snapshotMs` on point, bucket, prefix, and range reads. Use `AT <revision>` or a client revision-read method when you know the exact revision number; use `AS OF` or `snapshotMs` when you want the value that was visible at a specific snapshot time. Prefix and range scans without an explicit timestamp read the current committed view page by page.
-
----
-
-### Get By Bucket
-
-Retrieves key/value pairs that share the same bucket. The operation is consistent when the prefix identifies a single-partition bucket, because all keys in that bucket are routed to the same partition.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<List<KahunaKeyValue>> GetByBucket(
-    string prefixKey,
-    KeyValueDurability durability,
-    long snapshotMs = 0,
-    CancellationToken cancellationToken = default
-);
-```
-
-- **prefixKey:** The bucket prefix to query.
-- **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
-- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
-
-**Returns:**
-**KeyValuePair:**
- - **Key:** The key found.
- - **Value:** The value associated with the key.
- - **Revision:** The current revision of the key.
- - **Expires:** The unix timestamp in milliseconds when the key will expire.
-
- </TabItem>
-<TabItem value="CLI">
-
-Get key/values by bucket prefix:
-
-```kahuna
-$ kahuna-cli --set services/auth/instance-1 --value node1
-r0 set 11ms
-
-$ kahuna-cli --set services/auth/instance-2 --value node2
-r0 set 10ms
-
-$ kahuna-cli --get-by-bucket services/auth
-r0 services/auth/instance-1 node1
-r0 services/auth/instance-2 node2
-```
-
-</TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const instances = await client.getByBucket("services/auth", {
-  durability: "persistent"
-});
-
-for (const instance of instances) {
-  console.log(`${instance.key}: ${instance.valueAsString()}`);
-}
-```
-
-</TabItem>
-</Tabs>
-
-Use `get by bucket` for grouped prefixes that are intentionally single-partition. For large ordered key spaces that may split over time, see [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/).
-
----
-
-### Get By Range
-
-Retrieves key/value pairs inside an ordered interval under one prefix. This is the right abstraction for ordered key spaces and bounded range reads.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<List<KahunaKeyValue>> GetByRange(
-    string prefix,
-    string? startKey,
-    bool startInclusive,
-    string? endKey,
-    bool endInclusive,
-    int limit = 100,
-    KeyValueDurability durability = KeyValueDurability.Persistent,
-    long snapshotMs = 0,
-    CancellationToken cancellationToken = default
-);
-```
-
-- **prefix:** Logical key space prefix being scanned.
-- **startKey / endKey:** Optional ordered bounds.
-- **startInclusive / endInclusive:** Whether each bound is inclusive.
-- **limit:** Maximum number of items returned in this page.
-- **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
-- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
-
-**Returns:**
-- **`List<KahunaKeyValue>`**: Ordered keys in the requested interval.
-
-</TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const users = await client.getByRange(
-  {
-    prefix: "users",
-    startKey: "users/000100",
-    startInclusive: true,
-    endKey: "users/000200",
-    endInclusive: false
-  },
-  {
-    limit: 100,
-    durability: "persistent"
-  }
-);
-```
-
-</TabItem>
-</Tabs>
-
-The top-level clients also expose streaming range scans when you want paged traversal over the latest state or over one stable historical snapshot. In TypeScript, use `scanByRange(...)` as an async iterable.
-
-Range-backed reads are internally paged. If a page repeatedly hits retryable state because a range is moving, leadership is changing, restore is in progress, or an undecided transaction intent blocks visibility, Kahuna returns a retryable error instead of scanning forever. Retry the range read after a short backoff.
-
-In interactive transactions, `GetByRange(...)` is especially useful for ordered key spaces. Under pessimistic locking it can also protect the requested interval with a range lock, preventing phantom inserts and conflicting writes inside that range until the transaction completes.
-
----
-
-### Scan By Prefix
-
-Scan all nodes in the cluster searching for key/value pairs where the key starts with the specified prefix. The key/value pairs data are taken from the moment
-the node is visited. It can contain stale data. This API is slow because it scans all nodes and internal workers for keys.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<List<KahunaKeyValue>> ScanAllByPrefix(
-    string prefixKey,
-    KeyValueDurability durability,
-    long snapshotMs = 0,
-    CancellationToken cancellationToken = default
-);
-```
-
-- **prefixKey:** The prefix to scan for.
-- **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
-- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
-
-**Returns:**
-**KeyValuePair:**
- - **Key:** The key found.
- - **Value:** The value associated with the key.
- - **Revision:** The current revision of the key.
- - **Expires:** The unix timestamp in milliseconds when the key will expire.
-
- </TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const rows = await client.scanAllByPrefix("services/auth", {
-  durability: "persistent",
-  snapshotMs: 1718392012345
-});
-```
-
-</TabItem>
-</Tabs>
-
----
-
-### Delete
-
-Deletes a key and its associated value. Deleting a key does not remove the key history.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<KahunaKeyValue> DeleteKeyValue(
-    string key,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** The key to be deleted.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the key/value pair was deleted.
-- **Revision:** The tombstone revision created by the delete. For example, deleting a key at revision `0` returns revision `1`, and the next successful set returns revision `2`.
-
-</TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const deleted = await client.delete("my-config", {
-  durability: "persistent"
-});
-
-console.log(deleted.success, deleted.revision);
-```
-
-</TabItem>
-</Tabs>
-
----
-
-### Extend
-
-Extends a key timeout. The key will be deleted after the key expires. If the expiration is 0 the key will not be expired or removed.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<KahunaKeyValue> ExtendKeyValue(
-    string key,
-    int expiresMs,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** The key to be extended.
-- **expiresMs:** The expiration time of the key in milliseconds.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the key/value pair was extended.
-- **Revision:** The key's current revision. Extending the key does **not** increment the revision counter.
-
-</TabItem>
-<TabItem value="CLI">
-
-Exists key/values:
-
-```kahuna
-kahuna-cli> set `my-config` "my-value" ex 10000
-r0 set 11ms
-
-kahuna-cli> extend `my-config` 30000
-r0 exteded 13ms
-```
-
-</TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const extended = await client.extend("my-config", 30_000, {
-  durability: "persistent"
-});
-
-console.log(extended.success, extended.revision);
-```
-
-</TabItem>
-</Tabs>
-
----
-
-### Exists
-
-Returns if a key exists.
-
-<Tabs>
-<TabItem value="API">
-
-```csharp
-Task<KahunaKeyValue> ExistsKeyValue(
-    string key,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** The key to be checked if exists.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the key/value pair exists.
-- **Revision:** The key's current revision at the time of the query.
-
-</TabItem>
-<TabItem value="CLI">
-
-Exists key/values:
-
-```kahuna
-kahuna-cli> exists `my-config`
-r-1 not found 12ms
-
-kahuna-cli> set `my-config` "my-value"
-r0 set 11ms
-
-kahuna-cli> exists `my-config`
-r0 exists 13ms
-```
-
-</TabItem>
-<TabItem value="TypeScript">
-
-```ts
-const exists = await client.exists("my-config", {
-  durability: "persistent"
-});
-
-console.log(exists.success, exists.revision);
-```
-
-</TabItem>
-</Tabs>
+Every operation, with its parameters and return values, is in the [Key/Value API Reference](/docs/distributed-keyvalue-store/api/).
+
+## Persistent or Ephemeral
+
+Every key has a durability level, chosen on each operation:
+
+- **Persistent** keys are replicated to a [quorum](/docs/glossary/#quorum) (a majority) of nodes through Raft and written to disk. They survive node crashes, restarts, and leader changes.
+- **Ephemeral** keys live only in the memory of the partition leader. They are faster, but a crash, restart, leader change, or memory eviction loses them. Use them for data you can rebuild, such as caches, sessions, and rate-limit counters.
+
+In Kahuna Script, `set`, `get`, and the other plain commands use persistent keys, and the `e`-prefixed commands (`eset`, `eget`, ...) use ephemeral keys. See [Durability Levels](/docs/architecture/durability-levels/).
+
+## Pick the Right Tool
+
+| You want to... | Use | Read |
+|---|---|---|
+| Update a key only if nobody changed it since you read it | Compare-and-set (CAS) on value or revision | [Compare-and-Set (CAS)](/docs/distributed-keyvalue-store/cas/) |
+| Read an earlier value, or detect a change by its version number | Revisions, `AT <revision>`, `AS OF <timestamp>` | [Revisions](/docs/distributed-keyvalue-store/revisions/) |
+| React when persistent keys change instead of polling | Watches on a key, prefix, or range | [Watch Persistent Key Changes](/docs/distributed-keyvalue-store/watches/) |
+| Change several keys together, or write based on values you read | Transactions (scripts or interactive sessions) | [Transactions](/docs/distributed-keyvalue-store/transactions/) |
+| Keep a small group of related keys on one partition and read them in one operation | Buckets and `get by bucket` | [Buckets](/docs/distributed-keyvalue-store/buckets/) |
+| Let a large ordered key space, such as `users/000001` or `orders/2026/000001`, grow across partitions | Key-range routing (opt-in; hash routing is the default) | [Key-Range Sharding](/docs/distributed-keyvalue-store/key-range-sharding/) |
+| Split a small range that receives too many writes | Load-based range splitting | [Load-Based Range Splitting](/docs/distributed-keyvalue-store/load-based-range-splitting/) |
+| Know exactly what a transaction sees and when two transactions conflict | Read and lock rules | [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/) |
+| Keep reading "as of timestamp T" for a long-lived historical view | Snapshot holds | [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/) |
+| Look up the signature and examples of an operation | Set, Get, Delete, Extend, Exists, and the bucket, range, and prefix reads | [Key/Value API Reference](/docs/distributed-keyvalue-store/api/) |

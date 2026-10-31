@@ -1,11 +1,11 @@
 # Backup, Restore, and PITR
 
-Kahuna builds backup and point-in-time recovery (PITR) from two existing durability layers:
+Read this page when you need to know exactly what a backup contains, how a restore can stop at a chosen moment, or why a backup or restore was refused. Kahuna builds backup and point-in-time recovery (PITR) from two existing durability layers:
 
 - The **materialized storage backend**, which holds the state already flushed to RocksDB, SQLite, or memory
-- The **Raft write-ahead log (WAL)**, which holds ordered and timestamped committed mutations
+- The **[Raft](/docs/glossary/#raft) [write-ahead log (WAL)](/docs/glossary/#write-ahead-log-wal)**, which holds ordered and timestamped committed mutations
 
-A full backup captures the materialized state. Incremental backups preserve later WAL entries. A restore combines both and can stop at a selected Hybrid Logical Clock (HLC) timestamp.
+A full backup captures the materialized state. Incremental backups preserve later WAL entries. A restore combines both and can stop at a selected [Hybrid Logical Clock (HLC)](/docs/glossary/#hybrid-logical-clock-hlc) timestamp.
 
 ```text
 storage checkpoint + optional intent frontier + committed WAL segments = state at timestamp T
@@ -51,19 +51,21 @@ This creates a short interval where a mutation is committed in the WAL but not y
 The required order is:
 
 ```text
-1. capture M, the last committed WAL index
-2. wait until committed writes through M have applied and entered the persistence queue
-3. flush pending persistent writes
-4. create the backend checkpoint
-5. verify artifact bytes against size and digest records
-6. write the backup manifest claiming coverage through M
+1. copy live prepared intents and their per-partition applied positions
+2. capture M, the last committed WAL index
+3. wait until committed writes through M have applied and entered the persistence queue
+4. flush pending persistent writes
+5. create the backend checkpoint
+6. fold the WAL into the prepared-intent frontier at each range end and verify that later records can be reconstructed
+7. verify artifact bytes against size and digest records
+8. write the backup manifest claiming coverage through M
 ```
 
 Capturing `M` before the flush is essential. If the code flushed first and read `M` later, a write could commit between those operations. The manifest would claim that write even though it was not included in the checkpoint.
 
 Writes may still commit after `M` but before the checkpoint. The checkpoint can therefore contain more state than its manifest claims. This is safe because later replay uses revision-keyed upserts and is idempotent.
 
-The apply barrier is equally important. A committed write may still be waiting to apply to in-memory state, and the flush can only persist what has already applied. If the barrier times out, capture reports all lagging partitions as retryable `PartitionCaptureFailed`; a backend that cannot durably flush or produce an exact image fails with `ExactCheckpointUnavailable`. Neither publishes a checkpoint that might omit committed data.
+The apply barrier is equally important. A committed write may still be waiting to apply to in-memory state, and the flush can only persist what has already applied. The barrier waits only for committed writes above each partition's persisted application-durability floor, which avoids waiting again for state already durably recovered after restart. `BackupApplyBarrierTimeout` (`--backup-apply-barrier-timeout-seconds`, default 30 seconds) bounds the wait. If the barrier times out, capture reports all lagging partitions as retryable `PartitionCaptureFailed`; a backend that cannot durably flush or produce an exact image fails with `ExactCheckpointUnavailable`. Neither publishes a checkpoint that might omit committed data.
 
 Active partitions contribute a `PartitionBackupRange` from index `1` through their captured committed index. Draining and removed partitions are skipped.
 
@@ -73,11 +75,11 @@ Each backend implements `CreateCheckpoint(destinationPath, appliedIndex, applied
 
 - **RocksDB** uses the native checkpoint facility. Existing immutable files can be hard-linked when supported by the filesystem.
 - **SQLite** copies each shard with `VACUUM INTO` while holding that shard's exclusive lock. Writes to the shard pause during its copy.
-- **Memory** serializes key/value and lock tables to JSON files. `OpenCheckpoint` can reopen this representation for restore tests, while PITR replay still applies only key/value mutations.
+- **Memory** serializes key/value and lock tables to JSON files. `OpenCheckpoint` can reopen this representation for restore tests, while PITR replay still applies only key/value mutations. It is useful for testing, not durable production recovery.
 
 Every checkpoint includes `checkpoint.manifest`, which records the applied WAL index and HLC as plain JSON. The checkpoint is first written to a temporary sibling path and then moved into place so a failed operation does not leave a partial directory that appears complete.
 
-Current manifests record the artifact format version, per-file SHA-256 checksums, per-file sizes, covered partitions, and the required artifact names for the backup type. Legacy manifests are listed honestly as unsupported rather than treated as valid current artifacts.
+Current manifests record the backup ID, creation time, the artifact format version, per-file SHA-256 checksums, per-file sizes, covered partitions, and the required artifact names for the backup type. Legacy manifests are listed honestly as unsupported rather than treated as valid current artifacts.
 
 Current manifests also record the configured backup cluster ID and the node that produced the backup. Chain validation rejects a chain that mixes different non-empty cluster IDs. When `BackupMacKeyFile` is configured, Kahuna signs manifest identity, coverage, and digest metadata with HMAC-SHA-256 and verifies it before restore.
 
@@ -103,11 +105,13 @@ incremental:  partition 7, indexes 101..145
 incremental:  partition 7, indexes 146..190
 ```
 
-Before reading a segment, the driver compares its starting index with the partition's compaction floor. If required entries have already been removed, the public incremental API takes a new full backup instead and marks the returned DTO with `RequestedKind = Incremental`, `ActualKind = Full`, and a `SubstitutionReason`.
+Before reading a segment, the driver compares its starting index with the partition's actual WAL compaction floor, both before and after taking its retention hold. A newer application checkpoint alone does not require a full. If required entries have already been removed, the public incremental API takes a new full backup instead and marks the returned DTO with `RequestedKind = Incremental`, `ActualKind = Full`, and a `SubstitutionReason`. Direct facade failures expose `NeedsFull` instead of substituting. Missing indexes inside the claimed range fail closed rather than publishing holes.
+
+Topology divergence from a stamped ancestor (a membership change or a partition split or merge) also requires a new full, which the backup service substitutes the same way. Ancestors without a topology stamp keep the legacy compatibility path, so the absence of a stamp is not proof that the topology matched.
 
 Each incremental manifest points to its immediate parent. Segment files receive SHA-256 checksums, and manifest writes use a temporary file followed by an atomic move.
 
-Incremental segment files are JSON Lines, one `WalSegmentEntry` per line. Restore streams them one record at a time instead of loading the whole segment into memory. Older single-array segment files are still readable for compatibility, but current artifacts use the streaming format.
+Incremental segment files are JSON Lines, one `WalSegmentEntry` per line. Restore streams them one record at a time instead of loading the whole segment into memory. It verifies each segment immediately before replay and stages the exact bytes that will be consumed, which reduces verify-then-use races. Older single-array segment files are still readable for compatibility, but current artifacts use the streaming format.
 
 ## Chain Validation
 
@@ -174,7 +178,7 @@ Only Raft-committed WAL entries are stored in backup segments. A transaction pre
 
 :::caution Current PITR image scope
 
-`RestoreEngine` replays key/value replication messages. Sequence state is stored in the key/value subsystem and is replayed. Locks are volatile coordination leases and are not part of a PITR image. Range metadata is owned by cluster membership and partition-management flows and should be recovered through normal cluster catch-up.
+`RestoreEngine` replays key/value replication messages. Sequence state is stored in the key/value subsystem and is replayed. PITR does not restore lock state, including persistent locks: the as-of checkpoint behind a full backup deletes every lock record from the copy, and replay skips lock WAL entries. After a restore, clients must acquire their locks again. Range metadata is owned by cluster membership and partition-management flows and should be recovered through normal cluster catch-up.
 
 :::
 
@@ -214,7 +218,7 @@ GC runs inline after backups and on `BackupGcInterval`. The public API can run i
 
 `BackupDir` is validated before use. On POSIX, Kahuna refuses symlinked or group/world-writable backup roots and creates backup files with restrictive permissions. Restore target confinement remains separate and is governed by `RestoreRoot`.
 
-Coordinated backups are owned by the current meta-partition leader. Non-coordinator nodes reject coordinated backup requests with `NotBackupCoordinator` instead of producing partial cluster backups. If topology or membership changes while a backup is being built, the operation fails with `TopologyChanged` and publishes nothing.
+Coordinated backups are owned by the current leader of [partition 0](/docs/glossary/#partition-0) (the system partition). Non-coordinator nodes reject coordinated backup requests with `NotBackupCoordinator` instead of producing partial cluster backups. If topology or membership changes while a backup is being built, the operation fails with `TopologyChanged` and publishes nothing.
 
 Backup manifests and artifacts are stored through separate contracts. The built-in target stores both under the local backup directory. Other targets can be registered by the host so artifact bytes live in object storage or another external system, with local scratch space used when the storage engine must first create a filesystem checkpoint.
 
@@ -224,7 +228,9 @@ Backup and restore errors returned to remote callers are sanitized and carry an 
 
 WAL indexes are local to partitions, so index `100` on one partition is unrelated to index `100` on another. A coordinated backup uses one HLC timestamp `T` and caps every partition at its last committed entry where `Time <= T`.
 
-`SnapshotCoordinator` asks actor shards for the earliest transaction currently preparing:
+Durable participants share one coordinator-minted commit HLC, but their partition-local append times may differ. The risk during capture is partial materialization: one participant's row can reach the checkpoint before another's, despite sharing a commit timestamp. The cut selection and verification below prevent that.
+
+`SnapshotCoordinator` asks [actor](/docs/glossary/#actor) shards for the earliest transaction currently preparing, across live prepared [intents](/docs/glossary/#write-intent) and prepared actor intents:
 
 - If an in-flight commit exists at timestamp `M`, the coordinator chooses the immediate HLC predecessor of `M`.
 - If the cluster is quiescent, it chooses the maximum committed HLC found across active partitions.
@@ -246,12 +252,16 @@ Readers must support these encodings before producers enable them. Disabling an 
 
 ## Durable Intents Across a Full Backup Boundary
 
-The full's optional `intent_frontier.pb` supplies prepares whose values would otherwise be absent from incremental replay. `BackupDriver` copies live intents and applied positions before recording range ends; `IntentFrontier` folds the WAL into live and settled reconstruction state at those ends and checks the existing tail with restore's expansion rules. Missing sources refuse publication with retryable `CutUnverified`. Restore verifies the artifact and seeds prepares and settled identities before segment replay. Recognized duplicate by-reference records after settlement are harmless; unknown references fail closed.
+The full's optional `intent_frontier.pb` supplies prepares whose values would otherwise be absent from incremental replay. A full writes it only when reconstruction state is nonempty, and the manifest covers its size and checksum. It carries the prepared intents live at each partition range end, including their values, plus settled identities used to recognize duplicates. An incremental may contain only a by-reference materialization or a materializing settlement for a prepare that occurred inside the full's range; the frontier supplies the value that replay would otherwise lack.
 
-For coordinated capture, `BackupService` opens a prepared-intent observation before choosing a cut. After checkpoint creation it confirms local application on every covered partition and verifies the observation's minimum commit timestamp is strictly above the cut. A failed check discards the image; after three attempts it reports `CutUnverified`. This verifies durable transactions, not every participant's actor-only ticket-path staging. See [Coordinated Cluster Snapshots](/docs/backups-and-point-in-time-recovery/#coordinated-cluster-snapshots) for scope and operational behavior.
+`BackupDriver` copies live intents and applied positions before recording range ends; `IntentFrontier` folds the WAL into live and settled reconstruction state at those ends and checks records already present beyond each end, including entries not yet marked committed, with restore's expansion rules. If compaction removed a necessary prepare and neither the copy nor the fold supplies it, publication is refused with retryable `CutUnverified`. The check is fail-closed, not permission to ignore missing source data.
+
+Restore verifies and stages the artifact and seeds prepares and settled identities before segment replay. Recognized duplicate by-reference records after settlement are skipped; unknown references fail closed. Full backups without a frontier restore without frontier staging and do not gain the missing reconstruction data. Older artifact verifiers reject the additional file, so restore readers must be upgraded before producers write fulls with a frontier.
+
+For coordinated capture, `BackupService` opens a prepared-intent observation before choosing a cut. After checkpoint creation it confirms local application on every covered partition and verifies the observation's minimum commit timestamp is strictly above the cut. A failed check discards the image; after three attempts it reports `CutUnverified`. This verifies durable prepared-intent transactions, not every participant's actor-only ticket-path staging: persistent transactions on the ticket path, such as extend-only transactions, keep pending state on participant actors, and the coordinator sees only its own actors. See [Coordinated Cut](/docs/backups-and-point-in-time-recovery/#coordinated-cut) for scope and operational behavior.
 
 ## Composed Captures
 
-`BackupService.Composed` assigns partition shares to materialized voters, captures them at an agreed cut, and merges checkpoint images plus intent frontiers into one backup. Learners and removing replicas are not capture sources. The driver reports `LaggingPartitions` when its apply barrier expires; coordinated retries can reassign those `(node, partition)` pairs to other voters. A plain full remains local, while a composed incremental continues whole-cluster coverage and falls back to a coordinated full if necessary. Coverage validation checks each stamped link, not their union.
+`BackupService.Composed` assigns partition shares to materialized voters, captures them at an agreed cut, and merges checkpoint images plus intent frontiers into one backup. [Learners](/docs/glossary/#leader-follower-and-learner) and removing replicas are not capture sources. Every participating node needs backup configuration and the same storage engine. Share scratch defaults to `BackupScratchDir`, otherwise system temporary storage; shares are not separately published backups. The driver reports `LaggingPartitions` when its apply barrier expires; coordinated retries can reassign those `(node, partition)` pairs to other voters. Only the affected partitions move to another source, and a preferred source is not guaranteed to be caught up. A plain full remains local, while a composed incremental continues whole-cluster coverage and falls back to a coordinated full if necessary. Coverage validation checks each stamped link, not their union.
 
 See [Capture Cost and Lagging Replicas](/docs/backups-and-point-in-time-recovery/#capture-cost-and-lagging-replicas) for barrier timeouts, scratch placement, staging fallback, and the capture I/O budget.

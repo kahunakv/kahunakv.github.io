@@ -3,9 +3,9 @@ import TabItem from '@theme/TabItem';
 
 # Service Discovery
 
-Kahuna can store service instance metadata so clients and workers can discover healthy endpoints without running a separate registry.
+Clients need to know which instances of a service are running right now. In this recipe, each instance registers itself under a key that expires unless the instance keeps refreshing it, like a Redis key with a TTL, so crashed instances disappear on their own. Clients and workers then discover healthy endpoints with one read, without running a separate registry.
 
-Use a bucket per service:
+Use a [bucket](/docs/glossary/#bucket) per service:
 
 ```text
 services/{service-name}/{instance-id}
@@ -26,6 +26,8 @@ Use an expiration so the instance disappears if the process dies or stops refres
 ```kahuna
 set `services/payments/node-a` '{"host":"10.0.1.15","port":8080,"version":"1.2.3","zone":"us-east-1a"}' ex 30000 norev
 ```
+
+[`NOREV`](/docs/scripts/commands/set/#norev) keeps only the current registration. Leave it off if you need [historical membership](#audit-historical-membership) reads.
 
 From a client:
 
@@ -187,13 +189,15 @@ const previous = await client.getByBucket("services/payments", {
 </TabItem>
 </Tabs>
 
-Do not use `NOREV` for registrations when historical membership is required. No-revision writes keep only the latest value and skip the archived revision records needed by historical reads.
+Do not use [`NOREV`](/docs/scripts/commands/set/#norev) for registrations when historical membership is required. No-revision writes keep only the latest value and skip the archived revision records needed by historical reads.
 
 ## Choosing Durability
 
 Use **persistent** durability when discovery state must survive node restarts and remain available during failover.
 
-Use **ephemeral** durability when registrations are high-volume, short-lived, and safe to rebuild from running services.
+Each persistent registration and each persistent heartbeat, whether `set` or `extend`, is a [Raft](/docs/glossary/#raft)-replicated write. With many instances and short heartbeat intervals, that write load adds up.
+
+Use **ephemeral** durability when registrations are high-volume, short-lived, and safe to rebuild from running services. Ephemeral heartbeats stay in the partition leader's memory and are not replicated, so they are cheaper. In exchange, a Kahuna node restart, a leader change, or [memory eviction](/docs/architecture/keys-eviction/) drops every registration on that partition, and instances disappear from discovery until they write their registration again. Refresh ephemeral registrations with a full `eset`, not only an extend, so a dropped key comes back on the next heartbeat. Ephemeral keys also cannot be [watched](/docs/recipes/watch-key-changes/). See [Durability Levels](/docs/architecture/durability-levels/).
 
 ```kahuna
 eset `services/payments/node-a` '{"host":"10.0.1.15","port":8080}' ex 30000
@@ -206,4 +210,4 @@ eget by bucket `services/payments`
 - Use no-revision writes for high-churn persistent registrations when only the current membership matters.
 - Store enough metadata for clients to make routing decisions without another lookup.
 - Keep service membership under a shared bucket so reads are consistent and partition-local.
-- For large ordered registries, use key-range sharding instead of treating one bucket as permanently single-partition.
+- For large ordered registries, use [key-range sharding](/docs/distributed-keyvalue-store/key-range-sharding/) instead of treating one bucket as permanently single-partition.

@@ -1,6 +1,8 @@
 # Replication and Recovery
 
-Kahuna uses Raft replication to make persistent mutations durable and ordered. The server wires Raft events to Kahuna through `ReplicationService`.
+Read this page when you diagnose lagging followers, retries during failover, or replica moves. It explains how a persistent write becomes committed, how a restarted node rebuilds its state, how requests reach the right node, and what happens when leadership or placement changes.
+
+Kahuna uses [Raft](/docs/glossary/#raft) replication to make persistent mutations durable and ordered. The server wires Raft events to Kahuna through `ReplicationService`.
 
 ## Startup Wiring
 
@@ -24,20 +26,7 @@ For a persistent mutation:
 6. Kahuna's replicator applies the committed entry to the in-memory state.
 7. The materialized state is queued for background persistence.
 
-```mermaid
-sequenceDiagram
-    participant A as Leader actor
-    participant R as Raft leader
-    participant F as Followers
-    participant P as Replicator
-    participant Q as Background persistence
-    A->>R: Proposal serialized as a log entry
-    R->>F: Replicate entry
-    F-->>R: Acknowledge (quorum)
-    R->>P: OnReplicationReceived
-    Note over P: Apply to in-memory state
-    P-)Q: Queue materialized state
-```
+[Request Flow](/docs/internals/request-flow/) shows this path as a sequence diagram, from the receiving node through [quorum](/docs/glossary/#quorum) commit to background persistence.
 
 This is why a local actor accepting a request is not enough. The committed Raft log is the source of truth for ordering and durability.
 
@@ -49,8 +38,8 @@ Kahuna categorizes replicated logs with simple type names:
 |------|---------|
 | `lock` | Lock state mutation. |
 | `kv` | Key/value state mutation. |
-| `rangemap` | Key-range descriptor map, replicated on the meta partition. |
-| `snapshotfloor` | Snapshot-hold floor registry, replicated on the meta partition. |
+| `rangemap` | Key-range descriptor map, replicated on [partition 0](/docs/glossary/#partition-0) (the system partition). |
+| `snapshotfloor` | Snapshot-hold floor registry, replicated on partition 0. |
 | `coorddecision` | Legacy coordinator-decision delta. |
 | `txnrecord` | Canonical transaction-record delta on the anchor partition. |
 | `preparedintent` | Participant prepared-intent and settlement delta. |
@@ -64,7 +53,7 @@ During recovery, Raft replays committed logs that are newer than the latest chec
 
 The restore path:
 
-1. Raft loads logs from its WAL.
+1. Raft loads logs from its [write-ahead log (WAL)](/docs/glossary/#write-ahead-log-wal).
 2. Kahuna routes each log by replication type.
 3. Lock, key/value, range-map, snapshot-floor, transaction-record, prepared-intent, legacy decision, and receipt handlers rebuild state.
 4. Materialized persistence provides checkpointed baseline data.
@@ -94,13 +83,13 @@ The partition map records:
 - Replica endpoints
 - Replica roles such as `Voter`, `Learner`, and `Removing`
 
-Replica changes are committed through the meta partition before data movement proceeds. A new replica starts as a learner, catches up from the log or a partition snapshot, and is promoted only after it is close enough to the leader for the configured stable window. Removals are staged so a partition keeps a safe voter set while the old host is drained and purged.
+Replica changes are committed through partition 0 before data movement proceeds. A new replica starts as a [learner](/docs/glossary/#leader-follower-and-learner), which receives data but does not vote. It catches up from the log or a partition [snapshot](/docs/glossary/#snapshot), and is promoted only after it is close enough to the leader for the configured stable window. Removals are staged so a partition keeps a safe voter set while the old host is drained and purged.
 
-Catch-up is bounded on both the streaming and buffering paths. Leaders cap outbound bytes per peer, cap backfill by entry count and bytes, and retry lagging followers through heartbeat/backfill. Snapshot rescue has a convergence breaker: if repeated rescue cycles still leave a follower below the compaction floor, the leader pauses aggressive rescue for that peer while allowing periodic probes so a recovered follower can be seeded later. Small snapshot exports can be cached for retry so a failed transfer does not immediately rebuild the same snapshot.
+Catch-up is bounded on both the streaming and buffering paths. Leaders cap outbound bytes per peer, cap backfill (resending missed log entries to a lagging follower) by entry count and bytes, and retry lagging followers through heartbeat/backfill. Snapshot rescue has a convergence breaker: if repeated rescue cycles still leave a follower below the compaction floor (the oldest log entry the leader still keeps), the leader pauses aggressive rescue for that peer while allowing periodic probes so a recovered follower can be seeded later. Small snapshot exports can be cached for retry so a failed transfer does not immediately rebuild the same snapshot.
 
 Compaction also accounts for peers that go silent. A live follower that recently needed snapshot rescue can hold the compaction floor within a configured lag budget so normal compaction does not immediately put it below the floor again. A peer that stops answering holds compaction only for the silent-peer retention window; after that, it no longer prevents compaction and must restart from a snapshot when it comes back.
 
-The placement controller runs on the partition `0` leader. It repairs under-replicated partitions first, then removes extra replicas, then balances replica counts across nodes. Per-partition overrides change the target; the controller performs the actual movement on later passes.
+The placement controller runs on the partition 0 leader. It repairs under-replicated partitions first, then removes extra replicas, then balances replica counts across nodes. Per-partition overrides change the target; the controller performs the actual movement on later passes.
 
 Useful placement metrics include:
 
@@ -113,6 +102,36 @@ Useful placement metrics include:
 | `kahuna.placement.leader_hint_hits` | Forwarding used a known partition leader hint. |
 | `kahuna.placement.leader_hint_misses` | Forwarding had to proceed without a usable leader hint. |
 
+## Replica Placement Internals
+
+These details explain how the placement controller converges. The operator procedure is in [Replication Factor and Replica Placement](/docs/replica-placement/).
+
+### Legacy Full-Replication Conversion
+
+Kahuna, pinned to Kommander 1.11.3, can convert legacy full-replication partitions when a positive effective replication factor and the placement rebalancer are enabled. Each eligible active partition with an empty replica set first receives an explicit set of **all committed roster voters**. This preserves its existing quorum; it does not immediately replace that quorum with an arbitrary factor-sized subset. Normal placement trims then remove surplus replicas one step at a time toward the target. Conversion is bounded by `MaxReplicaMovesPerPass` (`--raft-max-replica-moves-per-pass`), and a failed map commit is retried on a later pass.
+
+With rebalancing disabled the partitions stay fully replicated and a warning explains why conversion has not begun. Full replication with an effective factor of zero remains an intentional mode, not pending migration.
+
+The leader of partition 0 exposes `raft.placement.ranges_awaiting_initial` and the counter `raft.placement.initial_assignments_total` on the `Kommander` meter. Embedded hosts can inspect `node.Raft.GetPartitionsAwaitingPlacement()`. A zero pending count says assignment finished, not that all subsequent trimming and movement finished.
+
+### Leader Removal and Rebalancing
+
+Removing a partition's leader replica requires a confirmed handoff to another replica before marking it `Removing`. If the requesting node is not that partition's leader, it sends a transfer suggestion and polls the confirmed leader within a bound. An unconfirmed handoff returns `LeadershipNotConfirmed`, leaving removal for a later placement pass. A replica excluded by the committed map is also treated as a vacated leader for election gating, even if its process remains alive.
+
+Trim selection prioritizes replica load and zone placement; leadership only breaks ties among equally loaded candidates. A balancing add is planned only when its predicted follow-up trim improves load distribution, avoiding repeatedly adding and removing the same replica. These are convergence safeguards, not an exact balancing deadline.
+
+### Learner Promotion Diagnostics
+
+Placement accepts restarted nodes' fresh load-report incarnations even when their report version counters reset. If the gossiped leader hint is absent or dead, learner-lag checks can resolve a quorum-confirmed leader before deciding promotion readiness. These are recovery paths, not permission to promote an unconfirmed learner.
+
+`--raft-learner-promotion-stall-warning-after` (30,000 ms) logs the last failed check when a placement-added learner stays unpromotable. It is diagnostic only; it does not relax the lag or stability requirements. A non-member range leader is reported as a stall condition. After a failed drain is confirmed rolled back to `Voter`, the node's departure latch is released so a later eviction can trigger automatic rejoin. A removal that may still commit keeps the latch.
+
+### Leave Requests and Elections
+
+Requesting leave does not immediately stop the node from participating in elections: it remains eligible while membership removal is being committed, so it can help elect the partition 0 leader needed to finish that removal. A refused or failed API leave leaves the node campaigning while it remains a member. After removal commits, candidacy is suppressed.
+
+Automatic rejoin is suppressed while departure remains in force. A refusal that committed nothing, or a confirmed rollback of a decommission drain to `Voter`, releases that suppression. A newer committed roster naming the node `Voter` also confirms rollback when its acknowledgement was lost. A timed-out removal without such proof can still commit later, so suppression remains. Verify committed membership after an uncertain response and finish decommissioning explicitly. Process shutdown follows its own teardown path and suppresses candidacy after its removal attempt ends; disposal alone is not evidence that membership removal committed.
+
 ## Leader Changes
 
 Raft handles leader election per partition. When a leader changes:
@@ -121,11 +140,15 @@ Raft handles leader election per partition. When a leader changes:
 - Followers catch up from the leader's log
 - Committed entries remain ordered
 - Uncommitted proposals may need to be retried
-- Staged transactional writes, unprepared write intents, and point, prefix, or range locks in every mode from the old leadership term are discarded on the node that lost leadership
+- Staged transactional writes, unprepared [write intents](/docs/glossary/#write-intent), and point, prefix, or range locks in every mode from the old leadership term are discarded on the node that lost leadership
 
 Clients can see retry or abort responses when leadership changes race with an operation.
 
 For durable transaction decisions, the node that becomes leader for the anchor partition is responsible for continuing recovery of any outstanding decision records it now owns.
+
+### Leadership Transfer
+
+A leadership transfer, such as one suggested by the [leader balancer](/docs/leader-balancing/), is best-effort. Winning an election is not enough for the target to serve: it must drain committed log entries and pass the leadership barrier, and a contained or incomplete target can relinquish immediately. Kommander (since 1.9.7; Kahuna pins 1.11.3) reads the WAL on each promotion-drain attempt, so a readable entry is not held up solely by its completion callback being queued behind promotion. Entries that remain unreadable still prevent promotion.
 
 ## Apply Fingerprints
 

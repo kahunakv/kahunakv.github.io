@@ -6,20 +6,24 @@ import StatusDashboardImage from './assets/status-dashboard.png';
 
 # Status Dashboard
 
-Kahuna serves a read-only operator dashboard at the HTTP root by default:
+The Status Dashboard gives you a quick health check of one node in a browser, without setting up a metrics stack. Kahuna serves it, read-only, at the HTTP root by default:
 
 ```text
 http://127.0.0.1:8081/
 https://127.0.0.1:8082/
 ```
 
-Use it for a quick view of one node: readiness, local role, hosted partitions, total partitions, replication factor, storage backend, WAL backend, backup status, process version, uptime, heap size, thread count, persistence backlog, and selected engine metrics.
+It shows the node's readiness, local role, hosted [partitions](/docs/glossary/#partition), total partitions, replication factor, storage backend, [WAL](/docs/glossary/#write-ahead-log-wal) backend, backup status, process version, uptime, heap size, thread count, persistence backlog, and selected engine metrics.
 
 <div style={{textAlign: 'center', margin: '2rem 0'}}>
   <img src={StatusDashboardImage} alt="Kahuna status dashboard" style={{maxWidth: '100%', height: 'auto'}} />
 </div>
 
-The dashboard is safe to leave enabled on a trusted operator network because it does not mutate cluster state. It never starts backups, restores data, changes placement, moves leaders, splits ranges, or opens transactions. Protect the HTTP/HTTPS ports with your normal network controls.
+The dashboard does not mutate cluster state. It never starts backups, restores data, changes placement, moves leaders, splits ranges, or opens transactions.
+
+:::caution
+The dashboard page and its [JSON endpoints](#json-endpoints) require no authentication. Anyone who can reach the node's HTTP or HTTPS port can read them, including the node's storage paths. Serve them only on a trusted network and protect the ports with your normal network controls.
+:::
 
 ## Configuration
 
@@ -29,10 +33,7 @@ kahuna-server \
   <other-server-options>
 ```
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `--disable-dashboard` | disabled | Disable the browser dashboard. The root path returns plain `Kahuna.Server`. |
-| `--dashboard-refresh-seconds` | `5` | Browser polling interval in seconds. Values are clamped from `1` to `300`. |
+`--dashboard-refresh-seconds` sets the browser polling interval (default `5` seconds, clamped from `1` to `300`). `--disable-dashboard` turns the dashboard off: the root path then returns plain `Kahuna.Server`, and the `/v1/dashboard/summary` and `/v1/dashboard/metrics` endpoints are not served. Tools that poll those endpoints, such as the [Kubernetes Operator](/docs/kubernetes-operator/) autoscaler, stop working. See [Server Configuration](/docs/server-configuration/#status-dashboard).
 
 ## JSON Endpoints
 

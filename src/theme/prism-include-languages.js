@@ -17,12 +17,14 @@ function includeConfiguredLanguages(PrismObject) {
 
 function registerKahunaLanguage(PrismObject) {
   const keywords = [
-    'admissionWait',
     'as',
     'at',
     'begin',
     'bucket',
     'by',
+    'case',
+    'cmp',
+    'cmprev',
     'commit',
     'del',
     'delete',
@@ -46,6 +48,7 @@ function registerKahunaLanguage(PrismObject) {
     'in',
     'let',
     'norev',
+    'not',
     'nx',
     'of',
     'prefix',
@@ -54,27 +57,35 @@ function registerKahunaLanguage(PrismObject) {
     'scan',
     'set',
     'sleep',
+    'switch',
     'then',
     'throw',
     'xx',
   ].join('|');
 
   PrismObject.languages.kahuna = {
+    // Strings may span several lines; escaped identifiers may not.
     string: {
       pattern:
-        /(["'])(?:\\(?:[^\r\n]|[0-7]{3}|x[\da-fA-F]{2}|u[\da-fA-F]{4}|U[\da-fA-F]{8})|(?!\1)[^\\\r\n])*\1/,
+        /(["'])(?:\\(?:[^\r\n]|[0-7]{3}|x[\da-fA-F]{2}|u[\da-fA-F]{4}|U[\da-fA-F]{8})|(?!\1)[^\\])*\1/,
       greedy: true,
+    },
+    // Before placeholders, so a key such as `user@domain.com` stays one token.
+    'escaped-identifier': {
+      pattern:
+        /`(?:\\(?:[^\r\n]|[0-7]{3}|x[\da-fA-F]{2}|u[\da-fA-F]{4}|U[\da-fA-F]{8})|[^\\`\r\n])*`/,
+      greedy: true,
+      alias: 'symbol',
     },
     placeholder: {
       pattern: /@[a-zA-Z0-9_]+/,
       alias: 'variable',
     },
-    'escaped-identifier': {
-      pattern:
-        /`(?:\\(?:[^\r\n]|[0-7]{3}|x[\da-fA-F]{2}|u[\da-fA-F]{4}|U[\da-fA-F]{8})|[^\\`\r\n])*`/,
-      alias: 'symbol',
+    // Before numbers, so both endpoints of `1..10` are numbers.
+    range: {
+      pattern: /\.\./,
+      alias: 'operator',
     },
-    comment: /#.*/,
     float: {
       pattern: /(^|[^\w.])-?\d+\.\d+(?![\w.])/,
       lookbehind: true,
@@ -88,13 +99,15 @@ function registerKahunaLanguage(PrismObject) {
       pattern: /\b(?:false|true|null)\b/i,
       alias: 'constant',
     },
-    range: {
-      pattern: /\.\./,
-      alias: 'operator',
+    // `not deleted` and `not extended` are single result guards; `deleted`
+    // and `extended` alone are ordinary identifiers.
+    guard: {
+      pattern: /\bnot\s+(?:deleted|extended)\b/i,
+      alias: 'keyword',
     },
     command: {
       pattern:
-        /\b(?:cmp|cmprev|del|delete|edel|edelete|eexists|eextend|eget|escan|eset|exists|extend|get|scan|set)\b/i,
+        /\b(?:del|delete|edel|edelete|eexists|eextend|eget|escan|eset|exists|extend|get|scan|set)\b/i,
       alias: 'builtin',
     },
     keyword: new RegExp(`\\b(?:${keywords})\\b`, 'i'),

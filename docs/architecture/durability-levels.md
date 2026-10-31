@@ -1,12 +1,10 @@
-import Kahuna8 from '../assets/kahuna8.png';
-
 # Durability Levels
 
 Every key and lock you write to Kahuna has a **durability level**. It decides where the data lives and what it survives, and it is the main trade-off between safety and speed:
 
 | | Persistent | Ephemeral |
 |---|---|---|
-| Where it lives | Replicated to a quorum of nodes through Raft, then written to disk | Only in the memory of the partition leader |
+| Where it lives | Replicated to a [quorum](/docs/glossary/#quorum) of nodes through [Raft](/docs/glossary/#raft), then written to disk | Only in the memory of the [partition](/docs/glossary/#partition) leader |
 | Survives a node crash or restart | Yes | No |
 | Survives a leader change | Yes | No |
 | Survives [memory eviction](/docs/architecture/keys-eviction/) | Yes, reloaded from disk | No |
@@ -19,109 +17,53 @@ You select the level on each operation: `KeyValueDurability` and `LockDurability
 
 The rest of this page explains what Kahuna does internally for each level.
 
-<div style={{textAlign: 'center'}}>
-<img src={Kahuna8} height="350" />
-</div>
+## Write and Read Path
 
-## Persistent Durability
+Kahuna stores persistent data (locks, keys, and sequences) through Raft replication and materialized local storage, so it can recover from node crashes or failures. Suppose you store a key named `my-config` with the value `'my-value'`:
 
-Kahuna prioritizes the durable storage of data (locks, keys, and sequences) through Raft replication and materialized local storage. This design ensures high availability and recovery in case of node crashes or failures. Each time a persistent write operation occurs, the following process is executed:
-
-- **Storing the Key-Value Pair:**  Suppose we want to store a key named `my-config` with the value `'my-value'`.
 - **Partition Determination:**  A consistent hash is computed for `my-config` to determine its partition. For example, **CH(`my-config`) = 42**.
 - **Leader Identification:**  The node designated as the leader for Raft partition 42 is identified. The leader may differ from the node that initially received the request, so Kahuna forwards the request when needed.
 - **Proposal and Consensus:**  The leader proposes the mutation as a Raft log entry. A quorum must replicate and commit the entry before the write is considered committed.
-- **Apply to Memory:**  Once Raft commits the entry, Kahuna applies it to the actor-owned in-memory state machine.
+- **Apply to Memory:**  Once Raft commits the entry, Kahuna applies it to the in-memory state owned by the key's [actor](/docs/glossary/#actor).
 - **Background Materialization:**  The dirty key/value entry is queued to `BackgroundWriterActor`, which flushes materialized state and selected revision history to RocksDB, SQLite, or the configured backend.
-- **Visibility:**  The committed value becomes visible through the partition leader. If the write is part of a transaction, visibility is controlled by the transaction coordinator, write intents, MVCC metadata, and two-phase commit.
+- **Visibility:**  The committed value becomes visible through the partition leader. If the write is part of a transaction, visibility is controlled by the transaction coordinator, [write intents](/docs/glossary/#write-intent), [MVCC](/docs/glossary/#mvcc) metadata, and [two-phase commit](/docs/glossary/#two-phase-commit-2pc).
 
-This orchestration ensures that persistent data is ordered and replicated by Raft, while materialized storage lets a node recover efficiently without replaying the entire WAL.
+Raft orders and replicates persistent data, while materialized storage lets a node recover efficiently without replaying the entire [write-ahead log (WAL)](/docs/glossary/#write-ahead-log-wal).
 
-For read operations, the following process is executed:
+**For ephemeral keys this differs:** partition determination and leader identification are the same, but there is no Raft proposal and no disk write. The leader creates or retrieves the in-memory entry for `my-config` and applies the change, so the value lives only in the volatile memory (RAM) of the partition leader. The value is visible through the leader; in a transaction, visibility is controlled by the transaction coordinator and MVCC state. Conflicting operations are serialized through actor ownership, locks, write intents, or transaction validation, so reads and writes stay consistent under concurrent access.
 
-- **Read Request:**  Suppose we want to read the key `my-config`.
-- **Partition Determination:**  A consistent hash is computed for `my-config` to determine its partition. For example, **CH(`my-config`) = 42**.
-- **Leader Identification:**  The node designated as the leader for Raft partition 42 is identified. If the node receiving the request is not the leader, the request is forwarded accordingly.
-- **Retrieval from Memory or Durable Storage:**  The leader usually serves the latest value from actor-owned memory. If a persistent entry was evicted from memory, it can be reloaded from durable storage.
-- **Returning the Value:**  The key’s value is returned to the client.
+The diagram compares the two write paths. A persistent write is acknowledged after a quorum commits it and the leader applies it to memory; the disk write to the materialized backend happens later, in the background. An ephemeral write is acknowledged from the leader's memory.
 
-## Ephemeral Durability
+```mermaid
+flowchart TD
+    C[Client write] --> L[Partition leader]:::leader
+    L -->|persistent| R["Raft log entry<br/>committed by a quorum"]
+    R --> AP[Apply to memory]
+    AP --> A1[Ack]
+    AP -.->|background| D[("RocksDB/SQLite")]
+    L -->|ephemeral| M[Leader memory only]
+    M --> A2[Ack]
+    M -.-> X["Lost on restart<br/>or leader change"]
+```
 
-Not all operations require long-term durability. In scenarios where keys and locks are short-lived, Kahuna offers Ephemeral durability, which limits storage to the volatile memory (RAM) of the leader server for the partition.
-
-For ephemeral keys, each time a write operation occurs, the following process is executed:
-
-- **Storing the Ephemeral Key-Value Pair:**  Suppose we want to store an ephemeral key named `my-config` with the value `'my-value'`.
-- **Partition Determination:**  A consistent hash is computed for `my-config` to determine its partition. For example, **CH(`my-config`) = 42**.
-- **Leader Identification:**  The node designated as the leader for partition 42 is identified. Similar to persistent durability, if the initial node is not the leader, the request is forwarded.
-- **In-Memory Handling:**  The leader creates or retrieves the in-memory entry for `my-config` and applies the change.
-- **Visibility:**  The updated value is made visible through the leader. If the write is part of a transaction, visibility is controlled by the transaction coordinator and MVCC state.
-- **Concurrency Control:**  Conflicting operations are serialized through actor ownership, locks, write intents, or transaction validation.
-
-This process ensures that all read and write operations maintain consistency even under concurrent access.
+**Reads** follow the same partition and leader steps. The leader usually serves the latest value from actor-owned memory. If a persistent entry was evicted from memory, it can be reloaded from durable storage.
 
 ## Cache Entries
 
 Both **Ephemeral** and **Persistent** durability modes maintain in-memory key/value entries to accelerate reads. Persistent entries can be reloaded from durable storage after eviction, while ephemeral entries are removed permanently because they have no durable backing store.
 
-<ArchDiagram
-  group="Kahuna Node"
-  sources={['Client A', 'Client B', 'Client C', '…', 'Client N']}
-  hub={{label: 'Cache', icon: 'layers'}}
-  targets={[
-    {label: 'Persistence', sub: '(RocksDB/SQLite)', icon: 'database'},
-    {label: 'Ephemeral', sub: '(Memory)', icon: 'chip'},
-  ]}
-  title="Clients A through N send requests to the in-memory cache of a Kahuna node. The cache is backed by persistent storage in RocksDB or SQLite, or by ephemeral memory only."
-/>
-
-Kahuna runs a bounded key/value collector independently on each actor. The collector first removes definite garbage such as deleted, undefined, and expired entries using tombstone and expiration indexes. If the actor is still above its entry or byte budget, it evicts cold live entries from an intrusive LRU list. Persistent entries whose latest change may not be flushed to disk are pinned until they are safe to reload from storage. Revision and MVCC metadata are trimmed inline where they grow.
+Kahuna runs a bounded key/value collector independently on each actor. The collector first removes definite garbage such as deleted, undefined, and expired entries using [tombstone](/docs/glossary/#tombstone) and expiration indexes. If the actor is still above its entry or byte budget, it evicts cold live entries from an intrusive LRU list. Persistent entries whose latest change may not be flushed to disk are pinned until they are safe to reload from storage. Revision and MVCC metadata are trimmed inline where they grow.
 
 See [Keys Eviction](/docs/architecture/keys-eviction/) for the full algorithm and configuration details.
 
-## Summary of Durability Modes: Advantages and Disadvantages
+## Trade-offs
 
-### Persistent Durability
+Beyond the table above:
 
-**Advantages:**
-
-- **High Availability and Resilience:**  Data is replicated through Raft and materialized to disk, ensuring recovery in the event of node crashes or failures.
-- **Consistency:**  The use of replication and consensus mechanisms (via Raft) ensures that all read and write operations remain consistent.
-  
-**Disadvantages:**
-
-- **Increased Latency:**  Writing to disk and coordinating with multiple nodes introduces higher latency, which may impact performance.
-- **Resource Intensive:**  The replication and consensus processes require additional computational and storage resources.
-- **Higher Write Coordination Cost:**  Writes wait for Raft commit before they are considered durable, which can add latency under heavy load.
-
-### Ephemeral Durability
-
-**Advantages:**
-
-- **Speed and Low Latency:**  Operations are performed in memory, offering faster read and write responses.
-- **Lower Resource Overhead:**  By avoiding disk writes, system resource demands and replication overhead are minimized.
-- **Efficiency for Short-Lived Data:**  Ideal for use cases where data does not need long-term storage such as caches, short-lived locks, sessions, etc.
-
-**Disadvantages:**
-
-- **Lack of Persistence:**  Data is volatile; in the event of a node failure, data stored only in memory is lost.
-- **Limited Use Cases:**  Best suited for temporary data such as caches, short-lived locks, and sessions, making it less appropriate for scenarios requiring long-term durability.
-- **No Restart Recovery:**  With data not being stored to disk, ephemeral values cannot be reconstructed after unexpected shutdowns or crashes.
+- **Persistent:** Raft replication and consensus keep reads and writes consistent across failures, but they need more computational and storage resources, and waiting for the Raft commit can add latency under heavy load.
+- **Ephemeral:** Avoiding disk writes and replication lowers resource use. An ephemeral lock, like an ephemeral key, is lost on a node restart or a leader change: it can be acquired again before its lease would have expired, and its [fencing token](/docs/distributed-locks/fencing-tokens/) count restarts.
 
 ## Use Cases
 
-### Persistent Durability Use Cases
-
-- **Configuration Management:** Systems that manage configuration data for applications often require high reliability and consistency. Using persistent durability ensures that changes are recorded and can be recovered in case of system failures.
-- **Financial Transactions:** Applications handling financial transactions must not lose any critical information. Persistent durability guarantees that transaction logs and critical data remain intact despite crashes.
-- **Audit Logs and Compliance:** For systems needing to maintain detailed records for regulatory or auditing purposes, persistent durability preserves historical data over the long term.
-- **Critical State Management:**  Any service that requires its operational state to be maintained across reboots or failures, such as coordination services or distributed locks, benefits from persistent durability.
-
-### Ephemeral Durability Use Cases
-
-- **Session Management:**  Applications that maintain user sessions or temporary state information can use ephemeral durability. This mode is effective because session data is transient and does not require long-term storage.
-- **Caching Frequently Accessed Data:**  When performance is critical and data is frequently requested, storing it in memory using ephemeral durability can significantly reduce access latency.
-- **Short-Lived Data for Real-Time Processing:**  Real-time analytics or streaming applications that process transient data can leverage ephemeral durability to achieve faster read/write cycles without the overhead of disk persistence.
-- **Testing and Development Environments:**  In scenarios where temporary data storage is acceptable, such as during development or testing, ephemeral durability provides a high-speed, low-resource option without the need for long-term data retention.
-
-This balanced overview helps in choosing the right durability mode based on the specific operational needs and performance considerations of your use case.
+- **Persistent:** configuration management, where changes must be recorded and recoverable after a failure; critical state such as coordination services and distributed locks that must survive reboots; balances and other small state where a lost write means lost money. Kahuna holds coordination state, not your system of record: keep financial transaction records and long-term audit logs in a primary database (see [Why Kahuna?](/docs/why-kahuna/#replacing-a-cache-and-database-for-small-state)).
+- **Ephemeral:** user sessions and other transient state, caches for frequently accessed data, short-lived data in real-time analytics or streaming, and development or test environments where temporary storage is acceptable.

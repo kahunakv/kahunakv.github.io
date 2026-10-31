@@ -1,6 +1,6 @@
 // Ejected from @docusaurus/theme-mermaid so each color mode gets its own
 // themeVariables. The stock component shares one options object across modes.
-import React, {useEffect, useMemo, useRef} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import ErrorBoundary from '@docusaurus/ErrorBoundary';
 import {
   ErrorBoundaryErrorMessageFallback,
@@ -9,13 +9,62 @@ import {
 import {
   MermaidContainerClassName,
   useMermaidConfig,
-  useMermaidRenderResult,
 } from '@docusaurus/theme-mermaid/client';
 import styles from './styles.module.css';
 
+// Mermaid is a mutable singleton: initialize() and render() must not
+// interleave. A page that loads in dark mode renders each diagram twice
+// (light, then dark); overlapping renders that share an element id leave a
+// diagram empty. Run renders one at a time, give each its own id, and drop
+// results that a newer render has replaced.
+let renderQueue = Promise.resolve();
+let renderCount = 0;
+
+function renderSerially(task) {
+  const next = renderQueue.then(task, task);
+  renderQueue = next.catch(() => {});
+  return next;
+}
+
+async function renderMermaid(text, config) {
+  const mermaid = (await import('mermaid')).default;
+  const id = `mermaid-svg-${++renderCount}`;
+  mermaid.initialize(config);
+  try {
+    return await mermaid.render(id, text);
+  } catch (e) {
+    // Mermaid leaves an error element in the DOM when parsing fails.
+    document.querySelector(`#d${id}`)?.remove();
+    throw e;
+  }
+}
+
+function useMermaidRenderResult({text, config}) {
+  const [result, setResult] = useState(null);
+  useEffect(() => {
+    let current = true;
+    renderSerially(() => renderMermaid(text, config))
+      .then((rendered) => {
+        if (current) setResult(rendered);
+      })
+      .catch((e) => {
+        if (current) {
+          // Rethrow during render so the error boundary shows the failure.
+          setResult(() => {
+            throw e;
+          });
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [text, config]);
+  return result;
+}
+
 const fontFamily = "'Inter Variable', system-ui, sans-serif";
 
-// Logo palette, same as src/components/Diagrams, so both diagram kinds match.
+// Logo palette, so diagrams match the site colors.
 const palettes = {
   light: {
     darkMode: false,
@@ -81,12 +130,25 @@ const palettes = {
   },
 };
 
+// Fill for nodes a diagram marks with `:::leader` (for example a partition
+// leader), so diagrams never hard-code colors.
+const leaderColors = {
+  light: {fill: '#02874c', stroke: '#00241a', text: '#ffffff'},
+  dark: {fill: '#1bbc49', stroke: '#6bd54f', text: '#00241a'},
+};
+
 // Rounded corners for plain nodes and subgraphs.
-const themeCSS = `
+function themeCSS(colorMode) {
+  const leader = leaderColors[colorMode];
+  return `
   .node rect, .node .label-container { rx: 8px; ry: 8px; }
   .cluster rect { rx: 12px; ry: 12px; }
   .cluster-label .nodeLabel { font-weight: 700; }
+  .node.leader rect, .node.leader polygon, .node.leader path { fill: ${leader.fill}; stroke: ${leader.stroke}; }
+  .node.leader .nodeLabel, .node.leader .nodeLabel p { color: ${leader.text}; }
+  .node.leader text { fill: ${leader.text}; }
 `;
+}
 
 function useKahunaMermaidConfig() {
   const {colorMode} = useColorMode();
@@ -95,7 +157,7 @@ function useKahunaMermaidConfig() {
     () => ({
       ...config,
       themeVariables: {...palettes[colorMode], ...config.themeVariables},
-      themeCSS: `${themeCSS}${config.themeCSS ?? ''}`,
+      themeCSS: `${themeCSS(colorMode)}${config.themeCSS ?? ''}`,
     }),
     [colorMode, config],
   );
@@ -106,6 +168,13 @@ function MermaidRenderResult({renderResult}) {
   useEffect(() => {
     const div = ref.current;
     renderResult.bindFunctions?.(div);
+    // Keep labels legible on narrow screens: a wide diagram never shrinks
+    // below 70% of its natural size; its container scrolls instead.
+    const svg = div.querySelector('svg');
+    const width = svg?.viewBox?.baseVal?.width;
+    if (width) {
+      svg.style.minWidth = `${Math.round(width * 0.7)}px`;
+    }
   }, [renderResult]);
   return (
     <div

@@ -1,39 +1,50 @@
 
 # Command: EExtend
 
-Changes the expiration time of an ephemeral key without changing its value. Use it to keep a temporary key alive while its owner is still active, such as a session token that stays valid while the user is active. For persistent keys, use [`extend`](/docs/scripts/commands/extend/).
+Keeps a key with **ephemeral** durability alive while its owner is still active, such as a session token that stays valid while the user is active. `eextend` changes the key's expiration time without changing its value. Ephemeral keys live only in the partition leader's memory and are lost on a node restart or a leader change; see [Durability Levels](/docs/architecture/durability-levels/). For persistent keys, use [`extend`](/docs/scripts/commands/extend/).
 
-Example:
+## Syntax
+
+```text
+eextend <key> <ms>
+```
+
+`<ms>` is an integer literal: the number of milliseconds from the moment the command runs. `0` removes the expiration. A placeholder or an expression is a syntax error, so a script cannot take the duration from a parameter (see [Parameters](/docs/scripts/basic-syntax/#parameters)).
+
+## Examples
 
 ```kahuna
 eset `session_token_user1` 'a69eacd410aa'
+```
+```text
 r0 set 4ms
-
-eextend `session_token_user1` 3600000
-r0 set 3ms
 ```
 
-In the previous example, the key is set to expire in 3'600.000 ms (1 hour) from the moment the extend command is executed.
+```kahuna
+eextend `session_token_user1` 3600000
+```
+```text
+r0 extended 3ms
+```
+
+The key now expires 3,600,000 ms (1 hour) after the command runs.
 
 An expiration value of zero means that the key never expires:
 
 ```kahuna
 eextend `session_token_user1` 0
+```
+```text
 r0 extended 7ms
 ```
 
-For **ephemeral keys**, even if they are set to **never expire**, they can still be **evicted at any time** if the server is under **memory pressure**.
-
-This is because ephemeral durability relies solely on **in-memory storage**, and to ensure system stability, Kahuna may reclaim memory by evicting keys that are not recently used, regardless of their expiration setting.
-
-## Notes
-
-For keys with a long expiration time (several hours or days), it's recommended to use [persistent durability](../../architecture/durability-levels.md). This ensures that the key is not lost in the event of a node failure, as the data is safely stored on disk and replicated across the cluster.
-
-Persistent durability provides high availability and fault tolerance, making it ideal for use cases such as long-term sessions, configuration data, or delayed tasks.
-
-Internally, expiration timestamps are managed using the [Hybrid Logical Clock (HLC)](../../architecture/hybrid-logical-clocks.md), which helps avoid issues caused by clock drift between nodes. This ensures that expiration times are consistent and causally ordered across the cluster, even in distributed environments where system clocks may differ slightly.
+An ephemeral key that **never expires** can still be **evicted at any time** if the server is under **memory pressure**. Ephemeral keys live only in memory, and to keep the system stable Kahuna may reclaim memory by evicting keys that are not recently used, regardless of their expiration setting.
 
 ## Checking the Result
 
-Use `if not extended then ... end` to test whether the last extend found no key. An undefined placeholder created by a transaction lock counts as absent. `not set` is false after a successful extend, because the expiry update took effect. An extend changes expiry without advancing the key's revision. See [Statement-Result Guards](/docs/scripts/semantics/#statement-result-guards).
+Use `if not extended then ... end` to test whether the last extend found no key. A key that never existed counts as absent, even if the transaction locked it. `not set` is false after a successful extend, because the expiry update took effect. An extend changes expiry without advancing the key's revision. See [Statement-Result Guards](/docs/scripts/semantics/#statement-result-guards).
+
+## Notes
+
+- For keys with a long expiration time (several hours or days), such as long-term sessions, configuration data, or delayed tasks, use [persistent durability](/docs/architecture/durability-levels/) so the key survives a node failure.
+- Expiration timestamps use the [Hybrid Logical Clock (HLC)](/docs/architecture/hybrid-logical-clocks/), so they stay consistent and causally ordered across nodes whose system clocks drift slightly.

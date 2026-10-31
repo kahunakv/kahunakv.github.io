@@ -1,10 +1,10 @@
 # Leader Balancing
 
-Each Kahuna partition is an independent Raft group with one leader. The leader processes requests, replicates writes, and sends heartbeats for that partition.
+When one node leads most partitions, or the busiest ones, it carries most of the cluster's request and replication work while other nodes have spare capacity. The leader balancer gradually moves leadership to those other nodes, so the work spreads more evenly.
 
-Leaders are elected independently. Over time, one node can end up leading many more partitions, or several high-traffic partitions, while other nodes have spare capacity.
+Each Kahuna [partition](/docs/glossary/#partition) is an independent [Raft](/docs/glossary/#raft) group with one [leader](/docs/glossary/#leader-follower-and-learner), which processes requests, replicates writes, and sends heartbeats for that partition. Leaders are elected independently, so over time one node can end up leading many more partitions, or several high-traffic partitions, than the others.
 
-The leader balancer gradually redistributes leadership using two signals:
+The balancer uses two signals:
 
 1. **Leader count** spreads partition leaders more evenly across nodes
 2. **Partition load** separates hot leaders using operation throughput and queue depth
@@ -32,7 +32,7 @@ Enable leader balancing when both conditions apply:
 - The deployment has multiple Kahuna nodes and many partitions
 - Leader counts or hot partitions are unevenly concentrated across nodes
 
-Leave it disabled for standalone and embedded deployments. A single node has nowhere to transfer leadership. It can also remain disabled for a small cluster whose leaders are already distributed acceptably.
+Leave it disabled for single-node deployments, whether a standalone server or a single embedded node: one node has nowhere to transfer leadership. It can also remain disabled for a small cluster whose leaders are already distributed acceptably.
 
 Leader balancing is a performance optimization, not a correctness requirement. It is disabled by default and adds no reporting or planning overhead while disabled.
 
@@ -44,52 +44,29 @@ Enable it on every cluster node and perform a rolling restart:
 
 ```bash
 kahuna-server \
-  --raft-enable-leader-balancer true \
+  --raft-enable-leader-balancer \
   <other-server-options>
 ```
 
-Every node must participate because each node publishes local load reports and receives transfer suggestions. Planning runs only on the current leader of system partition `0`, which can change at any time.
+Every node must participate because each node publishes local load reports and receives transfer suggestions. Planning runs only on the current leader of [partition 0](/docs/glossary/#partition-0) (the system partition), which can change at any time.
 
 A partial rollout produces incomplete reports. The planner responds by skipping passes rather than making decisions from an incomplete cluster view.
 
 ## How a Balancing Pass Works
 
 1. Every enabled node periodically publishes the partitions it leads and their load
-2. The partition `0` leader collects reports from active nodes
+2. The partition 0 leader collects reports from active nodes
 3. The planner first corrects leader-count imbalance
 4. When counts are balanced, it can swap leaders to reduce load imbalance
 5. Busy nodes receive advisory transfer suggestions
 6. Each current partition leader validates and performs its own Raft handoff
 7. Later reports confirm the new leadership distribution
 
-Suggestions and planner state are held in memory. If the partition `0` leader changes, the new leader rebuilds its view from subsequent reports.
+Suggestions and planner state are held in memory. If the partition 0 leader changes, the new leader rebuilds its view from subsequent reports.
 
 ## Configuration
 
-Start with the defaults. They intentionally move leadership slowly to limit churn.
-
-| Server option | Default | Description |
-|---------------|---------|-------------|
-| `--raft-enable-leader-balancer` | `false` | Enables reports, planning passes, and transfer suggestions |
-| `--raft-leader-balancer-interval` | `30000` ms | Interval between planning passes on the partition `0` leader |
-| `--raft-leader-balancer-report-interval` | `5000` ms | Interval between load reports from each node |
-| `--raft-leader-balancer-report-ttl` | `20000` ms | Maximum report age accepted by the planner. Must exceed the report interval |
-| `--raft-count-deadband` | `1` | Allowed leader-count deviation before count balancing starts |
-| `--raft-load-imbalance-threshold` | `0.25` | Fractional load skew required for load-based swaps after counts are balanced |
-| `--raft-min-leader-stability-ms` | `5000` ms | Minimum leadership age before a partition can move |
-| `--raft-move-cooldown` | `60000` ms | Minimum delay before the same partition can move again |
-| `--raft-max-moves-per-pass` | `4` | Maximum suggestions created by one planning pass |
-| `--raft-max-concurrent-transfers` | `2` | Maximum transfer suggestions tracked at the same time |
-| `--raft-suggestion-timeout` | `15000` ms | Time allowed for a suggested transfer to appear in reports |
-| `--raft-leader-balancer-ops-weight` | `1.0` | Weight assigned to operations per second in the load score |
-| `--raft-leader-balancer-queue-weight` | `0.5` | Weight assigned to pending queue depth in the load score |
-| `--raft-enable-slow-node-avoidance` | `false` | Avoid nodes whose WAL commit wait is far above the cluster median |
-| `--raft-slow-node-multiplier` | `3.0` | Ratio above median commit wait required for slow-node candidacy |
-| `--raft-slow-node-floor-ms` | `10.0` ms | Absolute commit-wait floor below which a node is never slow |
-| `--raft-slow-node-min-samples` | `20` | WAL group batch samples required before classification |
-| `--raft-slow-node-observation-ttl` | `30000` ms | Maximum age of a commit-wait observation |
-| `--raft-slow-node-enter-passes` | `3` | Consecutive passes required to enter slow classification |
-| `--raft-slow-node-exit-passes` | `6` | Consecutive clean passes required to exit slow classification |
+Start with the defaults. They intentionally move leadership slowly to limit churn: the partition 0 leader plans every 30 seconds, creates at most 4 suggestions per pass, tracks at most 2 transfers at once, and waits 60 seconds before moving the same partition again. Every flag and default, including slow-node avoidance, is listed in [Server Configuration: Raft Leader Balancing](/docs/server-configuration/#raft-leader-balancing).
 
 The partition load score is approximately:
 
@@ -97,6 +74,8 @@ The partition load score is approximately:
 load = ops weight * operations per second
      + queue weight * pending queue depth
 ```
+
+The weights are `--raft-leader-balancer-ops-weight` (default `1.0`) and `--raft-leader-balancer-queue-weight` (default `0.5`).
 
 ## Tuning
 
@@ -122,7 +101,7 @@ Kommander emits leader-balancer instruments through the `Kommander` meter:
 | `raft.balancer.count_imbalance` | Gauge | Distance between the most-loaded node and the ideal leader count |
 | `raft.balancer.load_imbalance` | Gauge | Fractional load skew between nodes |
 
-The two imbalance gauges are meaningful only on the current partition `0` leader. Other nodes report zero, and the node producing meaningful values changes when partition `0` leadership changes.
+The two imbalance gauges are meaningful only on the current partition 0 leader. Other nodes report zero, and the node producing meaningful values changes when partition 0 leadership changes.
 
 The metrics exist inside Kommander, but the deployment must export the `Kommander` meter through its configured telemetry pipeline before an operator can query them.
 
@@ -135,16 +114,16 @@ The metrics exist inside Kommander, but the deployment must export the `Kommande
 
 ## Safety and Failure Behavior
 
-A transfer remains best-effort: winning an election is not enough for the target to serve. It must drain committed log entries and pass the leadership barrier; a contained or incomplete target can relinquish immediately. Kommander 1.9.7 reads the WAL on each promotion-drain attempt, so a readable entry is not held up solely by its completion callback being queued behind promotion. Entries that remain unreadable still prevent promotion. Check the resulting confirmed leader rather than treating a transfer request as a guarantee of a lasting handoff.
+A transfer remains best-effort: winning an election is not enough for the target to serve. It must drain committed log entries and pass the leadership barrier; a contained or incomplete target can relinquish immediately. Check the resulting confirmed leader rather than treating a transfer request as a guarantee of a lasting handoff. See [Leadership Transfer](/docs/internals/replication/#leadership-transfer) for the promotion drain.
 
 The partition leader, not the planner, has final authority over every transfer. A suggestion is ignored when its term, source leader, destination, or partition state is no longer valid.
 
 Other safety properties include:
 
-- Only the partition `0` leader creates plans
+- Only the partition 0 leader creates plans
 - An incomplete report view causes the planner to wait
 - Recently elected and recently moved partitions are temporarily ineligible
 - Per-pass and concurrent-transfer limits bound the amount of movement
-- A node failure or election does not get accelerated by the balancer
+- The balancer does not trigger or speed up failover; Raft elections handle that
 
 The expected failure modes are a skipped transfer or an unnecessary transfer. Normal Raft validation prevents the balancer from creating conflicting leaders or losing committed data.

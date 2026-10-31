@@ -10,20 +10,22 @@ What this means for you:
 
 Most deployments do not need to change anything. The rest of this page describes the algorithm.
 
-Kahuna keeps key/value state in memory inside each `KeyValueActor`. Persistent keys also have durable storage behind them, but the in-memory copy avoids disk reads for hot data. Ephemeral keys live only in memory, so eviction of an ephemeral key removes the value from the node.
+Kahuna keeps key/value state in memory inside each `KeyValueActor`, an [actor](/docs/glossary/#actor) that owns a group of keys. Persistent keys also have durable storage behind them, but the in-memory copy avoids disk reads for hot data. Ephemeral keys live only in memory, so eviction of an ephemeral key removes the value from the node.
 
-<ArchDiagram
-  group="Kahuna Node"
-  sources={['Client A', 'Client B', 'Client C', '…', 'Client N']}
-  hub={{label: 'Cache', icon: 'layers'}}
-  targets={[
-    {label: 'Persistence', sub: '(RocksDB/SQLite)', icon: 'database'},
-    {label: 'Ephemeral', sub: '(Memory)', icon: 'chip'},
-  ]}
-  title="Clients A through N send requests to the in-memory cache of a Kahuna node. The cache is backed by persistent storage in RocksDB or SQLite, or by ephemeral memory only."
-/>
+The current key/value eviction algorithm is a bounded collector. It reclaims definite garbage first, then uses true least-recently-used ordering only when the actor is over its configured entry or byte budget. Revision and [MVCC](/docs/glossary/#mvcc) metadata are trimmed where they grow so hot keys with large histories do not grow without bound.
 
-The current key/value eviction algorithm is a bounded collector. It reclaims definite garbage first, then uses true least-recently-used ordering only when the actor is over its configured entry or byte budget. Revision and MVCC metadata are trimmed where they grow so hot keys with large histories do not grow without bound.
+The diagram shows one collection pass. Both phases share the `CollectBatchMax` limit.
+
+```mermaid
+flowchart TD
+    S["Collect message<br/>or budget check"] --> G["Reclaim Deleted, Undefined,<br/>and expired entries"]
+    G --> B{"Over entry or<br/>byte budget?"}
+    B -->|no| Done[Pass done]
+    B -->|yes| L["Evict from cold end of LRU,<br/>skipping dirty and intent entries"]
+    L --> F{"Batch limit hit and<br/>still over budget?"}
+    F -->|no| Done
+    F -->|yes| Q[Schedule follow-up pass]
+```
 
 ## When Collection Runs
 
@@ -52,7 +54,7 @@ Collection pressure is based on:
 
 The byte estimate is intentionally approximate. It includes key text, value bytes, fixed entry overhead, revision metadata, revision value bytes, and MVCC metadata.
 
-Memory limits are per key/value actor in each durability ring, not per Raft partition. `KeyValueWorkers` determines actor count; one actor can own keys from multiple partitions and a partition can span actors. These approximate budgets are collection thresholds rather than hard heap caps. Tune actor count and cache budgets against observed residency; adding partitions alone does not add an actor budget.
+Memory limits are per key/value actor in each durability ring (the separate set of actors for persistent keys and for ephemeral keys), not per Raft [partition](/docs/glossary/#partition). `KeyValueWorkers` determines actor count; one actor can own keys from multiple partitions and a partition can span actors. These approximate budgets are collection thresholds rather than hard heap caps. Tune actor count and cache budgets against observed residency; adding partitions alone does not add an actor budget.
 
 ## Phase 1: Garbage Reclamation
 
@@ -62,11 +64,11 @@ Every collection pass first removes entries that are safe to reclaim without con
 - entries in `Undefined` state
 - entries whose expiration timestamp is set and has passed
 
-Entries with an active write intent or replication intent are skipped. Kahuna does not evict objects currently participating in local mutation or replication work.
+Entries with an active [write intent](/docs/glossary/#write-intent) or replication intent are skipped. Kahuna does not evict objects currently participating in local mutation or replication work.
 
 Kahuna keeps auxiliary structures for this work:
 
-- Deleted and undefined entries are tracked through a tombstone queue. The collector drains the queue and re-checks the current entry before removing it, so a key that was deleted and later recreated is not removed accidentally.
+- Deleted and undefined entries are tracked through a [tombstone](/docs/glossary/#tombstone) queue. The collector drains the queue and re-checks the current entry before removing it, so a key that was deleted and later recreated is not removed accidentally.
 - Expiring entries are tracked in an expiry heap ordered by expiration time. The collector pops expired entries until it reaches the first future expiration, so cleanup work is proportional to the number of expired keys instead of the number of cached keys.
 
 This phase is bounded by `CollectBatchMax`. If the actor is still over budget after the pass reaches its batch limit, the actor schedules a follow-up collection.
@@ -99,7 +101,7 @@ Eviction is not the only way Kahuna reduces memory. Revision and transaction met
 - If an MVCC snapshot hold is active, trimming also keeps the boundary revision at or before the protective registered-hold floor.
 - When a transaction commits, rolls back, or releases a lock, its MVCC snapshot is removed and expired sibling snapshots are cleaned up.
 
-This is important for hot keys. A hot key may never be selected by LRU, but its revision or transaction metadata can still grow. Inline trimming lets Kahuna reduce memory without scanning the entire store or evicting the current value. Snapshot holds protect a boundary revision in memory; unflushed revisions can add more. Persistent history keeps the boundary and all newer revisions until the protective floor advances.
+This matters for hot keys. A hot key may never be selected by LRU, but its revision or transaction metadata can still grow. Inline trimming lets Kahuna reduce memory without scanning the entire store or evicting the current value. Snapshot holds protect a boundary revision in memory; unflushed revisions can add more. Persistent history keeps the boundary and all newer revisions until the protective floor advances.
 
 | Setting | Meaning | Default |
 |---------|---------|---------|
@@ -107,14 +109,21 @@ This is important for hot keys. A hot key may never be selected by LRU, but its 
 
 Persistent revision cleanup is also clamped by the protective registered-hold floor. While a hold remains registered, including after lease expiry until replicated purge or release, the persistent backend must keep the boundary revision and all newer revisions, even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise prune them.
 
+## Persistent Revision Pruning
+
+These rules govern the destructive cleanup of persistent revision history.
+
+### Pruning Confirmation
+
+Destructive revision cleanup confirms local system-partition application before sampling the protective hold floor. Failure skips the pass (`kahuna.snapshot_floor.prune_skipped_unconfirmed_total`). Acquire overlapping a local prune generation returns `MustRetry`; this is not a cluster-wide atomic barrier and cannot restore already-deleted history. See [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/#acquire-and-prune-races).
+
+### Idle RocksDB Revision Sweeps
+
+After a complete clean sweep, RocksDB can skip later backend-wide revision-pruning cycles while no relevant state has changed. New writes, retention settings, snapshot-floor changes, or reaching the next age-expiry frontier reopen sweep work. `kahuna.persistence.revision_prune.sweep_idle_total` counts skipped idle cycles. Quiescence avoids repeated scans; it does not disable configured retention or remove snapshot-hold protection.
+
 ## Persistent vs Ephemeral Keys
 
-Persistent and ephemeral keys use the same in-memory key/value collector, but eviction has different consequences:
-
-- **Persistent keys** can be reloaded from durable storage if needed. Eviction removes the memory copy, not the persisted value.
-- **Ephemeral keys** are stored only in memory. Eviction removes the value because there is no durable backing store.
-
-For this reason, ephemeral durability is best for temporary state such as caches, sessions, and short-lived coordination data. Persistent durability should be used when data must survive eviction or restart.
+Persistent and ephemeral keys use the same in-memory key/value collector, but eviction only drops the memory copy of a persistent key, while it removes an ephemeral key for good; see [Durability Levels](/docs/architecture/durability-levels/).
 
 ## Reads, Scans, and Cache Reloads
 
@@ -123,6 +132,8 @@ Latest point gets first try a quiet resident published head after leadership con
 Large ordered scans use paginated range reads. They merge in-memory and on-disk state while carrying a consistent snapshot across pages. Keys that are read from disk during a large scan are not forced back into the cache, so full-table or large-prefix iteration does not flood the cache or disturb hot-key recency.
 
 Non-paginated prefix and bucket scans return the matching set in one call and are capped. They are intended for small, known-bounded prefixes. Use paginated range scans for large or unbounded iteration.
+
+For per-page read amplification, see [Range-Scan Observations](/docs/internals/range-scan-observations/). A missing page observation means unknown rather than zero.
 
 ## Locks and Sequences
 
@@ -154,14 +165,4 @@ When a key/value collector pass evicts entries, Kahuna logs a summary with the n
 
 ## Log Compaction
 
-Key eviction is separate from Raft WAL compaction. Each Raft group also compacts its WAL through [Kommander](https://github.com/kahunakv/kommander), removing old log entries that are no longer needed after checkpointing. WAL compaction reduces disk usage; key/value eviction reduces in-memory cache usage.
-
-## Pruning Confirmation
-
-Destructive revision cleanup confirms local system-partition application before sampling the protective hold floor. Failure skips the pass (`kahuna.snapshot_floor.prune_skipped_unconfirmed_total`). Acquire overlapping a local prune generation returns `MustRetry`; this is not a cluster-wide atomic barrier and cannot restore already-deleted history. See [Snapshot Holds](/docs/distributed-keyvalue-store/snapshot-holds/#acquire-and-prune-races).
-
-## Idle RocksDB Revision Sweeps
-
-After a complete clean sweep, RocksDB can skip later backend-wide revision-pruning cycles while no relevant state has changed. New writes, retention settings, snapshot-floor changes, or reaching the next age-expiry frontier reopen sweep work. `kahuna.persistence.revision_prune.sweep_idle_total` counts skipped idle cycles. Quiescence avoids repeated scans; it does not disable configured retention or remove snapshot-hold protection.
-
-For per-page read amplification, see [Range-Scan Observations](/docs/internals/range-scan-observations/). A missing page observation means unknown rather than zero.
+Key eviction is separate from Raft [write-ahead log (WAL)](/docs/glossary/#write-ahead-log-wal) compaction. Each Raft group also compacts its WAL through [Kommander](https://github.com/kahunakv/kommander), removing old log entries that are no longer needed after checkpointing. WAL compaction reduces disk usage; key/value eviction reduces in-memory cache usage.

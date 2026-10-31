@@ -2,23 +2,23 @@
 
 ## Overview
 
-Kahuna uses **Hybrid Logical Clocks (HLCs)** for causally ordered timestamps across a distributed cluster. HLCs combine physical time with a logical counter, giving Kahuna timestamps that move forward even when several events happen in the same millisecond or when clocks are slightly skewed.
+Every node has its own clock, and clocks drift apart. If Kahuna ordered events by each node's wall clock alone, a later write on a node with a slow clock could look older than an earlier write on another node. **Hybrid Logical Clocks (HLCs)** solve this: their timestamps stay close to real time, but they always move forward and respect cause and effect, so Kahuna can order events across nodes safely.
 
-Why this matters: every node has its own clock, and clocks drift apart. If Kahuna ordered events by each node's wall clock alone, a later write on a node with a slow clock could look older than an earlier write on another node. HLC timestamps stay close to real time, but they always move forward and respect cause and effect, so they can order events across nodes safely.
+An HLC combines physical time with a logical counter. Timestamps keep moving forward even when several events happen in the same millisecond or when clocks are slightly skewed.
 
 You meet HLC timestamps directly when you use historical `AS OF` reads, snapshot holds, point-in-time restore targets, and the `hlc()` script function. Their physical part is Unix epoch milliseconds, so you can use a wall-clock time as a target.
 
 HLCs are used for:
 
 - transaction IDs
-- MVCC visibility
+- [MVCC](/docs/glossary/#mvcc) visibility (which stored version of a key a read sees)
 - historical `AS OF` reads
 - snapshot holds
 - leases and expiration metadata
 - replication and restore metadata
 - durable transaction decision records and completion receipts
 
-Raft remains the source of truth for committed ordering inside each partition. HLCs provide the time model used by MVCC and cross-partition coordination.
+[Raft](/docs/glossary/#raft) remains the source of truth for committed ordering inside each partition, and actors serialize local state on each node. HLCs provide the time model used by MVCC and cross-partition coordination.
 
 ## HLC Format in Kahuna
 
@@ -45,7 +45,7 @@ HLCs support transaction behavior in several places:
 - **On commit**: Participant writes receive committed HLC metadata through the partition commit path.
 - **On recovery**: Durable decision records and completion receipts are keyed by transaction HLC.
 
-Snapshot isolation and serializable behavior come from the combination of HLCs, MVCC, locks, read validation, write intents, two-phase commit, and Raft ordering.
+Transaction isolation comes from the combination of HLCs, MVCC, locks, read validation, [write intents](/docs/glossary/#write-intent), [two-phase commit](/docs/glossary/#two-phase-commit-2pc), and Raft ordering. Which guarantee you get depends on the locking mode and read options; see [Transaction Reads and Locks](/docs/distributed-keyvalue-store/read-and-lock-semantics/).
 
 ## MVCC Visibility
 
@@ -61,7 +61,9 @@ Kahuna uses HLC metadata as version timestamps for key/value records. A simplifi
 
 MVCC reads filter out versions that are in the future relative to the transaction timestamp or requested snapshot HLC. Historical reads such as `GET key AS OF <timestamp>` return the newest revision whose commit timestamp is at or before the requested time.
 
-Predicate safety, such as avoiding phantoms in bucket or range reads, also depends on prefix/range locks under pessimistic transactions or validation under optimistic transactions.
+On the write path, the leader applies a committed mutation with its HLC metadata, followers apply the same committed operation from the Raft log, and later MVCC and snapshot reads use that metadata to decide visibility.
+
+HLC visibility alone does not prevent phantoms: keys that another transaction adds to a bucket or range after you read it. Preventing them depends on prefix/range locks under pessimistic transactions or validation under optimistic transactions.
 
 ## Conflict Detection
 
@@ -79,32 +81,12 @@ This gives applications explicit conflict behavior rather than silently choosing
 
 ## Locks, Expiration, and Sequencing
 
-HLCs also appear in coordination metadata:
+HLCs also appear in coordination metadata, so time-based behavior does not depend on perfectly synchronized clocks:
 
 - **Leases** use HLC-based expiration metadata.
-- **Fencing tokens** are ordered so protected resources can reject stale lock holders.
 - **Sequences** store update metadata and idempotency records through the key/value subsystem.
 
-HLCs help Kahuna reason about time-based behavior without depending on perfectly synchronized clocks.
-
-## Example: HLC Write Flow
-
-1. A client sends a write to a Kahuna node.
-2. Kahuna routes the write to the current partition leader.
-3. The leader proposes the mutation through Raft.
-4. Once the log entry commits, Kahuna applies the mutation with HLC metadata.
-5. Followers restore the same committed operation from the Raft log.
-6. Future MVCC or snapshot reads use the HLC metadata to decide whether the version is visible.
-
-## Design Advantages
-
-| Benefit | Description |
-|---------|-------------|
-| **Causality preservation** | Keeps related events ordered even when wall-clock time is not enough. |
-| **Clock skew tolerance** | Avoids dependence on perfect clock synchronization. |
-| **Unified time model** | Used across transactions, leases, snapshots, and replication metadata. |
-| **Historical reads** | Lets clients ask what value was visible at a specific HLC timestamp. |
-| **Recovery metadata** | Identifies durable transaction decisions and completion receipts. |
+[Fencing tokens](/docs/glossary/#fencing-token) are not HLC timestamps. They are per-lock counters that increase each time the lock changes hands, so protected resources can reject stale lock holders.
 
 ## HLC Timeline
 
@@ -123,7 +105,3 @@ sequenceDiagram
 ```
 
 Node 2 never issues a timestamp lower than one it has already seen, so the replicated write stays ordered before everything Node 2 does next, even though Node 2's wall clock is behind.
-
-## Conclusion
-
-HLCs are a core part of Kahuna's consistency model, but they are not the only mechanism. Raft provides committed ordering, actors serialize local state, MVCC preserves historical versions, and the transaction coordinator handles cross-partition correctness.
