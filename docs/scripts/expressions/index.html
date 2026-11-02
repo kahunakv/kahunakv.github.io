@@ -12,7 +12,7 @@
 <link rel="search" type="application/opensearchdescription+xml" title="Kahuna" href="/opensearch.xml">
 
 <meta name="algolia-site-verification" content="CCAE52A1C7A7537A"><link rel="stylesheet" href="/assets/css/styles.5c51681e.css">
-<script src="/assets/js/runtime~main.44c36eb9.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.4b8b05d1.js" defer="defer"></script>
 <script src="/assets/js/main.ee9b5615.js" defer="defer"></script>
 </head>
 <body>
@@ -38,7 +38,7 @@
 <div class="language-kahuna codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-kahuna codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#393A34"><span class="token keyword" style="color:#00009f">let</span><span class="token plain"> </span><span class="token variable" style="color:#36acaa">result</span><span class="token plain"> </span><span class="token operator" style="color:#393A34">=</span><span class="token plain"> </span><span class="token punctuation" style="color:#393A34">(</span><span class="token number" style="color:#36acaa">10</span><span class="token plain"> </span><span class="token operator" style="color:#393A34">+</span><span class="token plain"> </span><span class="token number" style="color:#36acaa">5</span><span class="token punctuation" style="color:#393A34">)</span><span class="token plain"> </span><span class="token operator" style="color:#393A34">*</span><span class="token plain"> </span><span class="token number" style="color:#36acaa">2</span><br></div></code></pre></div></div>
 <p>The value of <code>result</code> is <code>30</code>.</p>
 <p>Dividing two integers gives an integer, truncated toward zero: <code>7 / 2</code> is <code>3</code> and <code>-7 / 2</code> is <code>-3</code>. Make one operand a float to keep the fraction: <code>7 / 2.0</code> is <code>3.5</code>.</p>
-<p>Division by zero is a script error. Numeric equality is exact; use <a class="" href="/docs/scripts/functions/math/"><code>nearly_equals</code></a> when a floating-point calculation should compare with a tolerance.</p>
+<p>Division by zero, int64 overflow, and a float result that would be NaN or infinity are script errors. See <a class="" href="/docs/scripts/semantics/#numbers">Numbers</a> for exact bounds and failure behavior. Numeric equality is exact; use <a class="" href="/docs/scripts/functions/math/"><code>nearly_equals</code></a> when a floating-point calculation should compare with a tolerance.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="logical-operators">Logical Operators<a href="#logical-operators" class="hash-link" aria-label="Direct link to Logical Operators" title="Direct link to Logical Operators" translate="no">​</a></h3>
 <p>Combine boolean conditions:</p>
 <ul>

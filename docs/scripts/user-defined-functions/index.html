@@ -12,7 +12,7 @@
 <link rel="search" type="application/opensearchdescription+xml" title="Kahuna" href="/opensearch.xml">
 
 <meta name="algolia-site-verification" content="CCAE52A1C7A7537A"><link rel="stylesheet" href="/assets/css/styles.5c51681e.css">
-<script src="/assets/js/runtime~main.44c36eb9.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.4b8b05d1.js" defer="defer"></script>
 <script src="/assets/js/main.ee9b5615.js" defer="defer"></script>
 </head>
 <body>
@@ -47,6 +47,7 @@
 <li class=""><code>maxArgs</code> must be <code>-1</code> for variadic functions or greater than or equal to <code>minArgs</code>.</li>
 <li class="">Registration must finish before the node is built.</li>
 </ul>
+<p><code>max_int</code>, <code>min_int</code>, <code>max_double</code>, and <code>min_double</code> are reserved built-in names starting in Kahuna 1.15.0. An extension registered under one of these names must be renamed before upgrading.</p>
 <p>Prefix names with an application tag, such as <code>acme_crc32</code>, so a future built-in function does not collide with your scripts.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="cluster-rules">Cluster Rules<a href="#cluster-rules" class="hash-link" aria-label="Direct link to Cluster Rules" title="Direct link to Cluster Rules" translate="no">​</a></h2>
 <p>Function registrations are not replicated. Every node that may coordinate scripts must load the same function set.</p>
@@ -62,12 +63,13 @@
 <li class="">Keep captured state immutable and thread-safe.</li>
 <li class="">Make functions idempotent because transactions can be retried.</li>
 <li class="">Prefer deterministic results. Use <code>context.ReadTimestamp</code> or <code>hlc()</code> instead of wall-clock reads when ordering matters.</li>
+<li class="">Return only finite doubles, including inside arrays. NaN or infinity fails the call with <code>Errored</code>.</li>
 <li class="">Bound returned strings and byte arrays because returned values can be replicated through <a class="" href="/docs/glossary/#raft">Raft</a>.</li>
 </ul>
 <p>Functions cannot appear in key position. Build or choose key names in the client and pass them as placeholders.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="failures">Failures<a href="#failures" class="hash-link" aria-label="Direct link to Failures" title="Direct link to Failures" translate="no">​</a></h2>
 <p>Function failures roll back the transaction and return <code>Errored</code>.</p>
-<table><thead><tr><th>Cause</th><th>Result</th></tr></thead><tbody><tr><td>Wrong argument count</td><td><code>Invalid number of arguments for &#x27;name&#x27; function</code></td></tr><tr><td><code>context.Fail(...)</code> or <code>KahunaFunctionException</code></td><td><code>Function &#x27;name&#x27; failed: reason</code></td></tr><tr><td>Other exception</td><td>The exception type is included and logged.</td></tr><tr><td>Function missing on this node</td><td>The error names the node and function fingerprint.</td></tr></tbody></table>
+<table><thead><tr><th>Cause</th><th>Result</th></tr></thead><tbody><tr><td>Wrong argument count</td><td><code>Invalid number of arguments for &#x27;name&#x27; function</code></td></tr><tr><td><code>context.Fail(...)</code> or <code>KahunaFunctionException</code></td><td><code>Function &#x27;name&#x27; failed: reason</code></td></tr><tr><td>NaN or infinity returned, including in an array</td><td><code>Function &#x27;name&#x27; returned a value that is not a finite number</code></td></tr><tr><td>Other exception</td><td>The exception type is included and logged.</td></tr><tr><td>Function missing on this node</td><td>The error names the node and function fingerprint.</td></tr></tbody></table>
 <p>Slow functions are not aborted by the function dispatcher. The transaction timeout is the backstop.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="observability">Observability<a href="#observability" class="hash-link" aria-label="Direct link to Observability" title="Direct link to Observability" translate="no">​</a></h2>
 <table><thead><tr><th>Instrument</th><th>Meaning</th></tr></thead><tbody><tr><td><code>kahuna.script_functions.registered</code></td><td>Registered function count, tagged with node and fingerprint.</td></tr><tr><td><code>kahuna.script_functions.calls</code></td><td>Calls per function since process start.</td></tr><tr><td><code>kahuna.script_functions.elapsed_ms</code></td><td>Total time spent inside each function.</td></tr></tbody></table>
