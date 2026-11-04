@@ -84,6 +84,8 @@ kahuna-server \
 - `maxArgs` must be `-1` for variadic functions or greater than or equal to `minArgs`.
 - Registration must finish before the node is built.
 
+`max_int`, `min_int`, `max_double`, and `min_double` are reserved built-in names starting in Kahuna 1.15.0. An extension registered under one of these names must be renamed before upgrading.
+
 Prefix names with an application tag, such as `acme_crc32`, so a future built-in function does not collide with your scripts.
 
 ## Cluster Rules
@@ -108,6 +110,7 @@ Different fingerprints mean the nodes loaded different extension builds.
 - Keep captured state immutable and thread-safe.
 - Make functions idempotent because transactions can be retried.
 - Prefer deterministic results. Use `context.ReadTimestamp` or `hlc()` instead of wall-clock reads when ordering matters.
+- Return only finite doubles, including inside arrays. NaN or infinity fails the call with `Errored`.
 - Bound returned strings and byte arrays because returned values can be replicated through [Raft](/docs/glossary/#raft).
 
 Functions cannot appear in key position. Build or choose key names in the client and pass them as placeholders.
@@ -120,6 +123,7 @@ Function failures roll back the transaction and return `Errored`.
 |-------|--------|
 | Wrong argument count | `Invalid number of arguments for 'name' function` |
 | `context.Fail(...)` or `KahunaFunctionException` | `Function 'name' failed: reason` |
+| NaN or infinity returned, including in an array | `Function 'name' returned a value that is not a finite number` |
 | Other exception | The exception type is included and logged. |
 | Function missing on this node | The error names the node and function fingerprint. |
 

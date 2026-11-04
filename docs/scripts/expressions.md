@@ -38,7 +38,7 @@ The value of `result` is `30`.
 
 Dividing two integers gives an integer, truncated toward zero: `7 / 2` is `3` and `-7 / 2` is `-3`. Make one operand a float to keep the fraction: `7 / 2.0` is `3.5`.
 
-Division by zero is a script error. Numeric equality is exact; use [`nearly_equals`](/docs/scripts/functions/math/) when a floating-point calculation should compare with a tolerance.
+Division by zero, int64 overflow, and a float result that would be NaN or infinity are script errors. See [Numbers](/docs/scripts/semantics/#numbers) for exact bounds and failure behavior. Numeric equality is exact; use [`nearly_equals`](/docs/scripts/functions/math/) when a floating-point calculation should compare with a tolerance.
 
 ### Logical Operators
 

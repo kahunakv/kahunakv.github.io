@@ -101,6 +101,8 @@ The leave response includes:
 
 `--raft-decommission-drain-timeout` bounds how long the leave waits for evacuation. If it times out, the node stays in the roster, already-moved replicas stay moved, and retrying resumes the drain.
 
+`Evicted` (HTTP 503, retryable) means the cluster removed the node as a dead member while its leave request was running. Its replicas were not evacuated. Keep the process running so it can rejoin, then retry the leave; an empty roster entry alone is not confirmation of a completed drain.
+
 Only one drain runs at a time. A second leave can return `RefusedDrainInProgress`; remove nodes sequentially during scale-down.
 
 ## Zones

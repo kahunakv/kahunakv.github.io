@@ -57,6 +57,7 @@ const sidebars = {
         'distributed-keyvalue-store/snapshot-holds',
         'distributed-keyvalue-store/key-range-sharding',
         'distributed-keyvalue-store/load-based-range-splitting',
+        'distributed-keyvalue-store/request-limits',
       ],
     },
     {
@@ -111,6 +112,7 @@ const sidebars = {
         'kubernetes-operator',
         'server-configuration',
         'node-transport-security',
+        'admin-operations-authorization',
         'status-dashboard',
         'backend-io-scheduler',
         'replica-placement',

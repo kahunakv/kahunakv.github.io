@@ -22,6 +22,8 @@ PITR restore reconstructs committed key/value state. Locks are runtime coordinat
 
 :::
 
+When admin authorization is enabled, backup creation, GC, chain validation, and restore require an [admin key](/docs/admin-operations-authorization/). Backup listings and chain reads remain ungated.
+
 ## Runbook
 
 The usual cycle, from configuration to a running node on recovered data. The sections below explain each step.

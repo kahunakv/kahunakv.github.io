@@ -24,7 +24,21 @@ end
 
 ## Numbers
 
+These numeric rules describe Kahuna 1.15.0. Earlier versions can wrap integer results or accept non-finite floats.
+
 Division by zero is a script error for integers, floats, and numeric strings.
+
+### Overflow and Finite Values
+
+Integer `+`, `-`, `*`, `/`, unary minus, and `abs` must stay within the signed 64-bit range. Overflow returns a script error with the expression's line; it never wraps or automatically promotes the result to a float. For example, `max_int() + 1`, `min_int() / -1`, and `abs(min_int())` fail.
+
+Floats must be finite. Arithmetic, `pow`, literals, casts, and user-defined function results cannot introduce NaN or infinity, including inside arrays. `pow(10, 400)` and `pow(-1, 0.5)` are errors. Floating-point arithmetic can still round or underflow to zero; a nonzero float **literal** that parses as zero is refused instead. An integer or float literal outside its type's range is also refused.
+
+Use [`max_int()`, `min_int()`, `max_double()`, and `min_double()`](/docs/scripts/functions/math/#numeric-limits) to check headroom before calculating. The smallest integer has no literal form: the minus sign is an operator, and its magnitude exceeds the largest positive integer. Write `min_int()` instead.
+
+Stored text such as `"NaN"` remains readable and comparable as text. It cannot be converted to a script number. Numeric parsing and formatting use invariant culture: `.` is the decimal separator and thousands separators are not accepted in numeric strings.
+
+### Exact Comparisons
 
 Numeric equality is exact. `1 == 1.0` is `true`, and `1 == 1.0009` is `false`:
 
@@ -36,11 +50,15 @@ return 1 == 1.0
 return 1 == 1.0009
 ```
 
+Mixed integer/float comparisons also use exact values, without first rounding the integer to a float. Thus `9007199254740993 > 9007199254740992.0` is `true`, and equality is `false`. This applies to ordering, equality, `switch`, `min`, and `max`.
+
 Use `nearly_equals(a, b, tolerance)` when a calculation needs a tolerance:
 
 ```kahuna
 return nearly_equals(1, 1.0009, 0.001)
 ```
+
+### Literals
 
 Integer literals can be decimal or hexadecimal:
 
@@ -57,6 +75,20 @@ A minus sign is an operator, not part of the literal:
 let delta = -amount
 let result = 5-3
 ```
+
+### Numeric Statement Options
+
+Statement options reject fractions, negative values where prohibited, and values that do not fit their target range; they never narrow a value silently.
+
+| Option | Accepted value |
+|--------|----------------|
+| `set … ex ms` / `eset … ex ms` | Integer milliseconds from `0` to `2147483647`; `0` means no expiry |
+| `extend key ms` / `eextend key ms` | Integer literal from `0` to `2147483647` |
+| `get key at revision` / `exists key at revision` (and ephemeral forms) | Non-negative integer literal |
+| `get … as of ms` | Whole-number Unix epoch milliseconds greater than zero, within int64 range |
+| `set … cmprev revision` / `eset … cmprev revision` | Whole number within int64 range |
+
+`as of` and `cmprev` accept integers, whole-number floats, or strings containing an integer. `extend` and `at` also accept hexadecimal integer literals, such as `extend key 0xEA60` for 60,000 ms.
 
 ## Ranges
 
@@ -258,7 +290,7 @@ This returns `"matched"` without dividing by zero. Numeric strings can compare w
 
 ## Array JSON Encoding
 
-`to_json`, and the conversion of nested arrays in a script result, write `NaN`, `Infinity`, and `-Infinity` as the JSON strings `"NaN"`, `"Infinity"`, and `"-Infinity"`. Top-level returned arrays still become a list of result values, with any nested array represented by its JSON text.
+`to_json` serializes arrays, including nested arrays. Numeric values must be finite; a non-finite value returned by an extension is rejected before JSON conversion. Top-level returned arrays become a list of result values, with any nested array represented by its JSON text.
 
 :::note
 The encoder is iterative, so deeply nested arrays do not depend on recursive serialization. Unpaired UTF-16 surrogates become U+FFFD. The encoder does not make a scalar arithmetic error valid or remove the array and depth limits.

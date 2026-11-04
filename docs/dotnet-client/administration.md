@@ -2,6 +2,8 @@
 
 Use these APIs when you operate a cluster from code instead of a terminal: an internal admin tool, a runbook script, a deployment pipeline, or a scheduled backup job. The [.NET client](/docs/dotnet-client/) exposes the same operator tasks as the [Kahuna CLI](/docs/kahuna-cli/): cluster membership and [replica](/docs/glossary/#replica-and-replication-factor) placement, key-range administration, and backups with [point-in-time restore](/docs/glossary/#point-in-time-recovery-pitr). These calls are not routed by key. Keep them out of request paths.
 
+When servers require an admin key, configure `KahunaOptions.AdminApiKey`. See [Admin Operations Authorization](/docs/admin-operations-authorization/) for setup and protected operations. Read-only views do not require the key.
+
 ## Choosing the Target Node
 
 Range administration, cluster placement, and leave calls accept an optional `nodeUrl` argument. Pass it when the call must reach one specific node.
@@ -73,7 +75,7 @@ if (left.Drained)
 
 When the client was created with multiple endpoints, `nodeUrl` is required so the call does not decommission an arbitrary round-robin target.
 
-See [Replication Factor and Replica Placement](/docs/replica-placement/) for the server-side behavior behind these APIs.
+`Outcome == "Evicted"` is retryable: the node was evicted during its leave attempt without evacuating replicas. Keep it running until it rejoins, then retry. See [Replication Factor and Replica Placement](/docs/replica-placement/) for the server-side behavior behind these APIs.
 
 ## Key-Range Administration
 

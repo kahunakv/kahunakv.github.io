@@ -227,6 +227,14 @@ Finalization proceeds in this order:
 
 A retryable finalization failure releases the attempt slot, but it does not reopen the session to new reads or writes. The caller should retry commit or rollback with the same handle.
 
+## Session Ownership After Leader Changes
+
+An interactive session stays in memory on the node that began it; it does not migrate with the coordinator partition's leadership. A node holding the session can serve it after stepping down. When the current coordinator leader lacks the session, it probes peers for the owner before answering commit, rollback, close, working-set queries, operation registration, or completion.
+
+The probe also runs when a non-leader forwarded the request once, such as a commit sent through a data leader. The forwarding node does not probe, and deeper hops answer locally, bounding the search to one round of peer probes. An owner accepts an inbound completion regardless of current leadership, so it does not send the completion back to the new leader.
+
+This preserves routing to a reachable session owner; it does not replicate the active session or recover it after owner process loss. A participant leadership change can still invalidate transaction locks and abort commit. Retry uncertain finalization with the same handle, as described in [Transactions](/docs/distributed-keyvalue-store/transactions/).
+
 ## Commit Paths
 
 `TransactionCoordinator.TwoPhaseCommit` splits the frozen working set by durability:

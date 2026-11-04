@@ -108,7 +108,7 @@ These details explain how the placement controller converges. The operator proce
 
 ### Legacy Full-Replication Conversion
 
-Kahuna, pinned to Kommander 1.11.3, can convert legacy full-replication partitions when a positive effective replication factor and the placement rebalancer are enabled. Each eligible active partition with an empty replica set first receives an explicit set of **all committed roster voters**. This preserves its existing quorum; it does not immediately replace that quorum with an arbitrary factor-sized subset. Normal placement trims then remove surplus replicas one step at a time toward the target. Conversion is bounded by `MaxReplicaMovesPerPass` (`--raft-max-replica-moves-per-pass`), and a failed map commit is retried on a later pass.
+Kahuna, pinned to Kommander 1.12.3, can convert legacy full-replication partitions when a positive effective replication factor and the placement rebalancer are enabled. Each eligible active partition with an empty replica set first receives an explicit set of **all committed roster voters**. This preserves its existing quorum; it does not immediately replace that quorum with an arbitrary factor-sized subset. Normal placement trims then remove surplus replicas one step at a time toward the target. Conversion is bounded by `MaxReplicaMovesPerPass` (`--raft-max-replica-moves-per-pass`), and a failed map commit is retried on a later pass.
 
 With rebalancing disabled the partitions stay fully replicated and a warning explains why conversion has not begun. Full replication with an effective factor of zero remains an intentional mode, not pending migration.
 
@@ -130,6 +130,8 @@ Placement accepts restarted nodes' fresh load-report incarnations even when thei
 
 Requesting leave does not immediately stop the node from participating in elections: it remains eligible while membership removal is being committed, so it can help elect the partition 0 leader needed to finish that removal. A refused or failed API leave leaves the node campaigning while it remains a member. After removal commits, candidacy is suppressed.
 
+An eviction during a leave request returns `Evicted`, not a confirmed decommission: the node re-admits itself and the caller must retry after rejoin. The committed roster records whether a departure was an eviction or a requested removal, so an eviction does not permanently suppress rejoin. See [Replica Placement](/docs/replica-placement/) for the operational response.
+
 Automatic rejoin is suppressed while departure remains in force. A refusal that committed nothing, or a confirmed rollback of a decommission drain to `Voter`, releases that suppression. A newer committed roster naming the node `Voter` also confirms rollback when its acknowledgement was lost. A timed-out removal without such proof can still commit later, so suppression remains. Verify committed membership after an uncertain response and finish decommissioning explicitly. Process shutdown follows its own teardown path and suppresses candidacy after its removal attempt ends; disposal alone is not evidence that membership removal committed.
 
 ## Leader Changes
@@ -148,7 +150,7 @@ For durable transaction decisions, the node that becomes leader for the anchor p
 
 ### Leadership Transfer
 
-A leadership transfer, such as one suggested by the [leader balancer](/docs/leader-balancing/), is best-effort. Winning an election is not enough for the target to serve: it must drain committed log entries and pass the leadership barrier, and a contained or incomplete target can relinquish immediately. Kommander (since 1.9.7; Kahuna pins 1.11.3) reads the WAL on each promotion-drain attempt, so a readable entry is not held up solely by its completion callback being queued behind promotion. Entries that remain unreadable still prevent promotion.
+A leadership transfer, such as one suggested by the [leader balancer](/docs/leader-balancing/), is best-effort. Winning an election is not enough for the target to serve: it must drain committed log entries and pass the leadership barrier, and a contained or incomplete target can relinquish immediately. Kommander (since 1.9.7; Kahuna pins 1.12.3) reads the WAL on each promotion-drain attempt, so a readable entry is not held up solely by its completion callback being queued behind promotion. Entries that remain unreadable still prevent promotion.
 
 ## Apply Fingerprints
 

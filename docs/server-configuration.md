@@ -50,6 +50,14 @@ See [Node Transport Security](/docs/node-transport-security/) for certificate la
 | `--trusted-client-cert-thumbprint` | SHA-256 thumbprints of peer certificates this node accepts in `MutualTls` mode. | none |
 | `--trusted-server-cert-thumbprint` | SHA-256 thumbprints of peer server certificates this node pins when dialing peers. | system trust store |
 
+## Admin Operations Authorization
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--admin-api-key-file` | File of admin keys, one per line, each at least 32 characters. Requires a key for node removal, replication-factor changes, range-map changes, backups, backup GC/validation, and restore. Loaded at startup; invalid files stop startup. | none (admin operations open) |
+
+See [Admin Operations Authorization](/docs/admin-operations-authorization/) for client credentials, scope, and rotation. This is independent of node mTLS.
+
 ## Health and Readiness
 
 Kahuna exposes `GET /v1/cluster/health` as a readiness endpoint for load balancers and orchestrators. It returns HTTP `200` only when the node has completed cluster initialization and has a serving cluster role. It returns HTTP `503` while the node is still initializing or is not a member.
@@ -180,11 +188,28 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--extension-option` | Settings for extension storage engines as `key=value` pairs after one flag, for example `--extension-option acme.mode=fast acme.region=west`. Values may contain `=`; duplicate or empty keys stop startup. Kahuna passes the map to storage provider contexts without interpreting it. | none |
 | `--function-slow-warn-ms` | Log a warning when a user-defined script function takes longer than this many milliseconds. `0` disables the warning. | `50` |
 | `--revisions-to-cache` | Recent revisions retained per key in memory; must be at least 1. Older persistent revisions can fall back to disk; older ephemeral revisions have no disk history. | `4` |
+| `--trim-flushed-revisions` | Drop flushed persistent revisions from the resident archive, preserving unflushed history and the snapshot-hold boundary. Historical reads may need more disk I/O. Ephemeral archives are unchanged. | disabled |
+| `--pinned-value-payloads` | Copy qualifying committed value payloads to the pinned object heap to avoid later GC relocation; adds an allocation and copy per retained value. | disabled |
+| `--pinned-value-payload-min-bytes` | Smallest payload copied when pinned value payloads are enabled, in bytes. | `256` |
 | `--cache-entry-ttl` | Age threshold used by lock cleanup and legacy cleanup paths, in seconds. Key/value LRU eviction is budget-based. | `1800` |
 | `--cache-entries-to-remove` | Maximum entries removed by cleanup paths that use this cap. Values less than or equal to `0` are normalized from the key/value collection batch size. | `100` |
 | `--dirty-objects-writer-delay` | Delay between dirty object writer flush passes, in milliseconds. | `200` |
 | `--checkpoint-interval` | Period, in seconds, at which dirty partitions checkpoint after flushes so the Raft WAL retention floor can advance and old log entries can compact. | `30` |
 | `--fail-fast-on-oom` | Terminate the process on `OutOfMemoryException` so an orchestrator restarts the node with a clean heap. Enabled by default; the server CLI cannot turn it off. | enabled |
+
+## Client Request Limits
+
+These bounds apply at REST/gRPC key/value entry points, including the client batch stream. `0` disables each bound. See [Key/Value Request Limits](/docs/distributed-keyvalue-store/request-limits/) for refusals, transaction accounting, and transport constraints.
+
+| Command Line Option | Description | Default Value |
+|---------------------|-------------|---------------|
+| `--max-key-bytes` | Maximum UTF-8 key size on set/set-many and transaction lock acquisition. | `16384` |
+| `--max-value-bytes` | Maximum value or compare-value payload on set/set-many, in bytes. | `4194304` |
+| `--max-batch-items` | Maximum items in a client set/delete/get/exists-many or many-lock call. Oversized batches are refused whole. | `20000` |
+| `--max-transaction-mutations` | Separate limits for written keys and acquired locks in client sessions and script transactions. | `20000` |
+| `--snapshot-hold-max-lease-ms` | Longest lease accepted on snapshot-hold acquire or renew, in milliseconds. | `86400000` (one day) |
+| `--snapshot-hold-max-per-holder` | Maximum snapshot holds registered by one holder. | `4096` |
+| `--snapshot-hold-max-total` | Maximum snapshot holds in the cluster registry. | `65536` |
 
 ## Key/Value Watch and History
 
@@ -239,6 +264,9 @@ These options tune automatic splitting and merging for key spaces registered wit
 | `--range-split-min-range-size` | Minimum number of keys each half must hold for an automatic split to proceed. | `10` |
 | `--range-split-settle-window` | Seconds a freshly split range must settle before it can split again. Must be at least `--raft-min-leader-stability-ms`. | `10` |
 | `--range-move-settle-timeout` | Maximum seconds a split or merge waits under quiesce for in-flight transactions in the moving range to decide and settle before cutover. Writes into the moving range are refused retryably during this window. `0` disables the wait. | `10` |
+| `--range-move-quiesce-ttl` | Maximum seconds a split/merge write fence may remain active. A move that exhausts the window refuses cutover with `QuiesceExpired`. Values below 1 second are raised to 1 second. | `30` |
+| `--raft-max-partitions` | Maximum data partitions, enforced by the system-partition leader. `0` is unbounded; otherwise must be at least `--initial-cluster-partitions`. Set consistently on all nodes. | `0` |
+| `--range-max-ranges-per-key-space` | Maximum ranges per key space. `0` removes the quota. A split at either capacity bound returns `PartitionLimitReached`. | `0` |
 | `--range-merge-min-size` | Key count below which adjacent ranges become eligible for automatic merge. `0` disables auto-merge. | `10` |
 | `--range-collection-interval` | Seconds between range split/merge sampling passes. Also affects key/value collection, prepared-intent recovery, and session range-lock renewal. | `60` |
 | `--range-split-load-threshold` | Sustained replicated write operations per second required before a range becomes a load-split candidate. `0` disables load-based auto-split. | `0` |

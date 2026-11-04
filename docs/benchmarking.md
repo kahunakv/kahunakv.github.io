@@ -112,8 +112,6 @@ TOTAL       3,593,871   29,948    7.1ms   17.7ms   21.2ms   46.6ms   151.9ms   3
 
 This persistent run completed 3,593,871 successful operations at 29,948 requests per second without errors or misses. Reads reached a 1.4 ms p99, while persistent writes reached a 63.2 ms p99 because they include the replicated consensus path ([Raft](/docs/glossary/#raft)) before success is returned.
 
-**Recorded:** September 2026 (docs commit `e0d919d6`), three nodes on local `127.0.0.1` endpoints with persistent durability. The hardware, storage and WAL backends, partition count, and Kahuna version of this run are not recorded.
-
 Use a longer measurement, such as `--warmup 10 --duration 60`, when establishing a performance baseline or comparing deployments.
 
 ## Workloads
@@ -233,8 +231,6 @@ Recent local memory benchmarks are useful when evaluating Kahuna for cache-like 
 
 Setup: one 8-core Apple Silicon machine, Kahuna server and benchmark client on the same host, cleartext gRPC, memory storage, memory [WAL](/docs/glossary/#write-ahead-log-wal), one [partition](/docs/glossary/#partition), concurrency 64, key space 10,000, 128-byte values. The Valkey reference is Valkey 9.1.2 with `valkey-benchmark -c 64`, no pipelining, on the same machine. These numbers are a same-machine comparison, not a universal throughput guarantee.
 
-**Recorded:** September 2026 (docs commit `e0d919d6`). The Kahuna version of this run is not recorded.
-
 | Workload | Kahuna result | Same-machine reference |
 |----------|---------------|------------------------|
 | Ephemeral fixed-window rate limiter | 194k-203k req/s, p50 284-289 us, p99 0.6-0.8 ms | Valkey Lua counter: 161k req/s as `EVAL`, 175k req/s as `EVALSHA` |
@@ -246,13 +242,52 @@ The rate-limit result uses the default gRPC request frames plus the single-key s
 
 Persistent replicated writes are a different class of benchmark because they include Raft [quorum](/docs/glossary/#quorum) replication and WAL durability. Use the persistent examples above when sizing durable state, and use these local memory results when comparing short-lived counters, temporary coordination state, or server-side script overhead.
 
+## Standalone Results With 1 KiB Values
+
+These runs use the same shape for every row so they compare with each other: one standalone node started with `scripts/run-standalone.sh`, memory storage and memory [WAL](/docs/glossary/#write-ahead-log-wal), eight [partitions](/docs/glossary/#partition), cleartext gRPC on `http://127.0.0.1:8083`, the `mixed` workload with 128 closed-loop workers, a key space of 100,000 keys, 1,024-byte values, a 5 s warmup and 30 s of measurement. Server and client ran on the same 8-core Apple Silicon laptop with 8 GB of memory, so the host was short of memory during the persistent runs; the multi-second maximums there are paging, not the server's own pause.
+
+```bash
+kahuna-bench -c http://127.0.0.1:8083 --workload mixed --duration 30 --warmup 5 \
+  --concurrency 128 --key-space 100000 --value-size 1024 --durability persistent
+```
+
+Persistent durability (every write goes through Raft before it is answered):
+
+| Operation | Count | req/s | p50 | p90 | p95 | p99 | p99.9 | max | mean | errors | misses |
+|-----------|------:|------:|----:|----:|----:|----:|------:|----:|-----:|-------:|-------:|
+| get | 674,221 | 22,470 | 583µs | 2.2ms | 3.6ms | 8.7ms | 21.3ms | 2.9s | 1.5ms | 0 | 0 |
+| set | 672,586 | 22,416 | 2.0ms | 5.2ms | 7.7ms | 17.9ms | 226.9ms | 2.9s | 4.2ms | 0 | 0 |
+| TOTAL | 1,346,807 | 44,885 | 1.3ms | 4.0ms | 6.0ms | 13.4ms | 80.3ms | 2.9s | 2.8ms | 0 | 0 |
+
+Ephemeral durability (`--durability ephemeral`, the write is answered by the owning node without replication):
+
+| Operation | Count | req/s | p50 | p90 | p95 | p99 | p99.9 | max | mean | errors | misses |
+|-----------|------:|------:|----:|----:|----:|----:|------:|----:|-----:|-------:|-------:|
+| get | 5,093,150 | 169,766 | 315µs | 541µs | 646µs | 978µs | 2.6ms | 200.6ms | 365µs | 0 | 0 |
+| set | 5,091,567 | 169,713 | 326µs | 570µs | 679µs | 1.0ms | 2.7ms | 199.6ms | 384µs | 0 | 0 |
+| TOTAL | 10,184,717 | 339,479 | 320µs | 556µs | 663µs | 1.0ms | 2.6ms | 200.6ms | 374µs | 0 | 0 |
+
+Ephemeral durability with the server started with `--pinned-value-payloads` (committed values are copied onto the pinned object heap when they become resident, so the garbage collector never moves them again):
+
+| Operation | Count | req/s | p50 | p90 | p95 | p99 | p99.9 | max | mean | errors | misses |
+|-----------|------:|------:|----:|----:|----:|----:|------:|----:|-----:|-------:|-------:|
+| get | 5,024,475 | 167,479 | 323µs | 542µs | 645µs | 989µs | 4.0ms | 97.2ms | 368µs | 0 | 0 |
+| set | 5,025,975 | 167,529 | 335µs | 578µs | 687µs | 1.1ms | 9.3ms | 97.2ms | 391µs | 1 | 0 |
+| TOTAL | 10,050,450 | 335,007 | 329µs | 561µs | 668µs | 1.0ms | 7.3ms | 97.2ms | 379µs | 1 | 0 |
+
+How to read these three blocks:
+
+- The persistent and ephemeral rows differ by the replication path, not by the server's capacity: the same node answers 45k mixed requests per second durably and 339k ephemerally, with a p99 of 13.4 ms against 1.0 ms.
+- With 1 KiB values every resident key keeps its value and a few prior revisions in memory, and on the ephemeral path those bytes are what survives each young-generation collection. In the default run the server paused 5.5% of the wall time with eight one-second windows that carried 100 ms or more of pause; with `--pinned-value-payloads` the pause share fell to 4.1% with no such window, the bytes promoted per collection fell from about 330 MB to about 18 MB, and the worst request halved from 200 ms to 97 ms at the same throughput and p99. The option is off by default; its p99.9 rose in this run and one request errored, so repeat the comparison on your own hardware before turning it on.
+- On the persistent memory-storage shape the option changes nothing that these columns show: the memory WAL and the memory backend keep every entry alive themselves, so the same bytes survive either way. Measure it on a RocksDB node instead.
+
+The server-side numbers (pause share, promoted bytes, pinned heap size) come from `dotnet-counters` attached to the node for the run; `scripts/gc-bench.sh` in the Kahuna repository starts the node, attaches the counters, runs `kahuna-bench` with these arguments and prints both sides.
+
 ## Routing Measurements
 
 `kahuna-bench` uses the same leader-aware routing modes as `Kahuna.Client`. The console header prints the effective mode, so an `auto` run with several endpoints reports `Learned (auto)` while a single-endpoint run reports `RoundRobin (auto)`.
 
 In one local three-node read benchmark, learned routing reached 116,808 requests per second versus 72,188 requests per second with round-robin endpoint selection. See [Client Leader-Aware Routing](/docs/client-routing/#measured-effect) for the setup and caveats.
-
-**Recorded:** September 2026 (docs commit `1e6ebc5c`). The hardware and Kahuna version of this run are not recorded.
 
 Use explicit routing modes when comparing the cost of forwarded requests:
 
@@ -324,8 +359,6 @@ get         27,601,937   230,015   454µs   933µs   1.1ms   1.7ms   3.8ms   149
 set         27,602,889   230,023   455µs   935µs   1.1ms   1.7ms   3.8ms   149.1ms   553µs        0        0
 TOTAL       55,204,826   460,038   455µs   934µs   1.1ms   1.7ms   3.8ms   149.1ms   553µs        0        0
 ```
-
-**Recorded:** September 2026 (docs commit `e0d919d6`), one local node over cleartext gRPC with ephemeral durability. The hardware, storage and WAL backends, and Kahuna version of this run are not recorded.
 
 This run completed 55,204,826 successful operations at 460,038 requests per second. The default mixed workload produced an approximately even split between reads and writes. Its p99 was 1.7 ms and p99.9 was 3.8 ms, with no errors or misses.
 

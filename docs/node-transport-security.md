@@ -18,7 +18,7 @@ Use this for production clusters where the Raft port or internal Kahuna gRPC cal
 
 `SharedSecret` protects Raft only. Use `MutualTls` when you need full node-to-node coverage.
 
-Administrative HTTP and gRPC surfaces are still application-facing. Backup, restore, membership, placement, range, routing, dashboard, and health endpoints must be protected with normal network controls.
+Administrative HTTP and gRPC surfaces are still application-facing. Configure [admin authorization](/docs/admin-operations-authorization/) to require a key for membership changes, range changes, backups, and restore. Read-only views, the dashboard, health endpoints, and ordinary data access remain ungated; protect their reachability with network controls.
 
 ## Basic Setup
 

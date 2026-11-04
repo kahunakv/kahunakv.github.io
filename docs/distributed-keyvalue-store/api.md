@@ -3,11 +3,13 @@ import TabItem from '@theme/TabItem';
 
 # Key/Value API Reference
 
-This page is the reference for the basic key/value operations. Each section shows the .NET signature and examples for the Kahuna CLI, the .NET client, and the TypeScript client. For an overview of the store, see [Distributed Key/Value Store](/docs/distributed-keyvalue-store/).
+This page is the reference for the basic key/value operations. Each operation has CLI, .NET, and TypeScript tabs. The .NET tab includes a signature and a usage example; the CLI tab notes when no equivalent command exists. For an overview of the store, see [Distributed Key/Value Store](/docs/distributed-keyvalue-store/).
 
 Use the .NET or TypeScript client from application code. Use the Kahuna CLI to inspect or change keys by hand. Use [Kahuna Script](/docs/scripts/) when several operations must run together on the server, as one transaction. The CLI examples are Kahuna Script commands, and each section links to the command page with the full syntax and modifiers.
 
 Each operation takes a durability level, persistent or ephemeral; see [Durability Levels](/docs/architecture/durability-levels/).
+
+For payload, batch, page, and transaction bounds, see [Key/Value Request Limits](/docs/distributed-keyvalue-store/request-limits/).
 
 ## Payload Values
 
@@ -20,31 +22,6 @@ In REST JSON, `null` stays `null` and any byte array is encoded as base64. That 
 Creates or overwrites a key. Optional flags make the write depend on whether the key exists, its current value, or its current revision. Script syntax: [`set`](/docs/scripts/commands/set/) (persistent) and [`eset`](/docs/scripts/commands/eset/) (ephemeral).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
-
-```csharp
-Task<KahunaKeyValue> SetKeyValue(
-    string key,
-    byte[]? value,
-    int expiryTime = 0,
-    KeyValueFlags flags = KeyValueFlags.Set,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** A unique identifier for the key/value pair.
-- **value:** The data object associated with the key. `null` is distinct from an empty byte array.
-- **expiryTime:** The expiration time of the key in milliseconds.
-- **flags:**
-  - If `KeyValueFlags.SetIfExists` is specified, the value is set only if the key already exists.
-  - If `KeyValueFlags.SetIfNotExists` is specified, the value is set only if the key does not exist.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the key's value was modified.
-- **Revision:** The key's current revision after the operation.
-
-</TabItem>
 <TabItem value="cli" label="CLI">
 
 Sets a key/value only if not exists:
@@ -101,6 +78,31 @@ r4 set 10ms
 
 </TabItem>
 <TabItem value="dotnet" label=".NET">
+
+```csharp
+Task<KahunaKeyValue> SetKeyValue(
+    string key,
+    byte[]? value,
+    int expiryTime = 0,
+    KeyValueFlags flags = KeyValueFlags.Set,
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    CancellationToken cancellationToken = default
+);
+```
+
+- **key:** A unique identifier for the key/value pair.
+- **value:** The data object associated with the key. `null` is distinct from an empty byte array.
+- **expiryTime:** The expiration time of the key in milliseconds.
+- **flags:**
+  - If `KeyValueFlags.SetIfExists` is specified, the value is set only if the key already exists.
+  - If `KeyValueFlags.SetIfNotExists` is specified, the value is set only if the key does not exist.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+- **Success:** `true` if the key's value was modified.
+- **Revision:** The key's current revision after the operation.
+
+**Example**
 
 ```csharp
 // Create or update a key/value pair and set an expiration of 10 seconds:
@@ -178,29 +180,6 @@ await client.set("my-config", "some-value", { durability: "ephemeral" });
 Sets or overwrites key/value pairs but only if the current value matches a specified comparison value. For when to use compare-and-set (CAS) and worked examples, see [Compare-and-Set (CAS)](/docs/distributed-keyvalue-store/cas/).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
-
-```csharp
-Task<KahunaKeyValue> TryCompareValueAndSetKeyValue(
-    string key,
-    byte[] value,
-    byte[] compareValue,
-    int expiryTime = 0,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** A unique identifier for the key/value pair.
-- **value:** The data object associated with the key.
-- **compareValue:** The value is changed only if the current value matches the provided one.
-- **expiryTime:** The expiration time of the key in milliseconds.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the comparison matched and the key was modified.
-- **Revision:** The key's current revision after the operation.
-
-</TabItem>
 <TabItem value="cli" label="CLI">
 
 Sets a key/value only if the current value is "current-value":
@@ -214,6 +193,41 @@ r3 set 11ms
 
 kahuna-cli> set `my-config` "my-value" cmp "current-value"
 r3 not set 12ms
+```
+
+</TabItem>
+<TabItem value="dotnet" label=".NET">
+
+```csharp
+Task<KahunaKeyValue> TryCompareValueAndSetKeyValue(
+    string key,
+    byte[] value,
+    byte[] compareValue,
+    int expiryTime = 30000,
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    CancellationToken cancellationToken = default
+);
+```
+
+- **key:** A unique identifier for the key/value pair.
+- **value:** The data object associated with the key.
+- **compareValue:** The value is changed only if the current value matches the provided one.
+- **expiryTime:** The expiration time of the key in milliseconds.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+- **Success:** `true` if the comparison matched and the key was modified.
+- **Revision:** The key's current revision after the operation.
+
+The string overload used below defaults to no expiry (`0`); the byte-array overload above defaults to 30 seconds.
+
+**Example**
+
+```csharp
+var result = await client.TryCompareValueAndSetKeyValue(
+    "my-config", "my-value", "current-value");
+
+Console.WriteLine(result.Success);
 ```
 
 </TabItem>
@@ -241,29 +255,6 @@ if (!result.success) {
 Sets or overwrites key/value pairs but only if the current revision matches a specified comparison revision. See [Compare-and-Set (CAS)](/docs/distributed-keyvalue-store/cas/) and [Revisions](/docs/distributed-keyvalue-store/revisions/).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
-
-```csharp
-Task<KahunaKeyValue> TryCompareRevisionAndSetKeyValue(
-    string key,
-    byte[]? value,
-    long compareRevision,
-    int expiryTime = 0,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** A unique identifier for the key/value pair.
-- **value:** The data object associated with the key.
-- **compareRevision:** The value is changed only if the current revision matches the provided one.
-- **expiryTime:** The expiration time of the key in milliseconds.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the revision matched and the key was modified.
-- **Revision:** The key's current revision after the operation.
-
-</TabItem>
 <TabItem value="cli" label="CLI">
 
 Sets a key/value only if its current revision is **4**:
@@ -277,6 +268,42 @@ r5 set 11ms
 
 kahuna-cli> set `my-config` "other-value" cmprev 4
 r5 not set 10ms
+```
+
+</TabItem>
+<TabItem value="dotnet" label=".NET">
+
+```csharp
+Task<KahunaKeyValue> TryCompareRevisionAndSetKeyValue(
+    string key,
+    byte[]? value,
+    long compareRevision,
+    int expiryTime = 0,
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    CancellationToken cancellationToken = default
+);
+```
+
+- **key:** A unique identifier for the key/value pair.
+- **value:** The data object associated with the key.
+- **compareRevision:** The value is changed only if the current revision matches the provided one.
+- **expiryTime:** The expiration time of the key in milliseconds.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+- **Success:** `true` if the revision matched and the key was modified.
+- **Revision:** The key's current revision after the operation.
+
+**Example**
+
+```csharp
+var current = await client.GetKeyValue("my-config");
+if (current.Success)
+{
+    var result = await client.TryCompareRevisionAndSetKeyValue(
+        "my-config", "my-value", current.Revision);
+    Console.WriteLine(result.Success);
+}
 ```
 
 </TabItem>
@@ -301,28 +328,9 @@ if (!result.success) {
 
 ## Get
 
-Retrieves the value of a key along with its revision. If the key does not exist, the special value `nil` is returned. Script syntax: [`get`](/docs/scripts/commands/get/) and [`eget`](/docs/scripts/commands/eget/).
+Retrieves the value of a key along with its revision. If the key does not exist, the client result has `Success = false` (.NET) or `success: false` (TypeScript). Script syntax: [`get`](/docs/scripts/commands/get/) and [`eget`](/docs/scripts/commands/eget/).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
-
-```csharp
-Task<KahunaKeyValue> GetKeyValue(
-    string key,
-    KeyValueDurability durability = KeyValueDurability.Persistent,
-    long snapshotMs = 0,
-    CancellationToken cancellationToken = default
-);
-```
-
-- **key:** The key to be queried.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
-
-**Returns:**
-- **`KahunaKeyValue`**: Result object with success state, value, revision, and `LastModified`.
-
-</TabItem>
 <TabItem value="cli" label="CLI">
 
 Gets key/values:
@@ -340,6 +348,24 @@ r0 my-value 13ms
 
 </TabItem>
 <TabItem value="dotnet" label=".NET">
+
+```csharp
+Task<KahunaKeyValue> GetKeyValue(
+    string key,
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    long snapshotMs = 0,
+    CancellationToken cancellationToken = default
+);
+```
+
+- **key:** The key to be queried.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
+
+**Returns:**
+- **`KahunaKeyValue`**: Result object with success state, value, revision, and `LastModified`.
+
+**Example**
 
 Gets key/value pair:
 
@@ -379,29 +405,9 @@ if (result.success) {
 
 ## Get Revision
 
-Retrieves the value of a key at the specific revision. If the key/revision combination does not exist in the key/value store, the special value `nil` is returned.
+Retrieves the value of a key at the specific revision. If the key/revision combination is unavailable, the client result has `Success = false` (.NET) or `success: false` (TypeScript).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
-
-```csharp
-Task<KahunaKeyValue> GetKeyValueRevision(
-    string key,
-    long revision,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** The key to be queried.
-- **revision:** The revision to be returned.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the key exists at the requested revision.
-- **Value:** The value associated with the key.
-- **Revision:** The queried revision.
-
-</TabItem>
 <TabItem value="cli" label="CLI">
 
 Gets key/values:
@@ -421,6 +427,35 @@ r0 my-value 13ms
 
 kahuna-cli> get `my-config` at 1
 r1 my-value-1 13ms
+```
+
+</TabItem>
+<TabItem value="dotnet" label=".NET">
+
+```csharp
+Task<KahunaKeyValue> GetKeyValueRevision(
+    string key,
+    long revision,
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    CancellationToken cancellationToken = default
+);
+```
+
+- **key:** The key to be queried.
+- **revision:** The revision to be returned.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+- **Success:** `true` if the key exists at the requested revision.
+- **Value:** The value associated with the key.
+- **Revision:** The queried revision.
+
+**Example**
+
+```csharp
+var result = await client.GetKeyValueRevision("my-config", 1);
+if (result.Success)
+    Console.WriteLine(result.ValueAsString());
 ```
 
 </TabItem>
@@ -448,29 +483,6 @@ Use `AT <revision>` or a client revision-read method when you know the exact rev
 Retrieves key/value pairs that share the same [bucket](/docs/distributed-keyvalue-store/buckets/). The operation is consistent when the prefix identifies a single-partition bucket, because all keys in that bucket are routed to the same partition. Script syntax: [`get by bucket`](/docs/scripts/commands/get-by-bucket/) and [`eget by bucket`](/docs/scripts/commands/eget-by-bucket/).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
-
-```csharp
-Task<List<KahunaKeyValue>> GetByBucket(
-    string prefixKey,
-    KeyValueDurability durability,
-    long snapshotMs = 0,
-    CancellationToken cancellationToken = default
-);
-```
-
-- **prefixKey:** The bucket prefix to query.
-- **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
-- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
-
-**Returns:**
-**`List<KahunaKeyValue>`**, one item per key found:
- - **Key:** The key found.
- - **Value:** The value associated with the key.
- - **Revision:** The current revision of the key.
- - **LastModified:** The Unix timestamp in milliseconds of the key's last modification.
-
- </TabItem>
 <TabItem value="cli" label="CLI">
 
 Get key/values by bucket prefix:
@@ -498,6 +510,39 @@ r0 services/auth/instance-2 node2
 ```
 
 </TabItem>
+<TabItem value="dotnet" label=".NET">
+
+```csharp
+Task<List<KahunaKeyValue>> GetByBucket(
+    string prefixKey,
+    KeyValueDurability durability,
+    long snapshotMs = 0,
+    CancellationToken cancellationToken = default
+);
+```
+
+- **prefixKey:** The bucket prefix to query.
+- **durability:** Defines whether key durability is **Ephemeral** or **Persistent**.
+- **snapshotMs:** Optional Unix-epoch-ms snapshot timestamp. `0` means latest.
+
+**Returns:**
+**`List<KahunaKeyValue>`**, one item per key found:
+ - **Key:** The key found.
+ - **Value:** The value associated with the key.
+ - **Revision:** The current revision of the key.
+ - **LastModified:** The Unix timestamp in milliseconds of the key's last modification.
+
+**Example**
+
+```csharp
+var instances = await client.GetByBucket(
+    "services/auth", KeyValueDurability.Persistent);
+
+foreach (var instance in instances)
+    Console.WriteLine($"{instance.Key}: {instance.ValueAsString()}");
+```
+
+</TabItem>
 <TabItem value="typescript" label="TypeScript">
 
 ```ts
@@ -522,15 +567,20 @@ Use `get by bucket` for grouped prefixes that are intentionally single-partition
 Retrieves key/value pairs inside an ordered interval under one prefix. This is the right abstraction for ordered key spaces and bounded range reads.
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
+<TabItem value="cli" label="CLI">
+
+The Kahuna CLI and Kahuna Script do not expose a bounded range-read command. Use the .NET or TypeScript examples for start/end bounds and pagination. `get by bucket` and `scan by prefix` read matching prefixes; they do not accept these range bounds.
+
+</TabItem>
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 Task<List<KahunaKeyValue>> GetByRange(
     string prefix,
-    string? startKey,
-    bool startInclusive,
-    string? endKey,
-    bool endInclusive,
+    string? startKey = null,
+    bool startInclusive = true,
+    string? endKey = null,
+    bool endInclusive = false,
     int limit = 100,
     KeyValueDurability durability = KeyValueDurability.Persistent,
     long snapshotMs = 0,
@@ -547,6 +597,21 @@ Task<List<KahunaKeyValue>> GetByRange(
 
 **Returns:**
 - **`List<KahunaKeyValue>`**: Ordered keys in the requested interval.
+
+**Example**
+
+```csharp
+var users = await client.GetByRange(
+    prefix: "users",
+    startKey: "users/000100",
+    startInclusive: true,
+    endKey: "users/000200",
+    endInclusive: false,
+    limit: 100);
+
+foreach (var user in users)
+    Console.WriteLine($"{user.Key}: {user.ValueAsString()}");
+```
 
 </TabItem>
 <TabItem value="typescript" label="TypeScript">
@@ -583,7 +648,22 @@ In interactive transactions, `GetByRange(...)` is especially useful for ordered 
 Scans every node in the cluster for keys that start with the prefix. Each node returns its keys as they are at the moment it is visited, so the result can contain stale data. This operation is slow because it visits every node and every internal worker. Script syntax: [`scan by prefix`](/docs/scripts/commands/scan-by-prefix/) and [`escan by prefix`](/docs/scripts/commands/escan-by-prefix/).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
+<TabItem value="cli" label="CLI">
+
+Run this command in the Kahuna shell:
+
+```kahuna
+scan by prefix `services/auth`
+```
+
+Or use a command-line flag:
+
+```bash
+kahuna-cli --scan-by-prefix services/auth
+```
+
+</TabItem>
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 Task<List<KahunaKeyValue>> ScanAllByPrefix(
@@ -605,7 +685,17 @@ Task<List<KahunaKeyValue>> ScanAllByPrefix(
  - **Revision:** The current revision of the key.
  - **LastModified:** The Unix timestamp in milliseconds of the key's last modification.
 
- </TabItem>
+**Example**
+
+```csharp
+var rows = await client.ScanAllByPrefix(
+    "services/auth", KeyValueDurability.Persistent);
+
+foreach (var row in rows)
+    Console.WriteLine($"{row.Key}: {row.ValueAsString()}");
+```
+
+</TabItem>
 <TabItem value="typescript" label="TypeScript">
 
 ```ts
@@ -625,12 +715,24 @@ const rows = await client.scanAllByPrefix("services/auth", {
 Deletes a key and its associated value. Deleting a key does not remove the key history. Script syntax: [`delete`](/docs/scripts/commands/delete/) and [`edelete`](/docs/scripts/commands/edelete/).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
+<TabItem value="cli" label="CLI">
+
+Run this command in the Kahuna shell:
+
+```kahuna
+delete `my-config`
+```
+
+Use `edelete` for an ephemeral key.
+
+</TabItem>
+<TabItem value="dotnet" label=".NET">
 
 ```csharp
 Task<KahunaKeyValue> DeleteKeyValue(
     string key,
-    KeyValueDurability durability = KeyValueDurability.Persistent
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    CancellationToken cancellationToken = default
 );
 ```
 
@@ -640,6 +742,13 @@ Task<KahunaKeyValue> DeleteKeyValue(
 **Returns:**
 - **Success:** `true` if the key/value pair was deleted.
 - **Revision:** The tombstone revision created by the delete. For example, deleting a key at revision `0` returns revision `1`, and the next successful set returns revision `2`.
+
+**Example**
+
+```csharp
+var deleted = await client.DeleteKeyValue("my-config");
+Console.WriteLine(deleted.Success);
+```
 
 </TabItem>
 <TabItem value="typescript" label="TypeScript">
@@ -662,25 +771,6 @@ console.log(deleted.success, deleted.revision);
 Sets a new expiration time on a key. The key is deleted when it expires. An expiration of `0` means the key does not expire. Script syntax: [`extend`](/docs/scripts/commands/extend/) and [`eextend`](/docs/scripts/commands/eextend/).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
-
-```csharp
-Task<KahunaKeyValue> ExtendKeyValue(
-    string key,
-    int expiresMs,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** The key to be extended.
-- **expiresMs:** The expiration time of the key in milliseconds.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the key/value pair was extended.
-- **Revision:** The key's current revision. Extending the key does **not** increment the revision counter.
-
-</TabItem>
 <TabItem value="cli" label="CLI">
 
 Extend a key/value:
@@ -697,6 +787,33 @@ extend `my-config` 30000
 ```
 ```text
 r0 extended 13ms
+```
+
+</TabItem>
+<TabItem value="dotnet" label=".NET">
+
+```csharp
+Task<KahunaKeyValue> ExtendKeyValue(
+    string key,
+    int expiresMs,
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    CancellationToken cancellationToken = default
+);
+```
+
+- **key:** The key to be extended.
+- **expiresMs:** The expiration time of the key in milliseconds.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+- **Success:** `true` if the key/value pair was extended.
+- **Revision:** The key's current revision. Extending the key does **not** increment the revision counter.
+
+**Example**
+
+```csharp
+var extended = await client.ExtendKeyValue("my-config", 30_000);
+Console.WriteLine(extended.Success);
 ```
 
 </TabItem>
@@ -720,23 +837,6 @@ console.log(extended.success, extended.revision);
 Checks whether a key exists. Script syntax: [`exists`](/docs/scripts/commands/exists/) and [`eexists`](/docs/scripts/commands/eexists/).
 
 <Tabs groupId="client-examples">
-<TabItem value="api" label="API">
-
-```csharp
-Task<KahunaKeyValue> ExistsKeyValue(
-    string key,
-    KeyValueDurability durability = KeyValueDurability.Persistent
-);
-```
-
-- **key:** The key to be checked if exists.
-- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
-
-**Returns:**
-- **Success:** `true` if the key/value pair exists.
-- **Revision:** The key's current revision at the time of the query.
-
-</TabItem>
 <TabItem value="cli" label="CLI">
 
 Exists key/values:
@@ -750,6 +850,32 @@ r0 set 11ms
 
 kahuna-cli> exists `my-config`
 r0 exists 13ms
+```
+
+</TabItem>
+<TabItem value="dotnet" label=".NET">
+
+```csharp
+Task<KahunaKeyValue> ExistsKeyValue(
+    string key,
+    KeyValueDurability durability = KeyValueDurability.Persistent,
+    long snapshotMs = 0,
+    CancellationToken cancellationToken = default
+);
+```
+
+- **key:** The key to be checked if exists.
+- **durability:** Defines whether the key durability is **Ephemeral** or **Persistent**.
+
+**Returns:**
+- **Success:** `true` if the key/value pair exists.
+- **Revision:** The key's current revision at the time of the query.
+
+**Example**
+
+```csharp
+var result = await client.ExistsKeyValue("my-config");
+Console.WriteLine(result.Success);
 ```
 
 </TabItem>

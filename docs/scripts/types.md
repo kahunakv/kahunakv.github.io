@@ -15,7 +15,7 @@ Kahuna Script is dynamically typed: you never declare a variable's type, and eac
 
 Represents an integer in the range of -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807.
 
-This is a 64-bit signed integer, suited to IDs, counters, timestamps, and arithmetic.
+This is a 64-bit signed integer, suited to IDs, counters, timestamps, and arithmetic. Integer arithmetic that overflows is a script error; it never wraps or promotes to float. Use `min_int()` for the smallest value, which has no literal form, and `max_int()` for the largest.
 
 ```kahuna
 let year = 2050
@@ -24,9 +24,9 @@ let remaining_tokens = 50
 
 ## Float64
 
-Represents a floating-point number in the range of approximately ±5.0 × 10⁻³²⁴ to ±1.7 × 10³⁰⁸.
+Represents a finite floating-point number, including zero. The smallest positive representable value is approximately 5.0 × 10⁻³²⁴; the largest magnitude is approximately 1.8 × 10³⁰⁸.
 
-This is a 64-bit IEEE 754 double-precision float, suited to measurements, percentages, and other fractional values.
+This is a 64-bit IEEE 754 double-precision float, suited to measurements, percentages, and other fractional values. NaN and infinities are rejected. Floating-point arithmetic can round or underflow to zero; use integers when exact counter arithmetic matters. See [Numbers](/docs/scripts/semantics/#numbers) for parsing, overflow, and comparison rules.
 
 ```kahuna
 let threshold = 0.5

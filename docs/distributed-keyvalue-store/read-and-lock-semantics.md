@@ -91,8 +91,9 @@ snapshot between commits. See [durable settlement](/docs/internals/durable-settl
 A nonzero `ReadTimestamp` selects the revision committed at or before that HLC through the as-of
 history path, rather than creating a latest-read MVCC pin. A snapshot before an intent's commit HLC
 uses the earlier committed state; at or after it, the intent's canonical decision determines visibility.
-A live writer that may commit at or before the snapshot causes a safe-time wait, even when another
-committed intent could otherwise answer the read.
+An open writer does not by itself block the read. If its staged write or lock was planted at or before the snapshot, the read records that timestamp as the intent's **commit floor**, serves the earlier committed state, and forces the writer's eventual commit strictly above that floor. A writer already staged above the snapshot can also be skipped. Repeating the read at the same timestamp therefore does not start seeing that writer's later commit.
+
+Once the writer is prepared or its commit probe has claimed the intent, readers cannot push its commit timestamp. A writer whose fixed or not-yet-reported commit timestamp could fall inside the snapshot causes a safe-time wait, even when another committed intent could otherwise answer the read. The read polls with delays up to 50 ms; range pages fail retryably if they exhaust the page retry budget rather than waiting indefinitely.
 
 Clock and flush fences prevent answering from incomplete history. Persisted-history fallback can
 answer `MustRetry` while relevant committed revisions are unflushed. Reads more than 5 seconds ahead
@@ -113,6 +114,8 @@ A registered statement read still records the revision it served for commit-time
 The current high-level .NET and TypeScript client methods use the default read mode. `StatementSnapshot` is available through the lower-level in-process, gRPC, and REST read requests.
 
 ## Transaction locks
+
+Public REST/gRPC acquisition requires the owning session's coordinator key and a nonempty operation ID; unregistered acquisitions return `InvalidInput`.
 
 These are key/value transaction locks, separate from the
 [distributed lock subsystem](/docs/distributed-locks/). They are leader-local [actor](/docs/glossary/#actor) state,

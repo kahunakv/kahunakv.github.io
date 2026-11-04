@@ -29,7 +29,7 @@ Values read from the key/value store or passed as placeholders may not have the 
 
 | Input | `to_int` | `to_double` | `to_bool` | `to_str` |
 |-------|----------|-------------|-----------|----------|
-| integer | unchanged | same value as a float | `true` unless `0` | `"42"` |
+| integer | unchanged | converted to a float; large integers may lose precision | `true` unless `0` | `"42"` |
 | float | truncated toward zero: `to_int(3.9)` → `3`, `to_int(-3.9)` → `-3` | unchanged | `true` unless `0.0` | `"1.5"` |
 | bool | `true` → `1`, `false` → `0` | `true` → `1`, `false` → `0` | unchanged | `"true"` / `"false"` |
 | string | parsed as an integer | parsed as a number | `true` only for `"true"` in any case | unchanged |
@@ -37,6 +37,8 @@ Values read from the key/value store or passed as placeholders may not have the 
 | `null` | error | error | error | `""` |
 | array | error | error | error | error |
 
+- `to_int` truncates a float toward zero only if it is within int64 range. An out-of-range value is an error, not a saturated endpoint. Use `round(x, 0)` first when you need rounding instead of truncation.
+- Numeric strings use invariant culture (`.` for decimals, no thousands separator). `to_double` requires a finite result: `"NaN"`, `"Infinity"`, and overflowing values fail conversion.
 - A string that does not parse is a script error, not `0`: `to_int("abc")`, `to_int("4.2")`, and `to_int("0x10")` all fail. Use `to_double` for strings with a decimal point.
 - `to_bool` never fails on a string. Every string other than `"true"` (compared case-insensitively) becomes `false`, including `"yes"`, `"1"`, and `"TRUE "` with a trailing space.
 - `to_str(null)` returns an empty string, not `null`.

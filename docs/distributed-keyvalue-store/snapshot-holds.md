@@ -161,6 +161,12 @@ Kahuna also exposes the hold API over REST:
 
 `leaseMs` must be greater than zero. Renew can revive an expired hold while it remains registered; after release or purge it returns `DoesNotExist`. Revival confirms partition 0 application before proving registration.
 
+## Hold Limits
+
+Snapshot holds default to a maximum requested lease of one day, 4096 registrations per holder, and 65,536 registrations cluster-wide. A lease above the bound returns `InvalidInput` on acquire or renew. A new registration over either count bound returns `SnapshotHoldLimitReached`; renewal and idempotent reacquisition of an existing hold do not consume a new slot. Release or replicated purge frees a slot. Bare lease expiry does not remove the registration.
+
+Configure `--snapshot-hold-max-lease-ms`, `--snapshot-hold-max-per-holder`, and `--snapshot-hold-max-total`, or the corresponding [embedded options](/docs/embedded-kahuna-node/#client-request-limits). `0` removes the respective bound.
+
 ## Operational Notes
 
 - Renew well before the lease expires. If the holder stops renewing, the hold becomes purge-eligible. Protection ends when replicated removal commits; do not depend on a delay between expiry and purge.

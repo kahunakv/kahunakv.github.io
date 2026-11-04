@@ -109,6 +109,14 @@ This matters for hot keys. A hot key may never be selected by LRU, but its revis
 
 Persistent revision cleanup is also clamped by the protective registered-hold floor. While a hold remains registered, including after lease expiry until replicated purge or release, the persistent backend must keep the boundary revision and all newer revisions, even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise prune them.
 
+## Optional Memory Tuning
+
+`--trim-flushed-revisions` removes persistent archived revisions once the background writer confirms them on disk, while retaining unflushed revisions and the boundary pinned by a snapshot hold. This reduces resident history for hot keys, but historical reads may perform more disk I/O. It does not delete persisted history or change retention settings. Ephemeral keys keep their usual `--revisions-to-cache` archive. The option is off by default.
+
+`--pinned-value-payloads` copies committed payloads of at least `--pinned-value-payload-min-bytes` (default 256) onto .NET's pinned object heap, where GC does not relocate them. It adds an allocation and copy when retaining a value and shifts collection to generation 2. It is off by default; compare allocation, GC pauses, and memory use under your workload before enabling it. It changes neither durability nor the public byte-payload format.
+
+The actor cache now maintains a point-lookup dictionary alongside its ordered BTree. Reads by key use the dictionary; ordered scans use the BTree. This is automatic and adds index memory; it does not change ordering or visibility semantics.
+
 ## Persistent Revision Pruning
 
 These rules govern the destructive cleanup of persistent revision history.

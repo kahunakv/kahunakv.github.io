@@ -103,6 +103,12 @@ The backlog monitor warns before the gate closes. It logs when the backlog reach
 
 The number of aggregator lanes is derived from the key/value worker count. There is no separate lane-count flag; Raft work is detached per partition, so lane count is not the same as Raft concurrency.
 
+## Transactional Set-Many
+
+Non-transactional set-many and every delete-many fan out through ordinary per-key writes, which can meet in the aggregator. Transactional set-many instead sends each actor its items in one message and checks every item before staging any. A batch spanning actors or partition leaders checks all groups before starting the stage round. Staged persistent writes reach replication at transaction commit through durable-intent finalization.
+
+A failed check leaves successful checks as `NotApplied`, not `Set`. Cross-actor checks are not one atomic turn: an optimistic writer can intervene before stage and leave some groups staged. See [Transactional Set-Many](/docs/distributed-keyvalue-store/transactions/#transactional-set-many) for caller handling and pessimistic lock requirements.
+
 ## Retry Semantics
 
 A write released from the aggregator returns `MustRetry`. This can happen during leadership changes, moved ranges, restore-in-progress windows, full queues, proposal timeouts, or shutdown.

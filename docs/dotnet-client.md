@@ -106,6 +106,7 @@ Key `KahunaOptions` fields:
 | `BatchCoalescingThreshold` | `10` | Minimum batch size before immediate dispatch; smaller batches may wait briefly. |
 | `BatchCoalescingDelayMs` | `2` | Maximum batch coalescing wait in milliseconds. |
 | `AllowInsecureCertificateValidation` | `false` | Skip TLS server certificate validation for local or test environments. |
+| `AdminApiKey` | `null` | Credential sent only with [admin operations](/docs/admin-operations-authorization/), over REST or gRPC. |
 | `TrustedServerCertificateThumbprints` | empty | SHA-256 certificate thumbprints accepted for production pinning. |
 
 ## Transport
@@ -333,7 +334,7 @@ List<KahunaKeyValue> setResults = await client.SetManyKeyValues([
 
 Set `Flags = KeyValueFlags.SetNoRevision` for batch cache writes where old values are not needed. Combine it with conditional flags when the write should still be guarded by existence, value, or revision checks.
 
-Persistent batch writes benefit from [partition write coalescing](/docs/architecture/partition-write-coalescing/): Kahuna can combine direct writes for the same [Raft](/docs/glossary/#raft) partition into fewer Raft proposals, even when they come from different client requests. A batch is not atomic; use a transaction when all items must commit or roll back together.
+Persistent batch writes benefit from [partition write coalescing](/docs/architecture/partition-write-coalescing/): Kahuna can combine direct writes for the same [Raft](/docs/glossary/#raft) partition into fewer Raft proposals, even when they come from different client requests. A non-transactional batch is not atomic; use a transaction when all items must commit or roll back together. [Transactional set-many](/docs/distributed-keyvalue-store/transactions/#transactional-set-many) adds check-before-stage behavior and the `NotApplied` item result; cross-actor optimistic batches can still stage partially if a writer intervenes between rounds.
 
 ## Watches
 

@@ -23,6 +23,8 @@ Kahuna offers two ways to run a transaction:
 
 **You do not need a transaction** for a single-key update. A plain `SET`, or a [compare-and-set](/docs/distributed-keyvalue-store/cas/) when the new value depends on the old one, is cheaper.
 
+Client sessions and script transactions default to separate limits of 20,000 written keys and 20,000 acquired locks. See [Key/Value Request Limits](/docs/distributed-keyvalue-store/request-limits/#transactions) for counting and refusal behavior.
+
 ## How Kahuna Runs Transactions
 
 Kahuna coordinates reads and writes across partition [leaders](/docs/glossary/#leader-follower-and-learner). For persistent keys, each partition stages the transaction's changes as replicated [write intents](/docs/glossary/#write-intent), and one commit-or-abort record (the [canonical decision](/docs/internals/transaction-lifecycle/#basic-concepts)) decides the outcome for all of them. Once that record says commit, the new values are visible, even if background cleanup (settlement) has not yet installed them as normal values. Ephemeral values, and transactions that mix persistent and ephemeral keys, do not have the same guarantees when a process is lost.
@@ -394,6 +396,24 @@ if (!committed) {
 
 </TabItem>
 </Tabs>
+
+A coordinator leadership change does not migrate an active session. Requests can find its original owner while that process remains reachable, including when another node forwards the request. The session itself is not replicated; participant lock loss can still abort it. See [session ownership after leader changes](/docs/internals/transaction-lifecycle/#session-ownership-after-leader-changes).
+
+## Transactional Set-Many
+
+A transactional set-many checks a group of writes before staging them, which helps prevent a failed conditional item from leaving unrelated rows staged in the session. Staging means holding an uncommitted value; the transaction still has to commit before other clients see it. Non-transactional batches remain independent writes, and delete-many does not use this set-many protocol.
+
+Every item must name the same transaction. Mixing transaction IDs, mixing transactional and non-transactional items, or repeating a `(key, durability)` pair in a transactional batch returns `InvalidInput`.
+
+| Situation | Result |
+|-----------|--------|
+| All items belong to one actor | Check and stage run in one actor turn. Any refusal leaves the whole batch unstaged. |
+| Items span actors or partition leaders | All groups run a check round before any group starts staging. A refusal in that round leaves the whole batch unstaged. |
+| A concurrent writer intervenes between rounds under optimistic locking | One group can stage while another refuses. Inspect every result and roll back the transaction if any items staged. |
+
+A failed condition returns `NotSet`; a conflict returns its own transient type and holder information. Items that passed but were not staged return **`NotApplied`**. This is different from `Set`: they did not change the transaction's working set. After a transient refusal with no staged items, resend the whole batch, not just the conflicting item. An entirely refused registered batch folds no effects, allowing the same operation ID to be used on resend. With pessimistic locking, hold exclusive locks on every key before the batch to prevent the cross-round writer race. A transport failure can still leave the result uncertain; resolve or roll back the session rather than assuming nothing staged.
+
+Kahuna Script preserves its statement-by-statement behavior when it internally batches leading `set` statements. If one conditional statement returns `NotSet`, the engine resends its `NotApplied` siblings without the refused statement. A failed condition therefore does not itself stop other successful script writes from committing. Transient failures stop that execution.
 
 ## Interactive Transactions vs Kahuna Scripts
 

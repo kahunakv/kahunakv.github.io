@@ -106,7 +106,7 @@ Kahuna implements the Raft protocol through the [Kommander library](https://gith
 
 A follower below retained log history needs whole-partition snapshot seeding. Receive staging caps account for disk and memory together; peers acknowledge staging separately and poll installation with a progress-based stall bound. See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for snapshot options, failure behavior, and installation limits.
 
-How long a leader keeps log entries decides how often followers need a snapshot. The following describes Kahuna's pinned **Kommander 1.11.3** behavior. The server passes these options to `RaftConfiguration`; the replication-scheduling and live-replica lag-window/cap flags have no matching `EmbeddedKahunaOptions` properties, so do not assume server/embedded configuration parity. Flag defaults are in [Raft Communication](/docs/server-configuration/#raft-communication) and [Raft Queueing and Batching](/docs/server-configuration/#raft-queueing-and-batching).
+How long a leader keeps log entries decides how often followers need a snapshot. The following describes Kahuna's pinned **Kommander 1.12.3** behavior. The server passes these options to `RaftConfiguration`; the replication-scheduling and live-replica lag-window/cap flags have no matching `EmbeddedKahunaOptions` properties, so do not assume server/embedded configuration parity. Flag defaults are in [Raft Communication](/docs/server-configuration/#raft-communication) and [Raft Queueing and Batching](/docs/server-configuration/#raft-queueing-and-batching).
 
 ### Live-Replica Retention
 

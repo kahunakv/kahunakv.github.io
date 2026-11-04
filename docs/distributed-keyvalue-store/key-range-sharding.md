@@ -91,7 +91,7 @@ sequenceDiagram
 
 This prevents writes from silently landing on stale partitions after a split or merge.
 
-Splits and merges also pause writes to the moving key interval during the copy and cutover window. Kahuna combines a range lock on the source partition with a replicated descriptor deadline, so writes that race with movement are refused retryably instead of being acknowledged on the old partition and lost after routing changes.
+Splits and merges also pause writes to the moving key interval during the copy and cutover window. Kahuna combines a range lock on the source partition with a replicated descriptor deadline, so writes that race with movement are refused retryably. `--range-move-quiesce-ttl` bounds this write fence (default 30 seconds, minimum 1 second). A move that exhausts its quiesce window refuses cutover with `QuiesceExpired`; it must retry rather than route away from writes admitted after the fence expired.
 
 In short, a write that races a split or merge gets a retryable error and is never lost. Committed data, transaction records, and prepared [write intents](/docs/glossary/#write-intent) are replicated to the destination before cutover, and the partition IDs that a merge retires are never reused. The mechanics are in [Internals: Handoff and Retirement](#internals-handoff-and-retirement).
 
@@ -124,11 +124,21 @@ Key spaces that often want key-range routing:
 
 Once a key-range space has actually split, treat it as a multi-range ordered space and think in terms of **ordered range reads**, not "fetch the whole bucket from one partition". The cluster can still serve the data consistently, but the request may span multiple ranges.
 
+## Split Capacity Limits
+
+Each split creates another data partition, with its own replication and WAL work. Use `--raft-max-partitions` to cap the cluster-wide count and `--range-max-ranges-per-key-space` to keep one hot key space from consuming every available slot. Both default to `0` (unbounded). A positive cluster bound must be at least `--initial-cluster-partitions`; configure it identically on every node because the system-partition leader enforces it.
+
+At either bound, a manual split returns `PartitionLimitReached`, `determinate: true` (HTTP 409), with a reason identifying the bound. No destination partition is created and no descriptor changes. Merge or remove partitions, or raise the relevant bound, before retrying. Initial registration can share an existing data partition; the range quota is checked when splitting.
+
+Automatic count- and load-based splitting also stop at these bounds. After a cluster-limit refusal, the trigger pauses until the committed partition count falls or the cooldown expires (`RangeSplitIndivisibleCooldown`, embedded only, default 5 minutes). A full key space is skipped until its range count drops below its quota. `kahuna.range.split.limit_refusals` labels refusals with `reason="partition_limit"` or `reason="key_space_quota"`.
+
 ## How a Key Space Becomes Range-Routed
 
 Key-range routing is an explicit opt-in. The key space must be registered so Kahuna flips that space from hash mode to key-range mode and seeds its initial whole-space descriptor. You register once; every node picks up the routing mode from the committed descriptor map (see [Registration and reconciliation](#registration-and-reconciliation)).
 
-The CLI contacts the configured endpoints to register and verify their local routing views:
+A new space starts on the partition that hash routing selects for its [placement group](/docs/distributed-keyvalue-store/buckets/#placement-groups). If another space in the group already has range descriptors, the new space follows that sibling's first range instead. The sibling named exactly like the group takes precedence; otherwise the lowest ordinal sibling name is used. This keeps related row and index spaces together initially, including after the group's anchor range has moved. Later splits can separate them. Registration does not relocate existing data or rewrite existing descriptors.
+
+The CLI contacts the configured endpoints to register and verify their local routing views. If admin authorization is enabled, use a caller that supplies the [admin key](/docs/admin-operations-authorization/):
 
 ```bash
 kahuna-cli \
@@ -209,8 +219,9 @@ The split response includes `determinate`. Use it before taking action:
 | `NoRange` | `true` | The key space is unregistered or no descriptor covers the split key. |
 | `InvalidSplitKey` | `true` | The key would create an empty range or is outside the covering range. |
 | `BelowMinRangeSize` | `true` | The policy refused the split because one half would be too small. |
+| `PartitionLimitReached` | `true` | Cluster partition limit or key-space range quota reached; nothing created or changed. See [Split Capacity Limits](#split-capacity-limits). |
 | `PartitionCreationFailed` | `true` | The map did not change, though an unused partition may have been created. Retry allocates a fresh partition ID. |
-| `TransferFailed`, `QuiesceFailed`, `CutoverFailed`, `ConcurrentSplit`, `Indeterminate` | `false` | The map may still change. Re-read `GET /v1/ranges`. |
+| `TransferFailed`, `QuiesceFailed`, `QuiesceExpired`, `CutoverFailed`, `ConcurrentSplit`, `Indeterminate` | `false` | The map may still change. Re-read `GET /v1/ranges`. |
 
 Run the merge pass on demand:
 
@@ -244,5 +255,5 @@ Merge cutover records `RetiredPartitionIds` in replicated metadata. A later part
 
 Registration has two parts:
 
-- registration flips the answering node locally, then seeds the initial descriptor through the partition 0 leader and waits for local visibility
+- registration commits the seed descriptor through the partition 0 leader before flipping the registering node to key-range routing, then waits for local visibility
 - startup, live range-map apply, restore, and partition-0 snapshot installation reconcile each node's local routing registry from the committed descriptor map

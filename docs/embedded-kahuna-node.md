@@ -254,6 +254,21 @@ Related server flags: [Workers and Runtime](/docs/server-configuration/#workers-
 | `TransactionOutcomeRetentionMax` | `10000` | Strict maximum retained terminal transaction outcomes. A non-positive value disables best-effort outcome retention. |
 | `TransactionOutcomeRetentionTtl` | `5 minutes` | Age window for retained terminal transaction outcomes. A non-positive value disables age-based removal. |
 
+### Client Request Limits
+
+These options configure public REST/gRPC entry points; direct embedded operations do not inherit the key/value size, batch, or transaction mutation limits. Snapshot-hold bounds also apply to in-process hold calls. See [Key/Value Request Limits](/docs/distributed-keyvalue-store/request-limits/). `0` disables each bound.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `MaxKeyBytes` | `16384` | Maximum UTF-8 key bytes on client writes and transaction lock acquisition. |
+| `MaxValueBytes` | `4194304` | Maximum value or compare-value bytes on client writes. |
+| `MaxBatchItems` | `20000` | Maximum items in a client batch call. |
+| `MaxTransactionMutations` | `20000` | Separate written-key and acquired-lock limits in client-started transactions. |
+| `SnapshotHoldMaxLeaseMs` | `86400000` | Maximum requested lease on snapshot-hold acquire and renew. |
+| `SnapshotHoldMaxPerHolder` | `4096` | Maximum registered snapshot holds per holder. |
+| `SnapshotHoldMaxTotal` | `65536` | Maximum registered snapshot holds cluster-wide. |
+| `AdminApiKeyFile` | `""` | Admin key file path. A custom HTTP/gRPC host must also [register the gate](/docs/admin-operations-authorization/#custom-hosts). |
+
 ### Caching and Collection
 
 Related server flags: [Workers and Runtime](/docs/server-configuration/#workers-and-runtime).
@@ -261,6 +276,9 @@ Related server flags: [Workers and Runtime](/docs/server-configuration/#workers-
 | Option | Default | Description |
 |--------|---------|-------------|
 | `RevisionsToKeepCached` | `4` | Number of key revisions to keep cached in memory. |
+| `TrimFlushedRevisions` | `false` | Trim persistent archived revisions after backend flush, retaining unflushed revisions and the snapshot-hold boundary. Historical reads may fall back to disk more often. |
+| `PinnedValuePayloads` | `false` | Copy qualifying committed payloads to the pinned object heap; trades allocation/copy work for less GC relocation. |
+| `PinnedValuePayloadMinBytes` | `256` | Minimum payload size for pinned allocation when enabled. |
 | `CacheEntryTtl` | `5 minutes` | Age threshold used by lock cleanup and legacy cleanup paths. Key/value LRU eviction is budget-based. |
 | `CacheEntriesToRemove` | `1000` | Maximum entries removed by cleanup paths that use this cap. Key/value collection uses `CollectBatchMax`. |
 | `CollectionInterval` | `60 seconds` | Interval for cache collection and eviction checks. |
@@ -390,6 +408,8 @@ Related server flags: [Key-Range Split and Merge](/docs/server-configuration/#ke
 | `RangeSplitIndivisibleCooldown` | `5 minutes` | Delay before reconsidering an indivisible range. |
 | `RangeSplitSettleWindow` | `10 seconds` | Post-split delay before evaluating either child again. |
 | `RangeMoveSettleTimeout` | `10 seconds` | Maximum quiesce wait for in-flight transactions in a moving range before split or merge cutover. |
+| `RangeMoveQuiesceTtl` | `30 seconds` | Lifetime of a split/merge write fence. An exhausted window refuses cutover. Minimum 1 second. |
+| `RangeMaxRangesPerKeySpace` | `0` | Per-key-space range quota; `0` is unbounded. |
 
 ### Leader Balancing
 
@@ -411,6 +431,7 @@ Related server flags: [Replica Placement](/docs/server-configuration/#replica-pl
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `MaxPartitions` | `0` | Maximum data partitions cluster-wide; `0` is unbounded. A positive value must be at least `InitialPartitions`. Set identically on all nodes. |
 | `ReplicationFactor` | `0` | Desired voter replicas per partition. `0` keeps full replication. Prefer odd values such as `3` or `5` in multi-node deployments. |
 | `EnablePlacementRebalancer` | `false` | Enable ongoing replica-placement repair and balancing. Initial placement still applies when `ReplicationFactor` is positive. |
 | `JoinTimeout` | `60 seconds` | Join admission/initialization ceiling; does not bound the learner promotion wait. |

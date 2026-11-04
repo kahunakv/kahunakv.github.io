@@ -234,6 +234,8 @@ kahuna-cli -c "https://kahuna-1:8082" --cluster-members
 
 The output includes membership version, local role, and an `Initialized` flag. `Initialized` tells you whether the contacted node has completed cluster initialization. A node can appear in membership before it is ready to serve key/value traffic, so use the server readiness endpoint `GET /v1/cluster/health` for load balancer or orchestrator probes.
 
+When servers require an admin key, add `--admin-key-file /path/to/admin-keys` to `kahuna-control` admin commands. See [Admin Operations Authorization](/docs/admin-operations-authorization/).
+
 Use `--cluster-leave` to decommission a node by committing its removal from the cluster roster:
 
 ```bash
@@ -244,6 +246,8 @@ kahuna-cli \
 ```
 
 Stop the process only after the response reports that the node left. Kahuna refuses a leave that would remove the last voter (a member that counts toward the [quorum](/docs/glossary/#quorum)) needed to keep the cluster available.
+
+`Evicted` means the node was evicted while leave was in progress, without evacuating its replicas. Keep the process running until it rejoins, then retry the leave.
 
 On a cluster using replica placement, leave drains the node first. The response includes `drained` when the [replicas](/docs/glossary/#replica-and-replication-factor) it hosted were moved to other nodes before removal. `DrainTimedOut` means the node stayed in the roster; retry later or raise `--raft-decommission-drain-timeout`.
 

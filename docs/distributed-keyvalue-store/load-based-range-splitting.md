@@ -81,6 +81,7 @@ Kahuna Server exposes the primary range split and merge knobs as command-line fl
 | not exposed | `RangeSplitLoadImbalanceMax` | `0.8` | Maximum acceptable write fraction on either child after selecting a split key |
 | not exposed | `RangeSplitIndivisibleCooldown` | `5 minutes` | Delay before reconsidering a range that cannot be split usefully |
 | `--range-split-settle-window` | `RangeSplitSettleWindow` | `10 seconds` | Post-split delay before either child can be evaluated again |
+| `--range-move-quiesce-ttl` | `RangeMoveQuiesceTtl` | `30 seconds` | Write-fence lifetime for a split or merge; exhausted windows refuse cutover with `QuiesceExpired`. Minimum 1 second |
 | `--range-move-settle-timeout` | `RangeMoveSettleTimeout` | `10 seconds` | Maximum quiesce wait for in-flight transactions in the moving range before split or merge cutover |
 | `--range-split-threshold` | `RangeSplitThreshold` | `1000` keys | Count-based split threshold. `0` disables count-based splitting |
 | `--range-split-min-range-size` | `RangeSplitMinRangeSize` | `10` keys | Minimum number of sampled keys required in each child |
@@ -88,6 +89,8 @@ Kahuna Server exposes the primary range split and merge knobs as command-line fl
 | `--range-collection-interval` | `CollectionInterval` | `60 seconds` | Sampling cadence for split/merge checks and related maintenance |
 
 `RangeSplitSettleWindow` must be at least `MinLeaderStability`. Embedded startup rejects a shorter settle window. `LeaderBalancerReportInterval` must also remain shorter than `LeaderBalancerReportTtl`.
+
+Count- and load-based splitting both honor the [cluster partition limit and per-key-space range quota](/docs/distributed-keyvalue-store/key-range-sharding/#split-capacity-limits). A busy range does not bypass either limit. Configure `--raft-max-partitions` and `--range-max-ranges-per-key-space` to bound growth; `0` leaves each unbounded.
 
 ## Hot Keys Cannot Be Split
 
