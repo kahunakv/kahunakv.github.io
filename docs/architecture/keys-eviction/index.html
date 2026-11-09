@@ -12,7 +12,7 @@
 <link rel="search" type="application/opensearchdescription+xml" title="Kahuna" href="/opensearch.xml">
 
 <meta name="algolia-site-verification" content="CCAE52A1C7A7537A"><link rel="stylesheet" href="/assets/css/styles.631018e7.css">
-<script src="/assets/js/runtime~main.1dedc325.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.6e12fdd6.js" defer="defer"></script>
 <script src="/assets/js/main.7b7053b3.js" defer="defer"></script>
 </head>
 <body>
@@ -97,6 +97,7 @@
 <p>Destructive revision cleanup confirms local system-partition application before sampling the protective hold floor. Failure skips the pass (<code>kahuna.snapshot_floor.prune_skipped_unconfirmed_total</code>). Acquire overlapping a local prune generation returns <code>MustRetry</code>; this is not a cluster-wide atomic barrier and cannot restore already-deleted history. See <a class="" href="/docs/distributed-keyvalue-store/snapshot-holds/#acquire-and-prune-races">Snapshot Holds</a>.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="idle-rocksdb-revision-sweeps">Idle RocksDB Revision Sweeps<a href="#idle-rocksdb-revision-sweeps" class="hash-link" aria-label="Direct link to Idle RocksDB Revision Sweeps" title="Direct link to Idle RocksDB Revision Sweeps" translate="no">​</a></h3>
 <p>After a complete clean sweep, RocksDB can skip later backend-wide revision-pruning cycles while no relevant state has changed. New writes, retention settings, snapshot-floor changes, or reaching the next age-expiry frontier reopen sweep work. <code>kahuna.persistence.revision_prune.sweep_idle_total</code> counts skipped idle cycles. Quiescence avoids repeated scans; it does not disable configured retention or remove snapshot-hold protection.</p>
+<p>If a pass deleted rows and exhausted its budget, an idle writer immediately runs another pass; queued writes take priority. Deletes use shared unsynced batches, so a crash can leave history to reclaim again. Ending a sweep flushes the memtable, and delete-heavy tables become candidates for background compaction. Filesystem space is reclaimed asynchronously. See <a class="" href="/docs/storage/overview/#reclaiming-deleted-key-history">deleted-key history cleanup</a> for age retention, hold protection, and the current deletion record that remains.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="persistent-vs-ephemeral-keys">Persistent vs Ephemeral Keys<a href="#persistent-vs-ephemeral-keys" class="hash-link" aria-label="Direct link to Persistent vs Ephemeral Keys" title="Direct link to Persistent vs Ephemeral Keys" translate="no">​</a></h2>
 <p>Persistent and ephemeral keys use the same in-memory key/value collector, but eviction only drops the memory copy of a persistent key, while it removes an ephemeral key for good; see <a class="" href="/docs/architecture/durability-levels/">Durability Levels</a>.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="reads-scans-and-cache-reloads">Reads, Scans, and Cache Reloads<a href="#reads-scans-and-cache-reloads" class="hash-link" aria-label="Direct link to Reads, Scans, and Cache Reloads" title="Direct link to Reads, Scans, and Cache Reloads" translate="no">​</a></h2>

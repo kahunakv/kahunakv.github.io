@@ -12,7 +12,7 @@
 <link rel="search" type="application/opensearchdescription+xml" title="Kahuna" href="/opensearch.xml">
 
 <meta name="algolia-site-verification" content="CCAE52A1C7A7537A"><link rel="stylesheet" href="/assets/css/styles.631018e7.css">
-<script src="/assets/js/runtime~main.1dedc325.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.6e12fdd6.js" defer="defer"></script>
 <script src="/assets/js/main.7b7053b3.js" defer="defer"></script>
 </head>
 <body>
@@ -63,7 +63,9 @@
 <!-- -->
 <p>This prevents writes from silently landing on stale partitions after a split or merge.</p>
 <p>Splits and merges also pause writes to the moving key interval during the copy and cutover window. Kahuna combines a range lock on the source partition with a replicated descriptor deadline, so writes that race with movement are refused retryably. <code>--range-move-quiesce-ttl</code> bounds this write fence (default 30 seconds, minimum 1 second). A move that exhausts its quiesce window refuses cutover with <code>QuiesceExpired</code>; it must retry rather than route away from writes admitted after the fence expired.</p>
-<p>In short, a write that races a split or merge gets a retryable error and is never lost. Committed data, transaction records, and prepared <a class="" href="/docs/glossary/#write-intent">write intents</a> are replicated to the destination before cutover, and the partition IDs that a merge retires are never reused. The mechanics are in <a href="#internals-handoff-and-retirement" class="">Internals: Handoff and Retirement</a>.</p>
+<p>A write racing a split or merge can receive a retryable error. Before settling transactions and completing the copy, the mover asks the source partition&#x27;s leader to confirm quorum leadership, apply the quiescing range map, and drain previously dispatched writes. Failure to confirm within five seconds returns <code>QuiesceFailed</code> and leaves cutover for a retry. During a mixed-version upgrade, an older source that lacks this confirmation RPC uses the legacy path with a warning; a later leader change before that leader applies the map also remains a race window. Do not treat the quiesce check as an unconditional guarantee across those cases.</p>
+<p>Committed data, transaction records, and prepared <a class="" href="/docs/glossary/#write-intent">write intents</a> are replicated to the destination before cutover, and the partition IDs that a merge retires are never reused. The mechanics are in <a href="#internals-handoff-and-retirement" class="">Internals: Handoff and Retirement</a>.</p>
+<p>Moves also carry revisions at registered snapshot holds, including deletions that occur between copy passes. Other old historical timestamps can return <code>MustRetry</code> after cutover; a merge bounds history across the entire merged range. See <a class="" href="/docs/distributed-keyvalue-store/snapshot-holds/#history-across-replica-and-range-moves">history across replica and range moves</a>. A key&#x27;s selected history must fit in one replication message; a very large value or many held revisions can fail a move attempt instead of cutting over.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="partition-0">Partition 0<a href="#partition-0" class="hash-link" aria-label="Direct link to Partition 0" title="Direct link to Partition 0" translate="no">​</a></h2>
 <p>The range-descriptor map is replicated on <strong>partition 0 (the system partition)</strong> so every node can resolve key-range ownership consistently.</p>
 <p>At a high level:</p>

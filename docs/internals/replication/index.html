@@ -12,7 +12,7 @@
 <link rel="search" type="application/opensearchdescription+xml" title="Kahuna" href="/opensearch.xml">
 
 <meta name="algolia-site-verification" content="CCAE52A1C7A7537A"><link rel="stylesheet" href="/assets/css/styles.631018e7.css">
-<script src="/assets/js/runtime~main.1dedc325.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.6e12fdd6.js" defer="defer"></script>
 <script src="/assets/js/main.7b7053b3.js" defer="defer"></script>
 </head>
 <body>
@@ -62,6 +62,8 @@
 <p>The production implementation uses gRPC and shared batchers. This lets Kahuna combine related inter-node requests and reduce per-operation network overhead.</p>
 <p>The gRPC batchers can coalesce independent server-to-server envelopes onto one stream message while keeping each inner request&#x27;s own ID, type, hop count, and response. Order-sensitive maintenance and placement operations are serialized per stream so a later maintenance request cannot overtake an earlier one from the same peer.</p>
 <p>Forwarded key/value and lock requests include a hop count. If leadership or placement metadata is briefly inconsistent, the hop budget turns a potential forwarding loop into <code>MustRetry</code>, letting the client retry after the cluster view converges.</p>
+<p>After a shared inter-node stream fails, reopening backs off per peer from 100 ms, doubling to a maximum of 2 seconds. Requests arriving during backoff receive their operation&#x27;s retryable unavailable response; the batcher does not open a stream for each request. A successful write resets backoff. Logs report the failure episode at Warning, summarize ongoing failures at most every 10 seconds, and report recovery at Information. The <code>Kahuna</code> meter exposes <code>kahuna.internode.stream_opens_total</code>, <code>kahuna.internode.stream_failures_total</code>, and <code>kahuna.internode.requests_refused_by_backoff_total</code>, tagged by <code>peer</code>.</p>
+<p>Grouped commit probes also tolerate a stale leader hint: a follower resolves the actual leaders for keys it cannot answer and forwards one grouped probe per leader. This avoids repeatedly probing the same follower; it does not remove retryable outcomes while leadership is unavailable.</p>
 <p>With <a class="" href="/docs/replica-placement/">replica placement</a>, the receiving node may also be a non-host for the target partition. It still accepts the client request, resolves the partition&#x27;s hosting replicas, and forwards to a node that can serve the partition. Hosting changes can race with requests, so callers may see retryable responses while a partition is moving.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="replica-placement">Replica Placement<a href="#replica-placement" class="hash-link" aria-label="Direct link to Replica Placement" title="Direct link to Replica Placement" translate="no">​</a></h2>
 <p>Kahuna&#x27;s default placement is full replication: every voter hosts every partition. A positive replication factor stores each data partition on an explicit replica set.</p>
