@@ -433,16 +433,16 @@
   background: var(--console-bg);
 }
 
-.tabs button span {
-  min-width: 1.4rem;
-  padding: 0 0.4rem;
-  color: var(--pine);
-  border-radius: 999px;
-  background: var(--mint);
-  font-size: 0.7rem;
-  font-weight: 700;
-  line-height: 1.3rem;
-  text-align: center;
+.tabTitle {
+  margin-bottom: -1px;
+  padding: 0.5rem 0.85rem;
+  color: var(--console-text);
+  border: 1px solid var(--console-border);
+  border-bottom-color: var(--console-bg);
+  border-radius: 0.5rem 0.5rem 0 0;
+  background: var(--console-bg);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .tabPanel {
@@ -615,13 +615,48 @@
   font-variant-numeric: tabular-nums;
 }
 
-.ephemeral {
-  margin-left: 0.5rem;
+/* The partition that holds a key, and the server that leads it. */
+.partitionChip {
+  display: inline-block;
   padding: 0.05rem 0.45rem;
-  color: #c4b5fd;
-  border: 1px solid rgba(196, 181, 253, 0.35);
+  color: #f6c86b;
+  border: 1px solid rgba(246, 200, 107, 0.4);
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-family: var(--code-font);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.partitionLeader {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--console-muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.servedBy {
+  margin: 0;
+  padding: 0.55rem 0.9rem;
+  color: var(--console-muted);
+  border-top: 1px solid var(--console-border);
+  font-size: 0.75rem;
+}
+
+.servedBy strong {
+  color: var(--mint);
+  font-family: var(--code-font);
+}
+
+.consoleNotice {
+  margin: 0 0.9rem 0.9rem;
+  padding: 0.55rem 0.75rem;
+  color: #ffd5d8;
+  border: 1px solid rgba(255, 142, 149, 0.35);
+  border-left: 3px solid var(--console-error);
+  border-radius: 0.4rem;
+  background: rgba(255, 142, 149, 0.08);
+  font-size: 0.8rem;
 }
 
 .writeList {
@@ -640,6 +675,10 @@
 
 .writeList li span:last-child {
   color: var(--console-dim);
+}
+
+.writeList li > .keyCell {
+  flex: 1;
 }
 
 .tabPanel > .tableWrap {
@@ -717,4 +756,57 @@
   border-radius: 0.5rem;
   font-size: 0.75rem;
   font-weight: 500;
+}
+
+/* A read of a key that does not exist. */
+.missing {
+  padding: 0.75rem 0.9rem;
+  color: var(--console-text);
+  font-size: 0.85rem;
+}
+
+.missing p {
+  margin: 0;
+}
+
+.missingWhere {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem !important;
+  color: var(--console-muted);
+  font-size: 0.75rem;
+}
+
+/* Expiration countdown of a key in a Get result. */
+.tableWrap td.expires {
+  min-width: 6.5rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.leaseBar {
+  display: block;
+  height: 3px;
+  margin-top: 0.3rem;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--console-border);
+}
+
+.leaseBar span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--mint);
+  transition: width 1s linear;
+}
+
+.tableWrap td.expired {
+  color: var(--console-error);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leaseBar span { transition: none; }
 }

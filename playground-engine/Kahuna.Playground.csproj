@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.WebAssembly">
 
   <!--
-    The browser playground host: a single embedded Kahuna node with in-memory storage and WAL, on the
+    The browser playground host: a cluster of embedded Kahuna nodes with in-memory storage and WAL, on the
     default single-threaded browser-wasm runtime. The page loads the runtime and calls the exports on
     Kahuna.Playground.PlaygroundEngine directly.
 
@@ -9,7 +9,7 @@
     thread-free assemblies of Kahuna.Core and Kommander. Keep WasmEnableThreads off, because the
     multithreaded runtime needs COOP/COEP headers that GitHub Pages does not send.
 
-    Build and copy the runtime into the site with scripts/build-playground-engine.sh.
+    Build and copy the runtime into the site with npm run build:playground-engine.
   -->
   <PropertyGroup>
     <TargetFramework>net10.0-browser</TargetFramework>
@@ -29,7 +29,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Kahuna.Core" Version="1.12.4" />
+    <PackageReference Include="Kahuna.Core" Version="1.16.1" />
   </ItemGroup>
 
 </Project>

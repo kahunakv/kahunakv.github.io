@@ -12,7 +12,7 @@ Services that run on many machines keep hitting the same coordination problems: 
 
 To get started:
 
-1. **Run Kahuna.** Start a standalone server with Docker; see [Server Installation](/docs/server-installation/).
+1. **Run Kahuna.** Start a standalone server with Docker; see [Server Installation](/docs/server-installation/). For an easy way to run a local cluster, [add Kahuna to a .NET Aspire AppHost](/docs/server-installation/#start-a-three-node-cluster): one declaration creates the nodes and wires peer discovery, per-node storage, application connections, and readiness checks.
 2. **Do a tutorial.** The [Key/Value Store](/docs/intro/), [Distributed Locking](/docs/tutorials/distributed-locking/), and [Distributed Sequencer](/docs/tutorials/distributed-sequencer/) tutorials use the [Kahuna CLI](/docs/kahuna-cli/) against your local server.
 3. **Pick a building block** for your problem from the sections below. [Why Kahuna?](/docs/why-kahuna/) explains when Kahuna is a good fit and when it is not.
 

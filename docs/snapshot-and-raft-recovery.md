@@ -19,7 +19,9 @@ Snapshot transfer works under both full replication and per-partition placement.
 
 A data-partition snapshot carries the partition's key/value rows, persistent lock state, completion receipts, transaction records, prepared [intents](/docs/glossary/#write-intent), and committed-head ledger. Partition 0 (the system partition) transfers the range map and snapshot-floor hold registry instead.
 
-A snapshot is an at-least boundary, not an exact point-in-time image: it can include writes applied after the requested position, and the receiver replays the retained log tail idempotently. Do not use it as a backup. The complete exported snapshot occupies memory on the sender.
+A snapshot is an at-least boundary, not an exact point-in-time image: it can include writes applied after the requested position, and the receiver replays the retained log tail idempotently. Do not use it as a backup. Exports carry current rows, revisions at registered snapshot holds, and recent history, rather than the complete revision archive. The receiver refuses historical timestamps outside the recorded coverage; see [history across replica and range moves](/docs/distributed-keyvalue-store/snapshot-holds/#history-across-replica-and-range-moves).
+
+The sender assembles the complete export before sending it. Each export buffer keeps up to 64 MiB in memory, then spills under `{StoragePath}/snapshot-export_{StorageRevision}`. Buffers are separate, so this is not a total heap limit. Released exports delete their files, and startup removes leftovers. Without a storage path, or if the spill directory cannot be prepared, export stays in memory (directory failure logs a warning). A later spill-file write failure fails the export.
 
 The receiver stages the whole transfer and verifies every checksum before it changes any state. A truncated or corrupt transfer leaves the prior state untouched. It then replaces the partition's state in batches. See [Snapshot Transfer Internals](/docs/internals/snapshot-transfer/) for the export order, the two-pass install, and batch sizes.
 
@@ -31,17 +33,18 @@ Installing a snapshot is a recoverable replacement, not a single transaction ove
 
 ## Snapshot Options
 
-This is the reference for snapshot transfer options. Server durations are **milliseconds** on the command line. Embedded options with the `Raft` prefix are nullable `EmbeddedKahunaOptions` properties that leave the default of Kommander (Kahuna's Raft library) unchanged unless set; embedded durations are `TimeSpan`.
+This is the reference for snapshot transfer options. Server durations are **milliseconds** on the command line; embedded durations are `TimeSpan`. Nullable embedded options use Kommander defaults, except that disk staging raises the default receive cap and transfer-step timeout as shown below. Server defaults remain unchanged even with disk staging enabled.
 
 | Server flag | Embedded option | Default | Meaning |
 |---|---|---|---|
-| `--raft-snapshot-max-pending-bytes` | `RaftSnapshotMaxPendingBytes` | 512 MiB | Total staged bytes across receive sessions, on disk and in memory together, including installing sessions. Must be positive. |
+| `--raft-snapshot-max-pending-bytes` | `RaftSnapshotMaxPendingBytes` | Server: 512 MiB. Embedded: 64 GiB with disk staging, otherwise 512 MiB. | Total staged bytes across receive sessions, on disk and in memory together, including installing sessions. Must be positive. |
 | `--raft-snapshot-max-pending-sessions` | `RaftSnapshotMaxPendingSessions` | 8 | Concurrent receive sessions across all partitions. Older inactive sessions can be evicted after the cap. Must be positive. |
 | `--raft-snapshot-receive-session-ttl` | No corresponding option | 30 s | Idle receive-session lifetime before the receiver drops its buffered bytes. |
 | `--raft-snapshot-staging-directory` | `RaftSnapshotStagingDirectory` | See below | Private per-node directory for spilling received bytes. |
 | `--raft-snapshot-staging-memory-bytes` | `RaftSnapshotStagingMemoryBytes` | 64 MiB | Resident staged-byte budget with a staging directory; zero stages entirely on disk. Ignored without a directory. Must be nonnegative. |
 | `--raft-snapshot-chunk-ack-timeout` | `RaftSnapshotChunkAckTimeout` | 15 s | Bound a chunk acknowledgement or install-status call; not a total install deadline. |
-| `--raft-snapshot-transfer-step-timeout` | `RaftSnapshotTransferStepTimeout` | 120 s | Bound lack of progress in export, stream reads, sends, or the install's reported bytes read; not total transfer/install duration. |
+| `--raft-snapshot-transfer-step-timeout` | `RaftSnapshotTransferStepTimeout` | Server: 120 s. Embedded: 15 min with disk staging, otherwise 120 s. | Bound lack of progress in export, stream reads, sends, or the install's reported bytes read; not total transfer/install duration. The complete export is one step. |
+| `--raft-lost-acknowledged-entries-policy` | `RaftLostAcknowledgedEntriesPolicy` | `Quarantine` | Policy after acknowledged log entries disappear; `AcceptAndLog` accepts loss. See [recovery semantics](#lost-acknowledged-wal-entries). |
 | `--raft-reseed-request-timeout` | No corresponding option | 180 s | Bounds a requested repair's apply hold and the leader's pending checkpoint request. |
 | `--raft-allow-legacy-snapshot-senders` | No corresponding option | disabled | Accept snapshot chunks from older senders that omit session metadata. Use only for temporary mixed-version upgrades. |
 | `--raft-grpc-enable-snapshot-compression` | No corresponding option | disabled | Compress Raft snapshot transfers sent over gRPC. |
@@ -54,7 +57,9 @@ Snapshot rescue, export-retry caching, and live-replica compaction holds are lea
 
 The server default is no staging directory, so all staged bytes remain in memory. Embedded nodes with `Storage = "sqlite"` or `"rocksdb"` and a `StoragePath` default to `{StoragePath}/snapshot-staging_{StorageRevision}`; other embedded nodes default to memory staging. An explicit embedded staging directory must be nonblank and overrides this choice. `EmbeddedKahunaCluster.CreateInMemoryAsync` gives each member a subdirectory named for that member under an explicit base staging directory; the cluster still uses memory backend and WAL storage. Without a fixed `StorageRevision`, the automatic staging directory gets a fresh GUID on each construction; use a stable revision when reopening stored state.
 
-Directories must be private to one node: Kommander deletes spill files there at startup. Distinct storage revisions provide distinct automatic directories when hosts share a storage path. Spill-to-disk limits staged-byte residency, not the decoded stores, export buffers, backend caches, or total heap. A spill-file write failure fails that receive session and causes sender retries. Size the pending cap above the largest expected partition snapshot even when staging on disk.
+Directories must be private to one node: Kommander deletes spill files there at startup. Distinct storage revisions provide distinct automatic directories when hosts share a storage path. Receive staging limits staged-byte residency, not decoded stores, backend caches, or total heap; sender export buffers spill separately. A spill-file write failure fails that receive session and causes sender retries. Size the pending cap above the largest expected partition snapshot even when staging on disk, allowing for concurrent sessions. Budget disk for installed state, received snapshots, and outgoing exports.
+
+An export above the sender's own receive cap logs a warning: a peer with the same cap will refuse it and may repeatedly retry without catching up. Exports taking at least 30 seconds also log duration and size. For large partitions, configure every server's receive cap and step timeout explicitly; for example, `--raft-snapshot-max-pending-bytes 68719476736 --raft-snapshot-transfer-step-timeout 900000` with a private staging directory. This allows 64 GiB of total staged bytes and a 15-minute stall budget; it does not reserve disk or guarantee that every partition of that size can install.
 
 ### Acknowledgement and Deadlines
 
@@ -119,6 +124,8 @@ kahuna-server \
 
 `Installed` means application import and the durable [WAL](/docs/glossary/#write-ahead-log-wal) boundary completed. `SkippedAlreadyCovered` means the receiver proved that its application/boundary already covers the requested state, so it did not import. Senders advance from the reported covered index and log a skip separately from a seeded replica. Merely accepting the terminal bytes (`ChunkAccepted`) is not accepted as installation success.
 
+Application import also records [per-phase timings](/docs/internals/snapshot-transfer/#install-timing); inspect them when an install exceeds 10 seconds. A successful import persists its application durability floor at the installed boundary after fallible hooks complete, so subsequent compaction and restart see the installed progress.
+
 Skip logs appear at Warning with the rule and the snapshot, applied, installed-boundary, and present/committed positions. A skip whose contiguous present position is below the snapshot is logged as an error. Use these positions to distinguish already-covered state from an unexpected log hole.
 
 Embedded hosts can query `node.Raft.GetSnapshotStatuses(partitionId)` for sender diagnostics for that Raft partition such as `AwaitingInstall`, `AwaitingInstallIndex`, `InFlightFor`, and the last failure/backoff. Waiting on a progressing install is separate from a failed transfer. These diagnostics are not a cluster-wide readiness guarantee.
@@ -130,6 +137,26 @@ Embedded hosts can query `node.Raft.GetSnapshotStatuses(partitionId)` for sender
 | `raft.snapshot.receive_in_memory_bytes` | Resident portion of assembling and installing bytes; spill bytes are excluded. |
 | `raft.snapshot.install_duration_ms` | Receiver install duration from terminal chunk to outcome. |
 | `raft.snapshot.install_peak_heap_bytes` | Sampled managed-heap high-water mark around installation; it does not fall when an install ends and is not a precise per-partition allocation measurement. |
+
+## Lost Acknowledged WAL Entries
+
+Recovery also detects a log shorter than the data this node previously acknowledged as durable. The default `--raft-lost-acknowledged-entries-policy Quarantine` prevents that partition from voting or campaigning until a leader repairs the missing range or a snapshot covers it. RocksDB WAL sync and hard-state ledgers also detect/reconcile acknowledged writes lost from the live log; these checks are separate from the materialized-store checksum checks.
+
+`AcceptAndLog` explicitly accepts the loss, logs it at Critical, rewrites the acknowledged watermark to the surviving frontier, and permits normal operation. It is a data-loss policy, not a repair mechanism. In a single-voter partition, acknowledged data missing from the only copy is lost unless restored from a backup. Embedded hosts use `RaftLostAcknowledgedEntriesPolicy`; null keeps `Quarantine`.
+
+RocksDB WAL `Corruption` also fail-stops that WAL engine. Its partitions step down and stop voting, campaigning, and acknowledging; normal retry/reopen does not repair it. `AcceptAndLog` applies to lost acknowledged entries, not to a corrupt engine. Preserve the files and repair or rebuild the affected storage.
+
+An application durability floor below the WAL's compaction floor is a different failure: the materialized store needs a prefix no longer present in its own log. Recovery refuses suffix-only replay and requests a whole-partition snapshot. This partition withholds candidacy but can still vote. Without a healthy peer, restore from backup. `/v1/cluster/health` reports these conditions in `partitionStorageFaults`; the node remains unready while faults persist. Materialized-store damage and replacement notices appear separately in [`storageFault`](/docs/storage/overview/#storage-damage-and-node-identity).
+
+## Repeated Out-of-Memory Restarts
+
+A process that repeatedly runs out of memory during recovery can consume a fresh peer snapshot on every restart without becoming usable. Kahuna records fail-fast OOM exits in `out-of-memory-exits.log` under the storage path. Recording is best effort; OS/container kills that bypass managed fail-fast are not counted. On startup, `--oom-restart-breaker-threshold` (default **3**) trips after that many consecutive recorded exits within ten minutes of process startup, under the same managed heap limit, in the trailing one-hour window. No configured storage path means no persistent exit ledger.
+
+A tripped node still restores and votes, but withholds candidacy for hosted partitions and returns HTTP 503 with the reason in `storageFault`. This does not reduce the memory required to restore or guarantee that the next restore will fit. `kahuna.process.out_of_memory_restart_breaker_trips_total` counts trips once per process.
+
+Size the heap for retained durable transaction metadata as well as rows. Terminal records younger than `DurableRecordRetentionFloor` cannot be reclaimed early even when count/byte budgets are exceeded; the resident count can therefore approach commit rate × retention floor. Recovery and snapshot installation need allocation headroom above that baseline. See [durable transaction retention](/docs/server-configuration/#durable-transaction-retention).
+
+Inspect the ledger's fault site and uptime, increase the managed heap/container budget when recovery needs more space, then restart. A changed managed heap limit, aging exits out of the one-hour window, or removing the ledger changes the next startup's count. The trip remains latched during the current process. `0` disables tripping but still records exits; clearing the ledger without fixing the memory shortage can resume the crash loop. Embedded hosts use `OutOfMemoryRestartBreakerThreshold`.
 
 ## Catch-Up Grace After a Snapshot
 

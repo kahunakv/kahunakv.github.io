@@ -46,4 +46,4 @@ curl http://127.0.0.1:8081/v1/dashboard/metrics
 
 `/v1/dashboard/summary` reports node identity, readiness, role, partition counts, membership version, replication factor, storage paths, backup status, version, uptime, heap bytes, thread count, and refresh interval.
 
-`/v1/dashboard/metrics` reports a curated subset of Kahuna and Kommander metrics for browser display, including the persistence backlog gauges used by the write backpressure gate. For full production telemetry, export the `Kahuna` and `Kommander` meters through your observability stack.
+`/v1/dashboard/metrics` reports a curated subset of Kahuna and Kommander metrics for browser display, including the persistence backlog gauges used by the write backpressure gate. For production telemetry, configure [server OTLP export](/docs/server-configuration/#opentelemetry-export) to collect engine/runtime metrics, request spans, and logs.

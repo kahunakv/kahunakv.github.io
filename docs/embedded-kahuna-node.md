@@ -62,6 +62,8 @@ public sealed class EmbeddedKahunaNode : IAsyncDisposable
 }
 ```
 
+`node.Kahuna` exposes the core `IKahuna` API. Its `LocateAndTryGetValue` now returns `ValueTask<(KeyValueResponseType, ReadOnlyKeyValueEntry?)>`: ordinary `await` calls remain valid, but adapters requiring a `Task` must convert with `.AsTask()`. Consume each returned `ValueTask` once. This change does not affect the network client's `KahunaClient.GetKeyValue` API.
+
 ## In-Memory Embedded Cluster
 
 `EmbeddedKahunaCluster` starts several full Kahuna nodes in one process. Each member has its own storage, Raft log, [actors](/docs/glossary/#actor), and [partition](/docs/glossary/#partition) leadership. The members communicate through in-memory Kahuna and Raft transports, so no socket is opened, but replication, elections, failover, and catch-up still run.
@@ -225,6 +227,7 @@ Related server flags: [Workers and Runtime](/docs/server-configuration/#workers-
 | `ScanPageRetryBudgetMs` | `5000` | Maximum retry window for one range-scan page that keeps returning retryable state before the scan fails loudly with a retryable server error. |
 | `Functions` | empty registry | User-defined script functions callable by this embedded node. Register functions before constructing the node. |
 | `FunctionSlowWarnMs` | `50` | Logs a warning when a user-defined function takes longer than this many milliseconds. `0` disables the warning. |
+| `OutOfMemoryRestartBreakerThreshold` | `3` | Early-recovery OOM exits under the same heap limit before withholding candidacy/readiness on the next start. `0` disables the breaker. See [recovery steps](/docs/snapshot-and-raft-recovery/#repeated-out-of-memory-restarts). |
 | `FailFastOnOutOfMemory` | `true` | Fail fast on `OutOfMemoryException` so an orchestrator can restart the embedded process. When disabled, Kahuna records the fatal fault and reports unhealthy through health surfaces that expose the core state. |
 
 ### Transactions, Admission, and Scripts
@@ -323,6 +326,7 @@ Related server flags: [Key/Value Watch and History](/docs/server-configuration/#
 | `HistoryHoldMaxPerHolder` | `4096` | Maximum history holds one holder may register. `0` removes the bound. |
 | `HistoryHoldMaxTotal` | `65536` | Maximum history holds in the registry. `0` removes the bound. |
 | `WatchMaxCapacity` | `65536` | Largest frame capacity a watch may request. |
+| `WatchMaxBufferedBytesPerNode` | `1073741824` (1 GiB) | Aggregate watch buffer budget; exceeding it ends the largest-buffered watch. `0` is unbounded. |
 | `WatchMaxBufferedBytes` | `67108864` (64 MiB) | Bytes one watch may buffer for a slow reader before it ends with an overflow. |
 | `WatchMaxPerNode` | `65536` | Most watches open on the node at once. `0` removes the bound. |
 | `WatchMaxPerCall` | `1024` | Most watches one gRPC watch call may hold open. `0` removes the bound. |
@@ -357,14 +361,16 @@ Related server flags: [Persistent Revision Retention](/docs/server-configuration
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `PersistentRevisionRetentionCount` | `0` | Maximum persisted revisions retained per key. `0` keeps every revision. |
+| `PersistentRevisionRetentionCount` | `0` | Maximum persisted revisions retained per key. `0` disables count-based retention. |
 | `PersistentRevisionRetentionAge` | `0` | Maximum persisted revision age. `TimeSpan.Zero` disables age-based retention. |
 | `PersistentRevisionCleanupInterval` | `5 minutes` | Minimum interval between full persistent-revision cleanup sweeps. |
 | `PersistentRevisionCleanupBatchSize` | `10000` | Maximum revision records deleted per cleanup pass. |
 | `PersistentRevisionCleanupOnWrite` | `true` | Queue keys touched by writes for targeted revision cleanup. |
+| `RevisionPruneConfirmTimeout` | `1 second` | Catch-up confirmation deadline before destructive revision pruning; timeout skips pruning. Nonpositive values normalize to this default. |
+| `RevisionPruneConfirmRetryInterval` | `5 seconds` | Delay before retrying confirmation after a timeout. Nonpositive values normalize to this default. |
 | `PersistentRevisionCleanupTimeBudget` | `250 ms` | Wall-clock budget for one targeted persistent revision cleanup pass during a flush cycle. |
 
-Live [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/) clamp persistent revision cleanup. While a hold is active, the boundary revision needed by the held timestamp and every newer revision are kept even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise remove them.
+Registered [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/), including expired holds not yet released or purged, clamp persistent revision cleanup. Until removal, the boundary revision needed by the held timestamp and every newer revision are kept even if `PersistentRevisionRetentionCount` or `PersistentRevisionRetentionAge` would otherwise remove them.
 
 ### Backups and Point-in-Time Recovery
 
@@ -375,9 +381,8 @@ Related server flags: [Backups and Point-in-Time Recovery](/docs/server-configur
 | `PitrWindow` | `1 hour` | Recoverable WAL history. Values are normalized to more than zero and at most 6 hours. |
 | `BaseSnapshotInterval` | `30 minutes` | Intended interval between base checkpoints. It must be positive and no greater than `PitrWindow`. It also contributes to the protected WAL floor. |
 | `BackupDir` | empty | Root directory for backup manifests and artifacts. Backup methods on `node.Kahuna` are disabled when empty. |
-| `BackupTarget` | `local` | Backup storage target. `local` uses `BackupDir`; other target names require `BackupStorageProvider`. |
+| `BackupTarget` | `local` | Case-sensitive target registered in `StorageProviders`. `local` uses `BackupDir`; external targets implement `IBackupStorageProvider`. `BackupDir` must be set to enable backups for every target. |
 | `BackupScratchDir` | empty | Local staging directory for backup targets that cannot receive checkpoints directly. Size it for one full backup. |
-| `BackupStorageProvider` | `null` | Host-supplied factory for object storage or another non-local backup target. Null uses the local directory implementation. |
 | `BackupClusterId` | empty | Operator-assigned cluster identity stamped into backup manifests. Use the same value on every node. |
 | `BackupMacKeyFile` | empty | Path to the HMAC-SHA-256 key file used to authenticate backup manifests. Keep it outside `BackupDir`. |
 | `RestoreRoot` | empty | Server-owned root directory that restore targets must be contained within. Setting it enables confined remote restore. |
@@ -441,6 +446,7 @@ Related server flags: [Replica Placement](/docs/server-configuration/#replica-pl
 | `MaxReplicaMovesPerPass` | `4` | Maximum new replica add/remove sequences started in one placement pass across repair and balance priorities. |
 | `MaxConcurrentReplicaTransfers` | `1` | Maximum partitions with an in-flight learner catch-up or replica removal caused by balance moves. |
 | `MaxConcurrentReplicaRepairs` | `3` | Maximum in-flight repair moves for under-replicated ranges or replicas stranded on departed nodes. |
+| `RaftDeadMemberEvictionGrace` | `null` (10 minutes) | How long a member stays `Dead` before roster removal. A supplied value must be positive. |
 | `DecommissionDrainTimeout` | `2 minutes` | Graceful leave wait for evacuating this node's hosted replicas before removal. |
 | `ReplicaCountDeadband` | `1` | Replica-count imbalance tolerated before balance moves start. |
 | `Zone` | `null` | Optional zone or rack hint used to spread replicas across failure domains. |
@@ -463,7 +469,9 @@ Related server flags: [Raft Communication](/docs/server-configuration/#raft-comm
 | `HttpTimeout` | `5` | Raft REST request timeout in seconds. |
 | `HttpVersion` | `2.0` | HTTP protocol version used by Raft REST communication. |
 
-Snapshot receive staging and deadline options (`RaftSnapshotMaxPendingBytes`, `RaftSnapshotMaxPendingSessions`, `RaftSnapshotStagingDirectory`, `RaftSnapshotStagingMemoryBytes`, `RaftSnapshotChunkAckTimeout`, and `RaftSnapshotTransferStepTimeout`) are nullable and keep Kommander defaults unless set. Their defaults, validation rules, automatic staging directory, and an embedded example are in [Snapshot Options](/docs/snapshot-and-raft-recovery/#snapshot-options). Server follower-apply scheduling and live-replica lag-window/cap flags have no matching embedded options.
+Snapshot receive staging and deadline options (`RaftSnapshotMaxPendingBytes`, `RaftSnapshotMaxPendingSessions`, `RaftSnapshotStagingDirectory`, `RaftSnapshotStagingMemoryBytes`, `RaftSnapshotChunkAckTimeout`, and `RaftSnapshotTransferStepTimeout`) are nullable. With disk staging, the default receive cap is 64 GiB and the transfer-step timeout is 15 minutes; without it, they are 512 MiB and 2 minutes. Other unset options keep Kommander defaults. Validation rules, the automatic staging directory, and an embedded example are in [Snapshot Options](/docs/snapshot-and-raft-recovery/#snapshot-options). Server follower-apply scheduling and live-replica lag-window/cap flags have no matching embedded options.
+
+`RaftLostAcknowledgedEntriesPolicy` is nullable and defaults to Kommander's `Quarantine` policy. It controls recovery after acknowledged WAL entries disappear; see [WAL loss recovery](/docs/snapshot-and-raft-recovery/#lost-acknowledged-wal-entries). Kestrel connection caps, SSE keep-alives, and automatic server OTLP export have no matching `EmbeddedKahunaOptions` settings.
 
 ### Raft Timing
 

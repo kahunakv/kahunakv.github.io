@@ -14,7 +14,7 @@ Kahuna's distributed sequencer provides named sequences of increasing integers t
 
 - **Per-sequence monotonicity**: values increase for a single sequence name.
 - **Uniqueness**: committed allocations for the same sequence are never duplicated within one incarnation. An update starts a new incarnation and can reissue numbers if it lowers the current value; see [Sequence model and allocation](/docs/distributed-sequencer/model/).
-- **Gaps, not duplicates**: values are unique and increasing, but not gap-free. A node reserves a block of values (1000 by default) and serves it from memory; when the node restarts, evicts the sequence, or loses ownership of it, the unused rest of the block is skipped. This matters for invoice numbers and other domains that must not skip numbers; see [Gaps](/docs/distributed-sequencer/idempotency/#gaps).
+- **Gaps, not duplicates**: values are unique and increasing, but not gap-free. A node reserves a block of values (1000 by default) and serves it from memory; when the node restarts, evicts the sequence, or loses ownership of it, the unused rest of the block is skipped. If your numbers must not skip, as with invoice numbers, see [Gaps](/docs/distributed-sequencer/idempotency/#gaps).
 - **Range reservations**: callers can reserve contiguous batches such as `101..200`.
 - **Idempotent retries**: allocation requests can include an idempotency key so retried requests return the original allocation.
 - **Safe updates**: callers can change the current value, increment, max value, or per-sequence block size (how many values a node reserves in one durable commit and then serves from memory). Before it reports the update, Kahuna waits until no node can still hand out values from a block reserved under the old settings.

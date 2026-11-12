@@ -2,9 +2,9 @@
 
 An actor is a single-threaded owner of state: it holds part of a node's in-memory data and processes one message at a time, so the code inside it needs no locks. Read this page to understand where a request waits inside a node and why work on one key never races with other work on the same key.
 
-Kahuna builds its actors on the Nixie actor library. They are not just a concurrency convenience; they define the ownership boundaries for locks, key/value entries, proposals, and background persistence.
+Kahuna builds its actors on the Nixie actor library. Actors also define the ownership boundaries for locks, key/value entries, proposals, and background persistence.
 
-## Why Actors
+## What Actors Provide
 
 Actors give Kahuna:
 

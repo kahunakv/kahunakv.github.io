@@ -8,12 +8,12 @@ services/matchmaking
 services/inventory
 ```
 
-Kahuna stores all keys of one bucket on the same [partition](/docs/glossary/#partition). Keys spread across different partitions cannot give you the following two things, but a bucket does:
+Kahuna stores all keys of one bucket on the same [partition](/docs/glossary/#partition). This gives you:
 
 - **One consistent read of the whole group.** `get by bucket "services"` returns every key in the bucket from one partition in one operation, instead of several separate reads that can each see a different moment.
 - **Local multi-key transactions.** A transaction that only touches keys in one bucket stays on one partition instead of spanning several.
 
-You get buckets automatically from how you name keys; there is nothing to configure. If you know Redis Cluster, a bucket plays the role of a hash tag such as `{services}`, except that Kahuna takes it from the key name itself. They are Kahuna's simplest way to group related keys, and they fit small, related sets such as service discovery entries, a tenant's settings, or a group of feature flags. For large or growing key spaces, see [Buckets or key ranges?](/docs/distributed-keyvalue-store/key-range-sharding/#buckets-or-key-ranges)
+You get buckets automatically from how you name keys; there is nothing to configure. If you know Redis Cluster, a bucket plays the role of a hash tag such as `{services}`, except that Kahuna takes it from the key name itself. Buckets fit small, related sets such as service discovery entries, a tenant's settings, or a group of feature flags. For large or growing key spaces, see [Choosing Between Buckets and Key Ranges](/docs/distributed-keyvalue-store/key-range-sharding/#choosing-between-buckets-and-key-ranges).
 
 ## What a Bucket Means
 
@@ -33,9 +33,9 @@ In the default hash-routed model, Kahuna hashes that bucket boundary so every ke
 
 Bucket prefixes are normalized for routing and locking. `services` and `services/` name the same bucket, so scans, prefix locks, range locks, deletes, and writes do not accidentally split across different [actors](/docs/glossary/#actor) because of a trailing slash.
 
-## Why Buckets Are Useful
+## Example: Service Discovery
 
-For example, store service discovery entries under one bucket:
+Store service discovery entries under one bucket:
 
 ```kahuna
 set "services/auth" "localhost:8081"
@@ -83,4 +83,4 @@ For how hash routing works, see [Hash Routing](/docs/distributed-keyvalue-store/
 
 ## When Buckets Are Not Enough
 
-A bucket always lives on one partition. When keys must stay ordered or the key space may grow beyond one partition, use key-range routing instead. See [Buckets or key ranges?](/docs/distributed-keyvalue-store/key-range-sharding/#buckets-or-key-ranges) for the comparison and examples.
+A bucket always lives on one partition. When keys must stay ordered or the key space may grow beyond one partition, use key-range routing instead. See [Choosing Between Buckets and Key Ranges](/docs/distributed-keyvalue-store/key-range-sharding/#choosing-between-buckets-and-key-ranges) for the comparison and examples.

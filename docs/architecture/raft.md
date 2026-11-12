@@ -1,7 +1,5 @@
 # Raft Consensus in Kahuna
 
-## Overview
-
 A distributed system keeps copies of its data on several machines so it can survive losing one of them. The hard part is making every copy agree on the same changes, in the same order, even when machines crash or the network drops messages. A **consensus protocol** solves that problem.
 
 **Raft** is a widely used consensus protocol. One node is elected **leader** and orders every change. A change counts as committed only after a majority of nodes, called a **quorum**, has stored it. If the leader fails, the remaining nodes elect a new one, and no committed change is lost.
@@ -12,7 +10,7 @@ For you as a Kahuna user, Raft is the reason that:
 - All clients observe changes to a key in the same order.
 - The cluster keeps serving after a leader fails, following a short election.
 
-You do not configure or call Raft directly in application code. The rest of this page explains how Kahuna uses it, for readers who want to understand availability, failover, and recovery behavior.
+You do not configure or call Raft directly in application code. The sections below cover how Kahuna uses it for availability, failover, and recovery.
 
 ## Consensus and Replication Mechanisms
 
@@ -106,7 +104,7 @@ Kahuna implements the Raft protocol through the [Kommander library](https://gith
 
 A follower below retained log history needs whole-partition snapshot seeding. Receive staging caps account for disk and memory together; peers acknowledge staging separately and poll installation with a progress-based stall bound. See [Snapshot Installation and Raft Recovery](/docs/snapshot-and-raft-recovery/) for snapshot options, failure behavior, and installation limits.
 
-How long a leader keeps log entries decides how often followers need a snapshot. The following describes Kahuna's pinned **Kommander 1.12.3** behavior. The server passes these options to `RaftConfiguration`; the replication-scheduling and live-replica lag-window/cap flags have no matching `EmbeddedKahunaOptions` properties, so do not assume server/embedded configuration parity. Flag defaults are in [Raft Communication](/docs/server-configuration/#raft-communication) and [Raft Queueing and Batching](/docs/server-configuration/#raft-queueing-and-batching).
+How long a leader keeps log entries decides how often followers need a snapshot. The following describes Kahuna's pinned **Kommander 1.13.3** behavior. The server passes these options to `RaftConfiguration`; the replication-scheduling and live-replica lag-window/cap flags have no matching `EmbeddedKahunaOptions` properties, so do not assume server/embedded configuration parity. Flag defaults are in [Raft Communication](/docs/server-configuration/#raft-communication) and [Raft Queueing and Batching](/docs/server-configuration/#raft-queueing-and-batching).
 
 ### Live-Replica Retention
 
@@ -119,6 +117,8 @@ max(CompactionLiveReplicaLagBudget, min(recent-window entries, CompactionLiveRep
 `--raft-compaction-live-replica-lag-budget` defaults to 1,000,000 entries. `--raft-compaction-live-replica-lag-window` (180,000 ms) sizes the recent history from the leader's observed commit rate; `0` uses the entry budget alone. `--raft-compaction-live-replica-lag-cap` (10,000,000 entries) caps the window's increase; nonpositive disables that increase, and it does not lower a larger entry budget. A new leader initially uses the entry budget.
 
 This is a bounded catch-up aid, **not a guarantee that a pause of that many milliseconds always avoids a snapshot**. Liveness, the separate silent-peer retention window, checkpoints, application durability, and PITR floors also constrain compaction. A replica outside retained history still needs snapshot seeding.
+
+An unresolved snapshot install additionally holds retention at its seeding boundary across transfer retries. Followers report the in-progress install index in acknowledgements so a successor leader can preserve that tail too. Peers being seeded do not receive entry-carrying backfill while the install holds their executor; a stalled install is waited on rather than re-anchored as ordinary log catch-up. This can retain more WAL than the normal live-replica budget until the install resolves. It does not guarantee install completion or replace snapshot deadlines.
 
 ### Followers Retain the Leader's Catch-Up Floor
 

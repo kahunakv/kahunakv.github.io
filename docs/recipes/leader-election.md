@@ -178,7 +178,7 @@ await db.saveCheckpoint({
 </TabItem>
 </Tabs>
 
-This matters when a leader pauses, loses the lease, and later resumes believing it still owns the role. The new leader's higher token lets the resource reject the old leader's late write (see [Fencing Tokens](/docs/distributed-locks/fencing-tokens/)):
+If a leader pauses, loses the lease, and later resumes believing it still owns the role, the new leader's higher token lets the resource reject the old leader's late write (see [Fencing Tokens](/docs/distributed-locks/fencing-tokens/)):
 
 ```mermaid
 sequenceDiagram

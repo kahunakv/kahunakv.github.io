@@ -175,7 +175,7 @@ internal sealed class AcmeBackend : IPersistenceBackend
 
 The members without a default implementation are the ones the example implements: storing and reading lock and key/value rows, revision and prefix and range reads, pruning revision history, and `CreateCheckpoint`.
 
-One rule matters more than the others. **`StoreKeyValues` must never let an older record replace a newer current row.** The same committed write can reach the backend more than once and out of order, so the current row of a key may only move forward. A backend that breaks this rule can make committed data invisible.
+The most important rule: **`StoreKeyValues` must never let an older record replace a newer current row.** The same committed write can reach the backend more than once and out of order, so the current row of a key may only move forward. A backend that breaks this rule can make committed data invisible.
 
 The other members have defaults. Override them when your engine can do better or when you need the feature:
 
@@ -184,6 +184,9 @@ The other members have defaults. Override them when your engine can do better or
 | `ScanKeyValues`, `ScanLocks`, `DeleteKeyValues`, `DeleteLocks` | Throw `NotSupportedException` | Seeding a replica with a full partition copy and moving replicas between nodes. Without them, a lagging replica that the log alone cannot catch up cannot be seeded from this node. |
 | `CreateCheckpointAsOf` and the `Supports*Checkpoint` flags | Fall back to `CreateCheckpoint`, or report no support | Exact and key-filtered backups. |
 | `StoreDurabilityFloors`, `GetDurabilityFloor`, `RemoveDurabilityFloor` | No durability floor | Recording which log entries are already stored, so a restart replays less. |
+| `GetFailStopReason` | No fault | Reporting permanent backend corruption. Kahuna refuses requests with `StorageCorrupt` and contains the node when a fault is latched. |
+| `KeepsDurabilityFloors` | `false` | Reporting floor `0` for an empty floor-tracking store, so recovery cannot skip a missing application prefix. |
+| `SupportsStoreIdentity`, `GetStoreIdentity`, `WriteStoreIdentity`, `HoldsDurableState` | No identity support | Detecting foreign stores and empty replacement directories before trusting their durability floors. See [node identity](/docs/storage/overview/#storage-damage-and-node-identity). |
 | `GetPrunedHistoryFloor` | No history was pruned | Making backups fail safely when pruned history makes an exact cut impossible. Override it if your engine prunes history. |
 | `GetKeyValues`, `GetKeyValueWithRecentRevisions`, `GetKeyValueByPrefixAtOrBefore` | Built from the required reads | Faster batch reads and historical bucket and prefix reads. |
 
@@ -252,11 +255,27 @@ await using EmbeddedKahunaNode node = new(options, loggerFactory);
 await node.StartAsync(cancellationToken);
 ```
 
+## Backup Storage Providers
+
+You can use the same extension mechanism to store backups outside the local filesystem without replacing the key/value backend or Raft WAL. Implement `IBackupStorageProvider` from `Kahuna.Server.Persistence.Pitr`:
+
+| Member | Contract |
+|---|---|
+| `TargetName` | Case-sensitive name selected by `--pitr-backup-target`. The built-in name is `local`. |
+| `RequiresLocalScratch` | Require a local checkpoint staging directory; remote artifact stores need one. |
+| `Open(BackupStorageContext)` | Validate settings without I/O, then return an `IBackupStorage`. The context supplies `BackupDir`, `ScratchDir`, `Configuration`, `Logger`, and `ExtensionOptions`. |
+
+`IBackupStorage.StartAsync(CancellationToken)` connects and validates the target before the node joins. Only after success may callers use its `Manifests` (`IBackupStorageTarget`) and `Artifacts` (`IBackupArtifactStore`). A failed start must permit another attempt. `Dispose` can race with startup and must release partially constructed clients. PITR bootstrap opens a separate instance before the node exists, so a provider must support more than one `Open` per process.
+
+Publish a public concrete provider with a public parameterless constructor, and load its assembly with `--extension-assembly`. Select its name, pass provider-prefixed settings through `--extension-option`, and configure [backup and scratch directories](/docs/backups-and-point-in-time-recovery/#backup-targets). For embedded hosts, register the provider with `options.StorageProviders.Register(provider)` before constructing the node and set `BackupTarget`; the old `BackupStorageProvider` factory option no longer exists.
+
+Publish the extension with its dependencies and `.deps.json`. Kahuna shares its own `Kahuna.Core` and Kommander assemblies with the extension; an extension built against a newer shared dependency than the running server fails startup with a version mismatch. Validate settings without including secret values in exception messages.
+
 ## Important Considerations
 
 - **Trust:** an extension assembly runs inside the server process with the server's privileges. Nothing sandboxes it. Build, sign, and roll it out like a server binary.
 - **Names:** on `kahuna-server`, an extension cannot reuse the name of an engine that is already registered, such as `rocksdb`, and startup fails if it tries. In embedded code, `StorageProviders.Register` replaces an engine with the same name.
-- **Startup failures:** startup also fails if the assembly is missing or publishes no function provider and no storage engine.
+- **Startup failures:** startup also fails if the assembly is missing or publishes no function provider, storage engine, or backup provider. Duplicate backup target names, including `local`, are refused by the extension loader.
 - **Every node:** each node opens its own storage, so every node that uses the engine must load the same extension build. Compare the SHA-256 in the startup logs.
 - **Versions:** the interfaces are part of `Kahuna.Core`. Build the extension against the `Kahuna.Core` version of the server you run.
 

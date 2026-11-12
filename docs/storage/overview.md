@@ -54,6 +54,28 @@ If RocksDB latches a storage error after a failed append, for example after a te
 
 This path is for transient storage failures. Operators still need to fix the underlying disk or filesystem problem. While the backend remains unavailable, affected partitions keep unflushed writes resident and checkpoints cannot advance for those writes.
 
+### Storage Damage and Node Identity
+
+RocksDB verifies block checksums on reads. When its materialized store reports `Corruption`, Kahuna latches a fail-stop for the rest of the process: subsequent backend operations are refused instead of serving data from the damaged store. Point reads and scans surface `StorageCorrupt`; a scan does not silently treat a corrupt block as the end of the range. Corruption found while opening the store, or an undecodable durability-floor row, prevents startup.
+
+`StorageCorrupt` is a terminal response for that node, distinct from retryable `MustRetry`. The node withholds candidacy for its hosted partitions and attempts to step down where it leads, so healthy replicas can take over. Containment is asynchronous and reasserted by the writer; it does not guarantee an immediate handoff. A single-replica partition remains unavailable until repaired. Health returns HTTP 503 with `storageFault`; `kahuna.persistence.store_fail_stops_total` counts the fail-stop once per process. The background writer does not repeatedly reopen a corrupt store through the transient disk-full recovery path.
+
+Repair requires operator action: preserve the damaged files, then restore a valid backup or move the damaged materialized-store directory aside and restart with its WAL intact to rebuild from peers. Inspect [partition storage health](/docs/snapshot-and-raft-recovery/#lost-acknowledged-wal-entries); peer rebuild requires a healthy source, and a single-replica partition cannot recover missing compacted history without a backup. This checksum/fail-stop contract applies to the RocksDB materialized store; SQLite has no equivalent page-checksum protection in Kahuna.
+
+A RocksDB store is also stamped with its node's Raft endpoint, creation ID, and creation time. Startup checks the stamp before trusting durability floors:
+
+| Store found at startup | Behavior |
+|------------------------|----------|
+| Matching endpoint | Open normally. |
+| Different endpoint | Refuse startup with `StoreIdentityMismatchException`; use this node's own store. Do not copy another node's live directory into place. |
+| No stamp, but existing rows or floors | Adopt the older store by stamping it. |
+| Empty store with no WAL history | Stamp it as a fresh store. |
+| Empty store under a WAL with history | Report replacement at Critical and through `storageFault`, then rebuild from the log or a peer snapshot. |
+
+An empty floor-tracking store reports data-partition durability floor `0`. If the WAL still holds the full prefix, it can replay; if the required prefix was compacted, Kahuna requires a whole-partition snapshot rather than applying a surviving suffix to incomplete data. The replacement notice keeps readiness false for that process even after catch-up; inspect recovery and restart after repair. `kahuna.persistence.store_replaced_at_start_total` records the startup finding.
+
+Backup images omit the identity stamp, so restore/bootstrap can stamp the receiving node's own identity. See [Backups](/docs/backups-and-point-in-time-recovery/) for supported restore workflows.
+
 ### Shared RocksDB Memory
 
 When Kahuna uses RocksDB for both `--storage` and `--wal-storage`, one node opens two separate RocksDB databases:
@@ -101,6 +123,14 @@ On a busy RocksDB store, flushes and compactions can compete with synchronized w
 | `--storage-max-background-compactions` | `0` (RocksDB default) | Caps concurrent store compactions. |
 
 Set these only after measuring disk contention. A rate below the incoming write load can let RocksDB level-0 files accumulate and eventually slow writes. SQLite and memory ignore these settings; a custom engine may choose to honor them.
+
+### Reclaiming Deleted-Key History
+
+Deleting a persistent key does not immediately free its revision archive. Persistent revision retention is disabled by default. With `--persistent-revision-retention-age` configured (in seconds), RocksDB removes a deleted key's archived rows once the deletion is older than that age and no registered snapshot hold needs history from before the deletion. Count-based retention alone does not release the complete deleted-key archive.
+
+The current deletion record remains: it preserves the revision number, and recreating the key continues from that revision. There is no operation to forget the key's revision identity. SQLite also prunes old revisions by age, but retains the deletion's history row; its database file does not automatically shrink.
+
+RocksDB batches cleanup and flushes the memtable at the end of a sweep cycle so background compaction can reclaim files. Disk usage can fall later than logical deletion; holds, pruning budgets, and compaction pacing can delay reclamation. `kahuna.persistence.revision_prune.delete_records_released_total` counts deleted-key archives released, and `kahuna.persistence.revision_prune.sweep_catch_up_passes_total` counts immediate follow-up passes on an idle writer after a productive, budget-limited pass. See [revision pruning](/docs/architecture/keys-eviction/#persistent-revision-pruning) and [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/).
 
 ### Direct Reads and Statistics
 

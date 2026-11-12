@@ -231,7 +231,7 @@ Interactive sessions take the options from the client. The .NET client exposes t
 
 ## Interactive Transactions
 
-Use an interactive transaction when your logic needs your own language and libraries between reads and writes. As with a database transaction, you start it, run operations, and then commit or roll back. The difference is that Kahuna's server-side coordinator owns the confirmed working set and finalization state.
+Use an interactive transaction when your logic needs your own language and libraries between reads and writes. As with a database transaction, you start it, run operations, and then commit or roll back. Kahuna's server-side coordinator owns the confirmed working set and finalization state.
 
 Interactive transaction sessions are available through both the gRPC and REST transports.
 

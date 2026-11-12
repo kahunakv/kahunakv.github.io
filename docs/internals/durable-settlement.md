@@ -117,6 +117,10 @@ This separation lets PITR replay materializing settlement without reconstructing
 
 ## Durability, replay and recovery
 
+### Replay after a range move
+
+A node can catch up the source and destination partition logs in a different order. Settlement records the `(transaction ID, epoch, key)` identity even when the local intent is absent. A later prepare checks settled identities across the node's partition slices and is rejected as a settled replay while that identity is retained. The staged-base fence compares against the slice of the log carrying the prepare first, rather than treating a newer destination seed as the source log's earlier state. These checks prevent replay from recreating a settled intent when a key moves between prepare and settlement.
+
 ### Keeping the log until derived rows are durable
 
 One materializing settlement record can produce several backend rows at the **same Raft log index**, plus completion receipts. Flushing one of those rows is insufficient: the others may still need the log for recovery.

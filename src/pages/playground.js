@@ -1,16 +1,14 @@
 import Layout from '@theme/Layout';
-import KahunaPlayground from '@site/src/components/KahunaPlayground';
+import ClusterPlayground from '@site/src/components/ClusterPlayground';
 import styles from './playground.module.css';
 
 export default function PlaygroundPage() {
   return (
     <Layout
       title="Playground"
-      description="Run Kahuna scripts against a real Kahuna node in your browser, compiled to WebAssembly. Nothing to install.">
+      description="Run a real Kahuna cluster in your browser, compiled to WebAssembly. Stop and restart servers, add and remove them, and run Kahuna scripts on any server.">
       <main className={styles.page}>
-        <div className="container">
-          <KahunaPlayground />
-        </div>
+        <ClusterPlayground />
       </main>
     </Layout>
   );

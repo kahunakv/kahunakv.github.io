@@ -28,6 +28,7 @@ See [Backend I/O Scheduler](/docs/backend-io-scheduler/) for how backend read/wr
 | `--grpc-cleartext-ports` | One or more cleartext HTTP/2 ports for gRPC without TLS. These listeners are gRPC-only and reject HTTP/1.1. TLS suppresses cleartext listeners unless `--allow-plaintext-listener` is set. | `8083` for standalone nodes without TLS; none by default when joining a cluster |
 | `--https-certificate` | Path to the HTTPS certificate used by Kestrel and trusted for internal HTTPS communication. | empty |
 | `--https-certificate-password` | Password for the HTTPS certificate. | empty |
+| `--max-concurrent-connections` | Maximum open connections across Kestrel listeners. Excess connections close immediately. Shared-port peer traffic also counts; leave headroom for reconnecting peers. `0` is unbounded. | `16384` |
 | `--allow-plaintext-listener` | Bind cleartext HTTP and h2c listeners even when an HTTPS certificate is configured. Node-only surfaces still refuse cleartext callers in `MutualTls` mode. | disabled |
 
 Use `--grpc-cleartext-ports` for trusted local or private-network deployments that need h2c gRPC without TLS overhead. Do not expose cleartext gRPC on untrusted networks because client request payloads are unencrypted. If `--raft-grpc-scheme http://` points inter-node traffic at those ports, Raft and leader-forwarding payloads are also unencrypted.
@@ -60,7 +61,7 @@ See [Admin Operations Authorization](/docs/admin-operations-authorization/) for 
 
 ## Health and Readiness
 
-Kahuna exposes `GET /v1/cluster/health` as a readiness endpoint for load balancers and orchestrators. It returns HTTP `200` only when the node has completed cluster initialization and has a serving cluster role. It returns HTTP `503` while the node is still initializing or is not a member.
+Kahuna exposes `GET /v1/cluster/health` as a readiness endpoint for load balancers and orchestrators. It returns HTTP `200` only when the node has completed cluster initialization and has a serving cluster role. It returns HTTP `503` while the node is still initializing, is not a serving member, or reports a fatal runtime or storage fault.
 
 The JSON response includes:
 
@@ -70,6 +71,8 @@ The JSON response includes:
 | `initialized` | `true` after the node has received and applied the cluster partition map. |
 | `localRole` | Local membership role, such as `Voter`, `Learner`, `Leaving`, or `NotMember`. |
 | `hostedPartitions` | Number of data partitions hosted locally. Informational only; with replica placement a ready node can host zero partitions and still forward requests. |
+| `storageFault` | Materialized-store corruption, a store found empty under an existing log, or a tripped recovery OOM breaker. Remains set for the process lifetime; see [Storage Damage](/docs/storage/overview/#storage-damage-and-node-identity) and [Recovery OOMs](/docs/snapshot-and-raft-recovery/#repeated-out-of-memory-restarts). |
+| `partitionStorageFaults` | Hosted partition storage faults and evidence, such as lost acknowledged WAL entries or an application floor below compacted history. Readiness stays false while this list is nonempty. |
 | `fatalFault` | Set when the process observed a fatal runtime fault, currently out-of-memory, and was configured not to fail fast. A node with this field set returns `503` for the rest of its process lifetime. |
 
 Use readiness for traffic routing. Membership can be available before the node is initialized, so a node may answer membership queries while still refusing key/value requests.
@@ -89,6 +92,20 @@ The dashboard is intentionally read-only. It does not start backups, move replic
 |----------|---------|
 | `GET /v1/dashboard/summary` | Node identity, readiness, hosted partition count, cluster mode, replication factor, storage paths, backup status, version, uptime, heap bytes, thread count, and refresh interval. |
 | `GET /v1/dashboard/metrics` | Curated in-process metrics from Kahuna and Kommander, capped for browser polling. |
+
+## OpenTelemetry Export
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export server metrics, ASP.NET Core request spans, and logs to an OTLP collector. Without that variable the server does not register the telemetry SDK or exporters.
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317 \
+OTEL_SERVICE_NAME=kahuna-production \
+kahuna-server --raft-nodename kahuna-1
+```
+
+Standard `OTEL_*` settings configure protocol, headers, service name, and resource attributes. The service name defaults to `kahuna`; the resource also includes `kahuna.node.name`. Metrics include the `Kahuna`, `Kommander`, and `System.Runtime` meters plus ASP.NET Core instrumentation. Export does not replace the [dashboard](/docs/status-dashboard/) or add a Prometheus scrape endpoint.
+
+Server request tracing excludes Raft routes, methods whose names begin with `Batch`, gRPC `/KeyValuer/Watch`, health probes, and dashboard polling. The filter is path-based; REST watches and other streaming routes are not all excluded. Use [.NET client telemetry](/docs/dotnet-client/#client-telemetry) for individual operations inside gRPC batch streams. Custom embedded hosts configure their own telemetry providers; this automatic exporter is part of `kahuna-server`.
 
 ## Client Routing Hints
 
@@ -184,8 +201,8 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--max-script-depth` | Deepest transaction script syntax tree accepted. This bounds parser and evaluator stack use for deeply nested expressions or very long statement lists. | `256` |
 | `--disable-script-actor-turns` | Run every script on the general transaction path. By default, eligible auto-commit scripts over one ephemeral key run inside one actor turn. | disabled |
 | `--disable-fused-ephemeral-finalize` | Finalize every ephemeral transaction with separate prepare, range-lock probe, and commit messages. By default, a transaction whose whole write set is one ephemeral key can finalize in one actor turn. | disabled |
-| `--extension-assembly` | Path to an assembly publishing user-defined script functions through `IKahunaFunctionProvider`, or storage engines for `--storage` and `--wal-storage` through `IPersistenceBackendProvider` and `IWalProvider`. Repeatable. Every cluster node that may coordinate scripts should load the same function set. Dependencies load from the assembly's directory. An extension cannot replace a built-in storage engine name. The assembly runs as fully trusted code in the server process. See [Custom Storage Engines](/docs/storage/custom-storage-engines/). | none |
-| `--extension-option` | Settings for extension storage engines as `key=value` pairs after one flag, for example `--extension-option acme.mode=fast acme.region=west`. Values may contain `=`; duplicate or empty keys stop startup. Kahuna passes the map to storage provider contexts without interpreting it. | none |
+| `--extension-assembly` | Path to an assembly publishing user-defined script functions through `IKahunaFunctionProvider`, or storage engines for `--storage` and `--wal-storage` through `IPersistenceBackendProvider` and `IWalProvider`, or backup targets through `IBackupStorageProvider`. Repeatable. Every cluster node that may coordinate scripts should load the same function set. Dependencies load from the assembly's directory. An extension cannot replace a built-in storage engine name. The assembly runs as fully trusted code in the server process. See [Custom Storage Engines](/docs/storage/custom-storage-engines/). | none |
+| `--extension-option` | Settings for extension storage engines and backup targets as `key=value` pairs after one flag, for example `--extension-option acme.mode=fast acme.region=west`. Values may contain `=`; duplicate or empty keys stop startup. Kahuna passes the map to storage provider contexts without interpreting it. | none |
 | `--function-slow-warn-ms` | Log a warning when a user-defined script function takes longer than this many milliseconds. `0` disables the warning. | `50` |
 | `--revisions-to-cache` | Recent revisions retained per key in memory; must be at least 1. Older persistent revisions can fall back to disk; older ephemeral revisions have no disk history. | `4` |
 | `--trim-flushed-revisions` | Drop flushed persistent revisions from the resident archive, preserving unflushed history and the snapshot-hold boundary. Historical reads may need more disk I/O. Ephemeral archives are unchanged. | disabled |
@@ -195,7 +212,8 @@ Replication factor controls which nodes host each partition. `0` keeps the defau
 | `--cache-entries-to-remove` | Maximum entries removed by cleanup paths that use this cap. Values less than or equal to `0` are normalized from the key/value collection batch size. | `100` |
 | `--dirty-objects-writer-delay` | Delay between dirty object writer flush passes, in milliseconds. | `200` |
 | `--checkpoint-interval` | Period, in seconds, at which dirty partitions checkpoint after flushes so the Raft WAL retention floor can advance and old log entries can compact. | `30` |
-| `--fail-fast-on-oom` | Terminate the process on `OutOfMemoryException` so an orchestrator restarts the node with a clean heap. Enabled by default; the server CLI cannot turn it off. | enabled |
+| `--fail-fast-on-oom` | Fail fast on `OutOfMemoryException`. If disabled in a custom/embedded configuration, the fatal fault still leaves readiness false. | `true` |
+| `--oom-restart-breaker-threshold` | Consecutive early-recovery OOM exits under the same managed heap limit that trip the breaker on the next start. The node restores and votes but withholds candidacy and readiness. `0` disables the breaker, not exit recording. See [recovery steps](/docs/snapshot-and-raft-recovery/#repeated-out-of-memory-restarts). | `3` |
 
 ## Client Request Limits
 
@@ -224,6 +242,8 @@ These bounds apply at REST/gRPC key/value entry points, including the client bat
 | `--transaction-origin-tags` | Retain a transaction's origin label in its prepared intents and watch events. Enable only when every node understands it. | disabled |
 | `--watch-max-capacity` | Largest frame capacity a watch may request. A request above it is refused as invalid, so a caller cannot make the node buffer without bound. | `65536` |
 | `--watch-max-buffered-bytes` | Bytes of keys and values one watch may buffer for a slow reader, including frames held back during a replay or behind a pending intent. A watch over the limit ends with an overflow. | `67108864` (64 MiB) |
+| `--watch-max-buffered-bytes-per-node` | Aggregate buffered watch bytes. Exceeding it ends the largest-buffered watch with `Lagged(Overflow)`. Keep above `--max-value-bytes`; `0` is unbounded. | `1073741824` (1 GiB) |
+| `--watch-sse-keepalive-seconds` | Idle interval before a REST watch writes an SSE comment to detect disconnected peers. `0` disables comments. | `15` |
 | `--watch-max-per-node` | Most watches open on the node at once, across every client surface. `0` removes the bound. | `65536` |
 | `--watch-max-per-call` | Most watches one gRPC watch call may hold open. One call can carry many watches, and HTTP/2 stream limits do not count them. `0` removes the bound. | `1024` |
 | `--watch-max-concurrent-replays` | Most watch replays (one per resumed partition) the node runs at once. A resume that finds no free slot is refused with a retry. `0` removes the bound. | `64` |
@@ -280,8 +300,8 @@ These options tune automatic splitting and merging for key spaces registered wit
 |---------------------|-------------|---------------|
 | `--pitr-window` | Recoverable WAL history in seconds: how far back a restore target may be. Values are normalized at startup: a non-positive value becomes `3600` (one hour) and a value over `21600` (6 hours) is capped at `21600`. Increasing this value increases retained WAL storage. | `3600` |
 | `--base-snapshot-interval` | Intended interval between base checkpoints per partition, in seconds. A shorter interval reduces WAL replay during restore. Values are normalized at startup: a non-positive value becomes `1800` (30 minutes) and a value longer than `--pitr-window` is reduced to the window. This setting contributes to the protected WAL floor but does not schedule backups automatically. | `1800` |
-| `--pitr-backup-dir` | Root directory for backup catalog manifests and artifacts. Kahuna creates it when needed. Backup REST/gRPC, client, and CLI operations are disabled when this is empty. It is required by `--pitr-bootstrap-from`. | empty |
-| `--pitr-backup-target` | Backup storage target. `local` stores manifests and artifacts under `--pitr-backup-dir`. Other values require a host-registered backup storage provider. | `local` |
+| `--pitr-backup-dir` | Root directory for backup catalog manifests and artifacts. Kahuna creates it when needed. Backup REST/gRPC, client, and CLI operations are disabled when this is empty, including for remote targets. It is required by `--pitr-bootstrap-from`. | empty |
+| `--pitr-backup-target` | Backup storage target. `local` stores manifests and artifacts under `--pitr-backup-dir`. Other case-sensitive names require an `IBackupStorageProvider` registered by the host or loaded with `--extension-assembly`; unknown names fail startup. See [Backup Targets](/docs/backups-and-point-in-time-recovery/#backup-targets). | `local` |
 | `--pitr-backup-scratch-dir` | Local staging directory used when the selected backup target cannot be written to directly by the storage engine. Size it for one full backup. | empty |
 | `--pitr-backup-cluster-id` | Operator-assigned cluster identity stamped into backup manifests. Set the same value on every node to prevent cross-cluster chain resolution. | empty |
 | `--pitr-backup-mac-key-file` | Path to the HMAC-SHA-256 key file used to authenticate backup manifests. Deploy the same key contents to every node, keep it outside `--pitr-backup-dir`, and make it readable only by the server user. | empty |
@@ -304,15 +324,17 @@ See [Backups and Point-in-Time Recovery](/docs/backups-and-point-in-time-recover
 
 | Command Line Option | Description | Default Value |
 |---------------------|-------------|---------------|
-| `--persistent-revision-retention-count` | Maximum persisted key/value revisions to keep per key. `0` keeps revisions forever. | `0` |
+| `--persistent-revision-retention-count` | Maximum persisted key/value revisions to keep per key. `0` disables count-based retention. | `0` |
 | `--persistent-revision-retention-age` | Maximum age of persisted key/value revisions in seconds. `0` disables age-based retention. | `0` |
 | `--persistent-revision-cleanup-interval` | Minimum interval between full persistent revision cleanup sweeps, in seconds. | `300` |
 | `--persistent-revision-cleanup-batch-size` | Maximum revision records deleted per cleanup pass. | `10000` |
+| `--revision-prune-confirm-timeout` | Maximum milliseconds to confirm partition 0 catch-up before a destructive prune. Timeout skips pruning and retains queued work. Nonpositive values normalize to `1000`. | `1000` |
+| `--revision-prune-confirm-retry-interval` | Milliseconds before another confirmation attempt after a timeout. Immediate failures retry next cycle. Nonpositive values normalize to `5000`. | `5000` |
 | `--persistent-revision-cleanup-time-budget` | Wall-clock budget, in milliseconds, for one targeted persistent revision cleanup pass during a flush cycle. Keys not reached stay queued for the next cycle. | `250` |
 | `--persistent-revision-cleanup-on-write` | Keep targeted persistent revision cleanup after writes enabled. This is the default behavior. | enabled |
 | `--disable-persistent-revision-cleanup-on-write` | Disable targeted persistent revision cleanup after writes. | disabled |
 
-Persistent revision cleanup is clamped by live [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/). A held snapshot timestamp keeps the boundary revision needed by that timestamp, and every newer revision, even if the count or age retention settings would otherwise prune them.
+Persistent revision cleanup is clamped by registered [snapshot holds](/docs/distributed-keyvalue-store/snapshot-holds/). The oldest registered timestamp protects its boundary revision and every newer revision, including for expired holds until replicated release or purge removes them. See [deleted-key history cleanup](/docs/storage/overview/#reclaiming-deleted-key-history) for RocksDB reclamation after deletion.
 
 ## Durable Transaction Retention
 
@@ -347,6 +369,7 @@ Snapshot receive staging, deadline, compatibility, and compression flags (`--raf
 | `--raft-grpc-enable-append-logs-coalescing` | Coalesce multiple AppendLogs calls into one gRPC frame per write cycle for write-heavy multi-partition workloads. | disabled |
 | `--raft-grpc-append-logs-max-coalesce-batch` | Maximum AppendLogs items drained into one coalesced gRPC frame when coalescing is enabled. | `256` |
 | `--raft-allow-insecure-certificate-validation` | Skip TLS certificate validation for inter-node Raft gRPC traffic. Use only in development or test environments. | disabled |
+| `--raft-lost-acknowledged-entries-policy` | Restore policy after acknowledged WAL entries disappear: `Quarantine` or `AcceptAndLog`. See [WAL loss recovery](/docs/snapshot-and-raft-recovery/#lost-acknowledged-wal-entries). | `Quarantine` |
 | `--raft-max-pre-auth-request-body-bytes` | Maximum Raft REST request body buffered before authentication, in bytes. Bounds unauthenticated memory use independently of host limits. | `33554432` |
 | `--raft-max-outbound-queue-bytes-per-peer` | Maximum buffered outbound bytes queued per peer before excess AppendLogs entries are dropped and later resent by heartbeat or backfill retry. `0` disables the cap. | `67108864` |
 | `--raft-max-outbound-batch-bytes` | Maximum log payload bytes packed into one peer batch request. Also bounds an AppendLogs coalescing frame. Must stay below `--raft-grpc-max-message-bytes`. Values less than or equal to `0` disable the byte cap. | `4194304` |
@@ -470,7 +493,7 @@ Admission/initialization and learner promotion have separate join budgets. Promo
 | `--raft-ping-timeout` | Direct SWIM probe timeout, in milliseconds. | `500` |
 | `--raft-indirect-ping-fanout` | Intermediary nodes used for indirect probing after a direct ping timeout. | `2` |
 | `--raft-suspicion-timeout` | Time a node may remain `Suspect` before becoming `Dead`, in milliseconds. | `5000` |
-| `--raft-dead-member-eviction-grace` | Time a dead node remains in the roster before partition 0 commits its removal, in milliseconds. | `30000` |
+| `--raft-dead-member-eviction-grace` | Milliseconds a member must remain `Dead` before partition 0 commits removal. Eviction makes a returning node catch up again as a learner. See [eviction timing](/docs/replica-placement/#dead-member-eviction). | `600000` (10 minutes) |
 | `--raft-enable-auto-rejoin` | Let a restarted node that finds itself removed from the roster re-run join against the remaining members. Set `KAHUNA_AUTO_REJOIN=0` to turn it off when removed live nodes must stay out. | enabled |
 | `--raft-enable-quiescence` | Stop per-partition heartbeats after an idle period and rely on SWIM for node liveness. Requires `0 < --raft-ping-interval < --raft-start-election-timeout`. Set `KAHUNA_QUIESCENCE=0` to turn it off. | enabled |
 | `--raft-quiesce-after` | Required partition idle time before heartbeat quiescence, in milliseconds. | `1500` |

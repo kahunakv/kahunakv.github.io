@@ -4,7 +4,7 @@ A burst of application scans should not hold up the log reads that keep replicas
 
 The pools separate queues, not hardware: they still share CPU and storage bandwidth, so scan-heavy workloads and backup capture can affect replication or foreground latency. The isolation is on by default and most deployments never change it. Read on if persistent reads or scans queue under load, or if you size nodes for a scan-heavy workload; see [Tuning](#tuning).
 
-## Why It Matters
+## Backend Pools
 
 Storage backends such as RocksDB and SQLite perform synchronous work for point reads, scans, read-before-write checks, and batched persistence. Running that work on [actor](/docs/glossary/#actor) threads would block [partition](/docs/glossary/#partition) progress, and running it on the Raft WAL read pool would let application traffic interfere with replication and recovery.
 

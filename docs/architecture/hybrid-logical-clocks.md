@@ -1,7 +1,5 @@
 # Hybrid Logical Clocks (HLC)
 
-## Overview
-
 Every node has its own clock, and clocks drift apart. If Kahuna ordered events by each node's wall clock alone, a later write on a node with a slow clock could look older than an earlier write on another node. **Hybrid Logical Clocks (HLCs)** solve this: their timestamps stay close to real time, but they always move forward and respect cause and effect, so Kahuna can order events across nodes safely.
 
 An HLC combines physical time with a logical counter. Timestamps keep moving forward even when several events happen in the same millisecond or when clocks are slightly skewed.

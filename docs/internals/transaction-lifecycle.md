@@ -301,6 +301,12 @@ A write's base is the committed revision from which it was derived. A lost updat
 
 The replica fence has a per-endpoint lag breaker. If a replica repeatedly cannot attest within the apply wait, for example during a disk pause, WAL saturation, or snapshot install, Kahuna keeps asking it for instant verdicts but stops waiting for its apply path on every commit. When this node leads the participant partition, the breaker also reads Raft follower progress: a replica whose durable frontier is too far behind, or whose WAL is stalled, is treated as lagging immediately and is not restored until it both attests and its frontier is back within the bound. Full-wait probes bring the replica back into the normal fence after sustained recovery. Operators can watch `kahuna.durable_tx.replica_fence_lag_transitions{state,reason}`, `kahuna.durable_tx.replica_fence_lagging_replicas`, `kahuna.durable_tx.replica_fence_lagging_asks{kind}`, `kahuna.durable_tx.replica_fence_unattested`, and `kahuna.durable_tx.finalize_replica_fence_ms`.
 
+### Frozen Finalization After a Range Move
+
+Prepare and record submissions carry the partition and range generation frozen with the transaction. A split between freeze and dispatch refuses those stale submissions instead of appending them to the old owner. Retry cannot reuse that frozen route indefinitely: the finalizer concludes the attempt through the record fence at the **anchor key's current route**, where range handoff moved its canonical record.
+
+Rollback and abandoned-session cleanup use the same current-route fence to release claimed intents on both the moved and unmoved keys. A recorded commit remains authoritative; a split does not turn a committed transaction into an abort. If the reaper cannot install the record fence or acknowledge mandatory lock releases, it logs a Warning and keeps the session for a later sweep; a timeout alone is not proof that every intent was released. A caller receiving an uncertain outcome must still resolve it with the same handle.
+
 ## Decision Deadlines
 
 The decision deadline limits how long an undecided transaction can block recovery. It is separate from the timeout for the entire interactive session. Each durable finalize freezes this deadline:

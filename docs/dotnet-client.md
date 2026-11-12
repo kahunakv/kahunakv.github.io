@@ -47,6 +47,102 @@ Route hints are advisory. If leadership or placement changes, the receiving serv
 
 See [Client Leader-Aware Routing](/docs/client-routing/) for routing modes, endpoint mapping, server advertisement flags, metadata mode, and the routing counters published under the `Kahuna.Client.Routing` meter.
 
+## Dependency Injection
+
+`Kahuna.Client` includes `AddKahunaClient` extensions for `IServiceCollection`. Register one singleton per cluster so requests share pooled connections and the routing cache. The client uses the container's `ILogger<KahunaClient>` when available:
+
+```csharp
+using Kahuna.Client;
+using Microsoft.Extensions.DependencyInjection;
+
+builder.Services.AddKahunaClient(
+    ["https://kahuna-1:8082", "https://kahuna-2:8082"],
+    options => options.DefaultOperationTimeout = TimeSpan.FromSeconds(10));
+
+// In an application service, receive KahunaClient through constructor injection.
+```
+
+A single URL is also accepted. For several clusters, register each with `AddKeyedKahunaClient("orders", ["https://orders-kahuna:8082"])` and resolve it with `GetRequiredKeyedService<KahunaClient>("orders")`. Registration copies the endpoint list, rejects empty lists or blank entries, and creates the client when the container first resolves it.
+
+## .NET Aspire
+
+`Kahuna.Aspire.Client` connects a service to a standalone Kahuna node or cluster declared in an Aspire AppHost. The same `builder.AddKahunaClient("kahuna")` call consumes a single URL or the cluster's comma-separated node URLs. It reads the supplied connection string, registers a singleton `KahunaClient`, and adds health checks and telemetry sources. See [Aspire setup](/docs/server-installation/#net-aspire) for NuGet installation and AppHost configuration.
+
+In the consuming service, use the same connection name as the AppHost resource:
+
+```csharp
+using Kahuna.Client;
+using Microsoft.Extensions.Hosting;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.AddServiceDefaults();
+builder.AddKahunaClient("kahuna",
+    configureSettings: settings => settings.HealthCheckTimeout = TimeSpan.FromSeconds(5),
+    configureOptions: options => options.DefaultOperationTimeout = TimeSpan.FromSeconds(10));
+
+var app = builder.Build();
+app.MapGet("/config", async (KahunaClient client) =>
+{
+    var value = await client.GetKeyValue("my-config");
+    return value.Success ? Results.Ok(value.ValueAsString()) : Results.NotFound();
+});
+app.MapDefaultEndpoints();
+app.Run();
+```
+
+`AddServiceDefaults` and `MapDefaultEndpoints` come from the application's Aspire service-defaults project, as in the integration sample. They configure exporters and expose health endpoints; the Kahuna integration registers its sources and checks but does not install an OTLP exporter or map HTTP health routes itself. This host-builder method reads configuration, unlike `builder.Services.AddKahunaClient(urls)`, which takes explicit endpoints.
+
+### Aspire Configuration
+
+Settings bind from `Kahuna:Client`. `ConnectionStrings:kahuna` overrides that section's `ConnectionString`; `configureSettings` runs afterwards. Client transport/routing options are set through `configureOptions`.
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `ConnectionString` | none | One HTTP/HTTPS URL, comma-separated URLs, or `Endpoints=http://node1:8083,http://node2:8083` (`Endpoint=` is also accepted). Missing or invalid endpoints fail registration. |
+| `DisableHealthChecks` | `false` | Skip the integration's health check. |
+| `HealthCheckTimeout` | `null` | No overall check deadline. With multiple endpoints, each membership attempt has a separate 2-second limit. Set this option to bound the whole check. |
+| `DisableTracing` | `false` | Skip registration of the `Kahuna.Client` activity source. |
+| `DisableMetrics` | `false` | Skip registration of the `Kahuna.Client` and `Kahuna.Client.Routing` meters. |
+
+These telemetry switches control this integration's registrations, not listeners registered elsewhere. Use normal service defaults or another exporter to send data to the Aspire dashboard.
+
+For several clusters, call `builder.AddKeyedKahunaClient("orders")` for each connection name. It registers a keyed singleton, uses `Kahuna:Client:orders` settings with `ConnectionStrings:orders` taking precedence, and registers the health check as `Kahuna_orders`. Resolve it with `[FromKeyedServices("orders")]` or `GetRequiredKeyedService<KahunaClient>("orders")`; no unkeyed client is added by this call.
+
+### Health-Check Scope
+
+The updated service check uses the client's rotating endpoint selection for up to N `GetClusterMembership` calls, where N is the configured endpoint count. It returns healthy as soon as one answers with `Initialized = true`. With multiple endpoints, each attempt is limited to 2 seconds so a stopped container's proxy cannot block checks of the remaining nodes. If none is initialized, or none answers, the check is unhealthy. A single-endpoint check has no extra per-attempt limit. `HealthCheckTimeout` bounds the whole check; the unary gRPC membership call does not use `DefaultOperationTimeout`. The default registration name is `Kahuna`.
+
+Membership initialization does **not** establish quorum, storage health, or successful data reads/writes. One running node in a three-node cluster can therefore make the application's health check pass while the AppHost cluster resource is unhealthy and data operations fail. Use the [cluster readiness rules](/docs/server-installation/#startup-health-and-node-failures) to interpret the dashboard. This multi-endpoint check is part of the latest source; the published 1.15.0 integration checks just one endpoint per probe.
+
+The generated connection string uses the node's **cleartext gRPC endpoint**, or a comma-separated list of those endpoints for a cluster; HTTP dashboard URLs are separate. For applications outside Aspire that supply their own connection string, select an endpoint compatible with the configured client transport.
+
+## Client Telemetry
+
+The client publishes operation spans through the `Kahuna.Client` activity source and `kahuna.client.operation.duration` through the `Kahuna.Client` meter, for both REST and gRPC. This makes individual operations visible even when gRPC carries them on one long-lived batch stream. Duration samples are in **seconds**. No exporter is installed by `Kahuna.Client`; without listeners, calls pass directly to the transport.
+
+For an application using OpenTelemetry, install `OpenTelemetry.Extensions.Hosting` and `OpenTelemetry.Exporter.OpenTelemetryProtocol`, then register the sources:
+
+```csharp
+using Kahuna.Client.Diagnostics;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .AddSource(KahunaClientTelemetry.ActivitySourceName)
+        .AddOtlpExporter())
+    .WithMetrics(metrics => metrics
+        .AddMeter(KahunaClientTelemetry.MeterName,
+                  KahunaClientTelemetry.RoutingMeterName)
+        .AddOtlpExporter());
+```
+
+Configure the collector with standard `OTEL_*` environment variables. The routing meter is `Kahuna.Client.Routing`; its counters complement operation timing.
+
+Spans identify the operation, `db.system.name=kahuna`, and contacted server address/port. Duration samples identify the system and operation. Exceptions add `error.type`, mark the span as failed, and are recorded as span events; a conditional write returning an unsuccessful result does not by itself mark a span as failed. Keys, values, and scripts are not metric labels or built-in span tags. A sample measures one transport call. An interactive transaction or application retry loop can produce several samples.
+
+`OpenWatch` measures opening a watch, not its subsequent event stream. Streaming `ScanByRange` is passed through without a scan-lifetime span or duration sample, so consumer processing time is not reported as database latency. See [server OTLP export](/docs/server-configuration/#opentelemetry-export) to collect the node's metrics, request traces, and logs too.
+
 ## Client Options
 
 Pass `KahunaOptions` when you need to tune transport behavior:
@@ -273,7 +369,7 @@ await client.SetKeyValue("profile/empty-payload", (byte[]?)null);
 await client.SetKeyValue("profile/zero-bytes", Array.Empty<byte>());
 ```
 
-This matters for compare-value operations and for applications that use a present-but-empty payload as a meaningful value.
+Compare-value operations treat the two as different values, and an application can use a present-but-empty payload as a meaningful value.
 
 ### Ordered Range Reads
 

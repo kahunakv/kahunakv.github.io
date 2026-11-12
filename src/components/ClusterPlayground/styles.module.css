@@ -1,0 +1,332 @@
+/* Cluster playground. Colors are tokens on .app and change for dark mode below. The 3D scene keeps a
+   dark floor in both modes, so the server faces read the same way. */
+.app {
+  --line: #cfe3d9;
+  --muted: #5b6e66;
+  --text: #24342d;
+  --heading: #022c22;
+  --surface: #ffffff;
+  --surface-soft: #f2faf6;
+  --accent: #00a36c;
+  --accent-strong: #007a55;
+  --accent-soft: #e3f6ee;
+  --accent-ring: rgba(0, 163, 108, 0.35);
+  --leader: #f6c86b;
+  --leader-text: #3a2600;
+  --leader-edge: #d9a640;
+  --follower: #00a36c;
+  --danger: #c0283f;
+  --danger-strong: #a01e33;
+  --danger-soft: #fff1f3;
+  --danger-line: #f3c4cc;
+  --button-text: #0b5c40;
+  --button-border: #bcdccd;
+  --button-hover: #e9f7f0;
+  --rack-face: #c9e8da;
+  --rack-face-light: #eefaf4;
+  --rack-side: #8fcbb0;
+  --rack-side-light: #b4dfcb;
+  --rack-edge-color: #7cbfa1;
+  --rack-top: linear-gradient(135deg, #ffffff, #c8ecdb);
+  --rack-label: #0b5c40;
+  --rack-name-bg: #ecfaf3;
+  max-width: 1720px;
+  margin: auto;
+  padding: 24px 32px 40px;
+  color: var(--text);
+  font: 13px/1.6 var(--ifm-font-family-base);
+}
+
+[data-theme='dark'] .app {
+  --line: #164a3b;
+  --muted: #94b6a8;
+  --text: #d5ebe1;
+  --heading: #edf9f3;
+  --surface: #03241c;
+  --surface-soft: #052a21;
+  --accent: #34d39a;
+  --accent-strong: #6de1ae;
+  --accent-soft: #063a2b;
+  --accent-ring: rgba(52, 211, 154, 0.35);
+  --danger: #ff7d8c;
+  --danger-strong: #ff9aa6;
+  --danger-soft: #3a1219;
+  --danger-line: #6b2531;
+  --button-text: #bdf0d9;
+  --button-border: #1d5a48;
+  --button-hover: #0a3a2d;
+}
+
+.app button,
+.app select {
+  padding: 7px 12px;
+  color: var(--button-text);
+  border: 1px solid var(--button-border);
+  border-radius: 7px;
+  background: var(--surface);
+  font: inherit;
+  cursor: pointer;
+}
+.app button:hover:not(:disabled) { border-color: var(--accent); background: var(--button-hover); }
+.app button:disabled { opacity: 0.45; cursor: default; }
+.app button:focus-visible,
+.app select:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+
+.header { margin-bottom: 10px; }
+.brand { margin: 0; color: var(--accent-strong); font: 800 11px/1.4 var(--ifm-font-family-monospace); letter-spacing: 2px; }
+.brand span { margin: 0 8px; opacity: 0.5; }
+.header h1 { margin: 8px 0; color: var(--heading); font-size: clamp(26px, 3vw, 40px); line-height: 1.1; letter-spacing: -0.04em; }
+.lead { max-width: 60rem; margin: 0; color: var(--muted); font-size: 15px; }
+.caption { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 14px 0 18px; color: var(--muted); font-size: 12px; }
+.badge { padding: 3px 8px; color: var(--accent-strong); border-radius: 5px; background: var(--accent-soft); font-size: 10px; font-weight: 700; letter-spacing: 1px; }
+.healthy { color: var(--accent-strong); }
+.danger { color: var(--danger); }
+.mono { font-family: var(--ifm-font-family-monospace); }
+
+/* ── Session status ─────────────────────────────────────────────────── */
+
+.sessionStatus { margin-bottom: 18px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--accent-soft); }
+.sessionHeading { display: flex; align-items: center; gap: 12px; }
+.sessionHeading > div { flex: 1; }
+.sessionHeading strong { color: var(--accent-strong); font-size: 14px; }
+.sessionHeading p { margin: 0; color: var(--text); font-size: 12px; }
+.statusMark { display: grid; flex-shrink: 0; place-items: center; width: 26px; height: 26px; color: #fff; border-radius: 50%; background: var(--accent); font-weight: 700; }
+.statusMark[data-error] { background: var(--danger); }
+.spinner { width: 23px; height: 23px; flex-shrink: 0; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.85s linear infinite; }
+.startupSteps { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); list-style: none; }
+.startupSteps li { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.startupSteps li > span { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 50%; font-size: 10px; }
+.startupSteps li[aria-current='step'] { color: var(--accent-strong); font-weight: 700; }
+.startupSteps li[aria-current='step'] > span,
+.startupSteps li[data-complete='true'] > span { color: #fff; border-color: var(--accent); background: var(--accent); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Layout ─────────────────────────────────────────────────────────── */
+
+.workspace { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: 24px; align-items: start; }
+.scenePanel { position: relative; min-width: 0; }
+.sidebar { display: grid; gap: 20px; min-width: 0; }
+.panel,
+.eventPanel { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.panelTitle { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+.panelTitle h2 { margin: 0; color: var(--heading); font-size: 16px; }
+.panelTitle > span,
+.panelTitle h2 span { font-size: 11px; }
+.note { display: block; margin: 10px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.65; }
+.errorText { margin: 10px 0 0; color: var(--danger); font-size: 12px; }
+
+/* ── Scene header and stats ─────────────────────────────────────────── */
+
+.sceneTop { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 4px 0 8px; color: var(--muted); font-size: 11px; }
+.sceneTop b { margin: 0 6px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.stats small { display: block; margin-bottom: 4px; color: var(--muted); font-size: 9px; letter-spacing: 0.5px; }
+.stats strong { color: var(--heading); font-size: 24px; font-weight: 500; white-space: nowrap; }
+.stats strong.mono { font-size: 18px; }
+.stats strong span { color: var(--muted); font-size: 12px; }
+
+/* ── 3D scene: every server face lives in one 3D world; the camera orbits the floor. ── */
+
+.scene { position: relative; display: block; width: 100%; height: clamp(340px, 34vw, 500px); overflow: hidden; perspective: 1000px; cursor: grab; touch-action: pan-y; }
+.scene:active { cursor: grabbing; }
+.world { position: absolute; top: 50%; left: 50%; width: 540px; height: 540px; margin: -270px; transform: translateY(-38px) scale(calc(0.83 * var(--zoom))) rotateX(55deg) rotateZ(var(--orbit)); transform-style: preserve-3d; }
+.floor { position: absolute; inset: 15px; border: 1px solid #1fae7c; border-radius: 16px; background: repeating-linear-gradient(0deg, transparent 0 29px, #1fae7c55 29px 30px), repeating-linear-gradient(90deg, transparent 0 29px, #1fae7c55 29px 30px), linear-gradient(135deg, #04382b, #011510); box-shadow: inset 0 0 65px #00bc7d22, 10px 15px 0 #01241b, 20px 35px 45px #02160f55; }
+.connections { position: absolute; inset: 0; width: 540px; height: 540px; transform: translateZ(2px); pointer-events: none; }
+.connections path { fill: none; stroke: #6de1ae; stroke-width: 2; stroke-dasharray: 5 9; opacity: 0.8; }
+.flow { animation: flow 2s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -56; } }
+
+.serverPosition { position: absolute; width: 60px; height: 60px; transform-style: preserve-3d; }
+.app .server { --rack-edge: var(--rack-edge-color); position: absolute; inset: 0; width: 60px; height: 60px; padding: 0; border: 0; border-radius: 0; background: #6fbf9a33; box-shadow: 14px 18px 18px #02160f40; transform-style: preserve-3d; cursor: pointer; animation: serverSettle 0.45s ease-out; }
+.app .server:hover:not(:disabled) { background: #00bc7d33; }
+.app .server:disabled { opacity: 1; }
+.server > span { position: absolute; top: 0; left: 0; display: block; border: 1px solid var(--rack-edge); backface-visibility: visible; transition: opacity 0.7s ease var(--reveal-delay, 0ms), border-color 0.7s ease; }
+.serverTop { width: 60px; height: 60px; border-radius: 3px; background: var(--rack-top); transform: translateZ(110px); }
+.serverTop span { display: block; color: var(--rack-label); font: 8px/60px var(--ifm-font-family-monospace); letter-spacing: 2px; }
+.serverFront,
+.serverBack,
+.serverSide,
+.serverLeft { width: 60px; height: 110px; transform-origin: top left; }
+.serverFront { padding: 7px 5px; background: linear-gradient(90deg, var(--rack-face), var(--rack-face-light)); transform: translateY(60px) rotateX(90deg); }
+.serverBack { background: var(--rack-face); transform: rotateX(90deg); }
+.serverSide { background: repeating-linear-gradient(90deg, transparent 0 7px, #0a5a3f28 7px 9px), linear-gradient(0deg, var(--rack-side), var(--rack-side-light)); transform: translateX(60px) rotateZ(90deg) rotateX(90deg); }
+.serverLeft { background: var(--rack-side); transform: rotateZ(90deg) rotateX(90deg); }
+.serverName { display: block; height: 20px; color: #053b2a; border-radius: 2px; background: var(--rack-name-bg); font: 700 8px/20px var(--ifm-font-family-monospace); white-space: nowrap; transform: scaleY(-1); }
+.drive { display: flex; align-items: center; gap: 3px; height: 9px; margin-bottom: 1px; padding: 0 3px; color: #a8c4b8; border-radius: 1px; background: #11291f; }
+.drive i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; box-shadow: 0 0 3px currentColor; }
+.drive > span,
+.drive b { font: 700 6px/9px var(--ifm-font-family-monospace); transform: scaleY(-1); }
+.drive b { margin-left: auto; }
+.drive[data-role='leader'],
+.bladeLegend i[data-role='leader'] { color: var(--leader-text); background: var(--leader); }
+.drive[data-role='follower'],
+.bladeLegend i[data-role='follower'] { color: #fff; background: var(--follower); }
+.drive[data-role='offline'],
+.bladeLegend i[data-role='offline'] { color: #fff; background: #bd3043; }
+.expansion { width: 60px; height: 60px; color: #6de1ae; border: 1px dashed #3fa982; border-radius: 4px; background: #02261c88; font: 18px/60px var(--ifm-font-family-monospace); text-align: center; }
+
+/* Selected, failed, joining and starting servers. */
+.app .selectedServer { --rack-edge: #00bc7d; outline: 4px solid #00bc7d; outline-offset: 10px; box-shadow: 0 0 0 12px #00bc7d26, 14px 18px 24px #02160f60; }
+.selectedServer .serverTop { border-color: #007a55; background: #00bc7d; }
+.selectedServer .serverTop span { color: #fff; font-weight: 800; letter-spacing: 0.5px; }
+.selectedServer .serverSide,
+.selectedServer .serverLeft { background: linear-gradient(0deg, #007a55, #2fd49a); }
+.selectedServer .serverFront { background: #3cc795; }
+.selectedServer .serverName { color: #fff; background: #007a55; }
+.app .failedServer { --rack-edge: #c94d67; }
+.failedServer .drive i { background: #ff728b; animation: none; }
+.failedServer .serverTop { background: #ffe6ed; }
+.selectedServer.failedServer .serverTop { background: #b42348; }
+.failedServer .serverTop span { position: absolute; right: 10px; bottom: 3px; left: 10px; color: #fff; border: 1px solid #ffc5cc; border-radius: 2px; background: #bd3043; font: 800 8px/13px var(--ifm-font-family-monospace); letter-spacing: 0.6px; }
+.app .joiningServer { --rack-edge: #4cc796; outline: none; background: #00bc7d0d; box-shadow: none; }
+.joiningServer > span { border-style: dashed; background: #b7f0d855; }
+.joiningServer .serverTop span { color: #007a55; font-weight: 800; letter-spacing: 0.5px; }
+.joiningServer .drive { background: #5aa98a4d; box-shadow: none; }
+.joiningServer .serverName { color: #0b5c40; background: #eefaf4b3; }
+.app .preparingServer { --rack-edge: #7fd2ad; outline: none; background: #00bc7d0a; box-shadow: none; }
+.preparingServer > span { border-style: dashed; opacity: 0.22; transition-delay: 0ms; }
+.preparingServer .serverTop { background: #d6f3e588; opacity: 0.55; }
+.preparingServer .serverTop span { color: #0b5c40; font-size: 7px; font-weight: 700; letter-spacing: 0.3px; }
+.preparingServer .drive { color: #b6e9d2; background: #4f9a7e55; }
+.preparingServer .drive i { box-shadow: none; }
+
+/* A starting server bounces on the floor. Only transform and opacity animate, so the browser keeps
+   the motion running while the engine holds the main thread. */
+.app .startingServer { animation: serverBounce 1.4s var(--bounce-delay, 0ms) infinite; }
+.startingServer > span { animation: serverPhase 1.4s var(--bounce-delay, 0ms) ease-in-out infinite; }
+.startingPad { position: absolute; inset: -6px; border: 1.5px dashed #5fd3a3; border-radius: 6px; background: #00bc7d14; box-shadow: 0 0 22px #00bc7d25; pointer-events: none; animation: startingPadPulse 1.4s var(--bounce-delay, 0ms) infinite; }
+@keyframes serverBounce {
+  0%, 100% { transform: translateZ(0) scale3d(1.04, 1.04, 0.92); animation-timing-function: cubic-bezier(0.2, 0.7, 0.4, 1); }
+  45% { transform: translateZ(46px) scale3d(0.98, 0.98, 1.04); animation-timing-function: cubic-bezier(0.6, 0, 0.8, 0.4); }
+  72% { transform: translateZ(0) scale3d(1.03, 1.03, 0.95); animation-timing-function: cubic-bezier(0.2, 0.7, 0.4, 1); }
+  84% { transform: translateZ(12px) scale3d(1, 1, 1); animation-timing-function: cubic-bezier(0.6, 0, 0.8, 0.4); }
+}
+@keyframes serverPhase {
+  0%, 72%, 100% { opacity: 0.85; }
+  45% { opacity: 0.3; }
+  84% { opacity: 0.6; }
+}
+@keyframes startingPadPulse {
+  0%, 72%, 100% { transform: translateZ(1px) scale(1); opacity: 1; }
+  45% { transform: translateZ(1px) scale(0.82); opacity: 0.4; }
+  84% { transform: translateZ(1px) scale(0.95); opacity: 0.8; }
+}
+@keyframes serverSettle {
+  0% { transform: translateZ(10px); }
+  65% { transform: translateZ(0) scale3d(1.03, 1.03, 0.95); }
+  100% { transform: translateZ(0) scale3d(1, 1, 1); }
+}
+
+/* A stopped server burns. The fire faces the camera at every orbit angle. */
+.fire { position: absolute; top: 30px; left: 30px; width: 1px; height: 1px; transform: translateZ(112px) rotateZ(var(--counter-orbit)) rotateX(-55deg); transform-origin: 0 0; transform-style: preserve-3d; pointer-events: none; }
+.firePlume { position: absolute; bottom: 0; left: -26px; width: 52px; height: 78px; transform-style: preserve-3d; }
+.firePlume::after { position: absolute; right: 8px; bottom: -3px; left: 8px; height: 5px; border-radius: 50%; background: #ffd45799; box-shadow: 0 0 10px 3px #ff6b2455; content: ''; animation: fireGlow 0.7s ease-in-out infinite alternate; }
+.flame { position: absolute; bottom: 0; left: calc(50% + var(--offset) - 11px); width: 22px; height: var(--height); background: linear-gradient(0deg, #fff4b0 0%, #ffcf35 22%, #ff8016 55%, #ed3615 100%); clip-path: polygon(48% 0%, 56% 22%, 77% 40%, 70% 24%, 96% 59%, 100% 78%, 85% 94%, 55% 100%, 22% 95%, 0% 80%, 5% 57%, 28% 31%, 23% 55%, 42% 35%); transform-origin: 50% 100%; animation: flameDance var(--duration) var(--delay) ease-in-out infinite alternate; }
+.flame::after { position: absolute; inset: 36% 23% 0; background: linear-gradient(0deg, #fffbe0, #ffe55c 65%, #ffa31c); clip-path: polygon(60% 0%, 48% 42%, 78% 29%, 100% 75%, 78% 100%, 20% 100%, 0% 70%, 28% 39%, 27% 67%); content: ''; }
+.ember { position: absolute; bottom: 8px; left: calc(50% + var(--offset)); width: 3px; height: 5px; border-radius: 50%; background: #ffd575; box-shadow: 0 0 5px #ff7b1c; animation: emberRise var(--duration) var(--delay) linear infinite; }
+@keyframes flameDance { 0% { transform: scale(0.9, 0.8) skewX(-8deg); } 35% { transform: scale(1.05, 1.12) skewX(7deg); } 65% { transform: scale(0.8, 0.95) skewX(-3deg); } 100% { transform: scale(1, 1.2) skewX(9deg); } }
+@keyframes emberRise { 0% { transform: translate(0, 0) scale(1); opacity: 0; } 15% { opacity: 1; } 100% { transform: translate(var(--drift), -72px) scale(0.2); opacity: 0; } }
+@keyframes fireGlow { to { transform: scaleX(0.85); opacity: 0.55; } }
+
+/* The pause button stops every scene animation. */
+.scene[data-motion-paused='true'] .flow,
+.scene[data-motion-paused='true'] .flame,
+.scene[data-motion-paused='true'] .ember,
+.scene[data-motion-paused='true'] .firePlume::after,
+.scene[data-motion-paused='true'] .startingServer,
+.scene[data-motion-paused='true'] .startingServer > span,
+.scene[data-motion-paused='true'] .startingPad { animation-play-state: paused; }
+
+/* ── Scene footer ───────────────────────────────────────────────────── */
+
+.bladeLegend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; color: var(--muted); font-size: 11px; }
+.bladeLegend > span { display: inline-flex; align-items: center; gap: 5px; }
+.bladeLegend i { width: 14px; height: 8px; border-radius: 2px; background: #11291f; }
+.joiningNotice { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; color: var(--accent-strong); font-size: 12px; }
+.joiningNotice .spinner { width: 16px; height: 16px; border-width: 2px; }
+.sceneBottom { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.sceneBottom > div:nth-child(2) { display: flex; gap: 4px; }
+.modes { display: flex; gap: 3px; padding: 3px; border-radius: 8px; background: var(--accent-soft); }
+.app .modes button { border: 0; background: transparent; font-size: 12px; }
+.app .modes button[aria-pressed='true'] { color: var(--accent-strong); background: var(--surface); box-shadow: 0 2px 5px #02160f14; }
+.sceneNote { margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+
+/* ── Side panels ────────────────────────────────────────────────────── */
+
+.manual { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 4px 0 10px; }
+.manual span { color: var(--heading); font-size: 18px; font-variant-numeric: tabular-nums; }
+.decision { margin: 10px 0 0; padding: 10px; color: var(--accent-strong); border-left: 2px solid var(--accent); background: var(--accent-soft); font-size: 12px; }
+.app .resetButton { width: 100%; margin-top: 14px; }
+.app dl { margin: 0 0 12px; font-size: 12px; }
+.app dl > div { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.app dt { color: var(--muted); font-weight: 400; }
+.app dd { margin: 0; overflow-wrap: anywhere; text-align: right; }
+
+/* The ring and the badge repeat the selected server's color, which links this panel to it. */
+.app .selectedPanel { --selected-color: var(--accent); border-color: var(--selected-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--selected-color) 18%, transparent); }
+.app .selectedPanel[data-down] { --selected-color: var(--danger); }
+.selectedBadge { display: inline-block; margin-bottom: 6px; padding: 2px 8px; color: #fff; border-radius: 4px; background: var(--selected-color); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; line-height: 16px; text-transform: uppercase; }
+.selectedPanel h2 { font-family: var(--ifm-font-family-monospace); }
+.partitionGrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.partitionGrid span { padding: 6px 0; border: 1px solid; border-radius: 4px; font: 10px var(--ifm-font-family-monospace); text-align: center; }
+.leader { color: var(--leader-text); border-color: var(--leader-edge); background: var(--leader); }
+.replica { color: #fff; border-color: var(--follower); background: var(--follower); }
+.absent { color: var(--muted); border-color: var(--line); background: var(--surface-soft); }
+.legend { display: flex; align-items: center; gap: 6px; margin: 10px 0 14px; color: var(--muted); font-size: 10px; }
+.legend i { width: 8px; height: 8px; background: var(--leader); }
+.legend i:nth-of-type(2) { margin-left: 7px; background: var(--follower); }
+.legend i:nth-of-type(3) { margin-left: 7px; background: var(--line); }
+.app .fault,
+.app .recover,
+.app .secondaryWide { width: 100%; padding: 9px 18px; font-weight: 600; }
+.app .fault { color: #fff; border-color: #c0283f; background: #c0283f; }
+.app .fault:hover:not(:disabled) { border-color: #a01e33; background: #a01e33; }
+.app .recover { color: #fff; border-color: var(--accent-strong); background: #007a55; }
+.app .recover:hover:not(:disabled) { background: #00634a; }
+.app .secondaryWide { margin-top: 8px; font-weight: 500; }
+
+/* ── Console and journal ────────────────────────────────────────────── */
+
+.consoleSection { margin-top: 28px; }
+.consoleTitle { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 12px; }
+.consoleTitle h2 { margin: 0; color: var(--heading); font-size: 18px; }
+.consoleTitle span { color: var(--muted); font-size: 12px; }
+.targetPicker { display: inline-flex; align-items: center; gap: 6px; color: #8fb3a4; font-size: 12px; }
+.app .targetPicker select { min-height: 2rem; padding: 0.3rem 0.5rem; color: #dcefe6; border-color: #145a47; background: #063226; font-family: var(--ifm-font-family-monospace); font-size: 12px; }
+.eventPanel { margin-top: 24px; }
+.events { min-height: 44px; max-height: 180px; overflow: auto; font: 11px/1.8 var(--ifm-font-family-monospace); }
+.events > div { display: flex; gap: 20px; padding: 5px 0; border-top: 1px solid var(--line); }
+.events > div > span:first-child { flex-shrink: 0; color: var(--accent-strong); }
+.events p { margin: 0; color: var(--muted); }
+.footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin-top: 16px; color: var(--muted); font-size: 11px; }
+
+/* ── Responsive and reduced motion ──────────────────────────────────── */
+
+@media (max-width: 1100px) {
+  .world { transform: translateY(-38px) scale(calc(0.65 * var(--zoom))) rotateX(55deg) rotateZ(var(--orbit)); }
+}
+@media (max-width: 1000px) {
+  .app { padding: 20px; }
+  .workspace { grid-template-columns: 1fr; }
+  .sidebar { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 760px) {
+  .app { padding: 18px 16px; }
+  .sidebar { grid-template-columns: 1fr; }
+  .scene { height: 340px; }
+  .stats { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stats strong { font-size: 20px; }
+  .world { transform: translateY(-38px) scale(calc(0.56 * var(--zoom))) rotateX(55deg) rotateZ(var(--orbit)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .flow,
+  .drive i,
+  .app .server,
+  .app .startingServer,
+  .startingServer > span { animation: none; }
+  .startingPad { animation: none; transform: translateZ(1px); }
+  .server > span { transition: none; }
+}

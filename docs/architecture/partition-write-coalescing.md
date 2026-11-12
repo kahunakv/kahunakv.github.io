@@ -65,7 +65,7 @@ Write coalescing is most useful when a workload sends many persistent writes to 
 
 It helps less when writes are spread thinly across many partitions or arrive one at a time with little overlap. In that case the batch size may stay close to one, and the main cost is the small aggregator hop.
 
-Key layout matters. In the default hash-routed model, keys sharing the same bucket or key-space route to the same partition, which gives the aggregator more to combine. Key-range routing can split large ordered spaces over time, so a very large import may naturally spread across multiple partition queues after ranges split.
+In the default hash-routed model, keys sharing the same bucket or key-space route to the same partition, which gives the aggregator more to combine. Key-range routing can split large ordered spaces over time, so a very large import may naturally spread across multiple partition queues after ranges split.
 
 ## Tuning
 

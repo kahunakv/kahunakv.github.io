@@ -93,7 +93,11 @@ This prevents writes from silently landing on stale partitions after a split or 
 
 Splits and merges also pause writes to the moving key interval during the copy and cutover window. Kahuna combines a range lock on the source partition with a replicated descriptor deadline, so writes that race with movement are refused retryably. `--range-move-quiesce-ttl` bounds this write fence (default 30 seconds, minimum 1 second). A move that exhausts its quiesce window refuses cutover with `QuiesceExpired`; it must retry rather than route away from writes admitted after the fence expired.
 
-In short, a write that races a split or merge gets a retryable error and is never lost. Committed data, transaction records, and prepared [write intents](/docs/glossary/#write-intent) are replicated to the destination before cutover, and the partition IDs that a merge retires are never reused. The mechanics are in [Internals: Handoff and Retirement](#internals-handoff-and-retirement).
+A write racing a split or merge can receive a retryable error. Before settling transactions and completing the copy, the mover asks the source partition's leader to confirm quorum leadership, apply the quiescing range map, and drain previously dispatched writes. Failure to confirm within five seconds returns `QuiesceFailed` and leaves cutover for a retry. During a mixed-version upgrade, an older source that lacks this confirmation RPC uses the legacy path with a warning; a later leader change before that leader applies the map also remains a race window. Do not treat the quiesce check as an unconditional guarantee across those cases.
+
+Committed data, transaction records, and prepared [write intents](/docs/glossary/#write-intent) are replicated to the destination before cutover, and the partition IDs that a merge retires are never reused. The mechanics are in [Internals: Handoff and Retirement](#internals-handoff-and-retirement).
+
+Moves also carry revisions at registered snapshot holds, including deletions that occur between copy passes. Other old historical timestamps can return `MustRetry` after cutover; a merge bounds history across the entire merged range. See [history across replica and range moves](/docs/distributed-keyvalue-store/snapshot-holds/#history-across-replica-and-range-moves). A key's selected history must fit in one replication message; a very large value or many held revisions can fail a move attempt instead of cutting over.
 
 ## Partition 0
 
@@ -105,11 +109,10 @@ At a high level:
 - the range map is committed on partition `0` beside the cluster partition-map coordinator
 - data ranges live on data partitions starting at partition `1`
 
-That detail matters for maintainers and operators because the descriptor map is itself durable cluster state, not a local cache.
+The descriptor map is therefore durable cluster state, not a local cache.
 
-## Buckets or Key Ranges?
+## Choosing Between Buckets and Key Ranges
 
-These features are related, but they are not the same thing:
 
 - **[Buckets](/docs/distributed-keyvalue-store/buckets/)** are a single-partition grouping technique. They are ideal when a small or moderate prefix such as `services/` should stay together on one partition and be read with `get by bucket`.
 - **Key ranges** are a scalable locality technique. They are ideal when keys must stay ordered, the key space may grow beyond one partition, and you need range-scoped locality and future splits.
@@ -255,5 +258,5 @@ Merge cutover records `RetiredPartitionIds` in replicated metadata. A later part
 
 Registration has two parts:
 
-- registration commits the seed descriptor through the partition 0 leader before flipping the registering node to key-range routing, then waits for local visibility
-- startup, live range-map apply, restore, and partition-0 snapshot installation reconcile each node's local routing registry from the committed descriptor map
+- the range-map store reconciles routing modes under its install lock before publishing each committed or restored map; registration waits for local descriptor visibility
+- startup, live range-map apply, restore, and partition-0 snapshot installation all use this same projection; a route captures the map before reading its mode, then re-reads under the install lock if it raced publication

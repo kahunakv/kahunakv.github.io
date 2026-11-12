@@ -21,7 +21,7 @@ A multi-step workflow, such as "read the stock, check it, decrement it", runs as
 
 Every script runs through Kahuna's transaction coordinator. The coordinator records the script's [working set](/docs/internals/transaction-lifecycle/#basic-concepts) (its confirmed reads, modified keys, and acquired locks) as commands succeed, then commits or rolls back from that record.
 
-What this means when you write a script:
+As a result:
 
 - Plain scripts are transactional even without an explicit `begin` block.
 - `begin (...)` customizes the transaction. See [BEGIN Options](/docs/scripts/semantics/#begin-options) for every option, value, and default.

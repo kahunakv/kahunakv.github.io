@@ -5,7 +5,7 @@ import TabItem from '@theme/TabItem';
 
 An idempotency key lets you retry a sequence allocation safely when you do not know whether the first attempt succeeded, the same way an idempotency key on a payment API keeps a retry from charging twice. `next` and `reserve` both accept an optional idempotency key.
 
-## Why It Matters
+## Lost Responses and Retries
 
 A client can time out after Kahuna commits an allocation but before the response reaches the caller. Without an idempotency key, the retry allocates a new value, so one business operation gets two IDs, for example two order numbers for one order. The first value is never used, which also leaves a gap.
 

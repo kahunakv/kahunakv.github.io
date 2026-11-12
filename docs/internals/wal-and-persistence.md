@@ -5,7 +5,7 @@ Read this page to understand what a persistent write survives after it commits, 
 - **Raft WAL**: the authoritative replicated operation log managed by Kommander, Kahuna's [Raft](/docs/glossary/#raft) library.
 - **Kahuna persistence backend**: materialized lock and key/value state used for fast recovery and lookup.
 
-Keeping these layers separate matters. The WAL records committed operations in order. The persistence backend stores the latest durable object state and selected revision data.
+The WAL records committed operations in order. The persistence backend stores the latest durable object state and selected revision data.
 
 ## Raft WAL
 

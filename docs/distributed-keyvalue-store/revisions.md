@@ -8,7 +8,7 @@ A **revision** is a key's version number. Every write increases it, so you can a
 
 `SET` and `DELETE` advance the revision, including writes staged inside a transaction. `EXTEND` changes the expiry without advancing it, and reads never change it. The counter is per key: it does not order writes across keys, it does not replace the commit timestamp ([HLC](/docs/glossary/#hybrid-logical-clock-hlc)), and it is separate from [Raft](/docs/glossary/#raft) leader terms and from [fencing tokens](/docs/distributed-locks/fencing-tokens/).
 
-## Understanding revisions
+## How Revisions Advance
 
 Keys are always created at revision `r0`:
 

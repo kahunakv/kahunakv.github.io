@@ -4,7 +4,7 @@ A transaction lets you change several keys as one unit, like a SQL transaction: 
 
 The central component is the **transaction coordinator**. The coordinator is the server-side owner of the transaction lifecycle and working set. It records what the transaction has read, modified, locked, prepared, committed, or rolled back. Clients keep a transaction handle, but the server owns the authoritative transaction state.
 
-This design matters because an interactive transaction is not just a final `commit` call. A client may lose a response, retry a request, start commit while another operation is still in flight, or disappear without rolling back. Kahuna keeps those correctness rules inside the cluster instead of depending on every client to rebuild the final working set correctly.
+Server ownership protects a transaction from client failures. A client can lose a response, retry a request, start commit while another operation is still in flight, or disappear without rolling back. The coordinator handles each case, so no client has to rebuild the final working set itself.
 
 This page explains the design and how to choose between the options. For how to use transactions, see [Transactions](/docs/distributed-keyvalue-store/transactions/). For the step-by-step mechanics, outcome contract, and limits, see [Transaction Lifecycle](/docs/internals/transaction-lifecycle/); its [glossary](/docs/internals/transaction-lifecycle/#basic-concepts) defines the terms used here.
 

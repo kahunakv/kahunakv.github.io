@@ -238,7 +238,7 @@ Setup: one 8-core Apple Silicon machine, Kahuna server and benchmark client on t
 | In-memory mixed `get`/`set` | 233.5k req/s | Compare with your own workload |
 | Script `RETURN 1` | 416k-438k req/s | Measures transport and script dispatch overhead |
 
-The rate-limit result uses the default gRPC request frames plus the single-key script fast path. That matters because it is not a raw key/value microbenchmark: each request runs a server-side script, checks a limit, updates an ephemeral counter, and returns an allow/deny result atomically.
+The rate-limit result uses the default gRPC request frames plus the single-key script fast path. Each request runs a server-side script that checks a limit, updates an ephemeral counter, and returns an allow/deny result atomically, so it measures more than a raw key/value operation.
 
 Persistent replicated writes are a different class of benchmark because they include Raft [quorum](/docs/glossary/#quorum) replication and WAL durability. Use the persistent examples above when sizing durable state, and use these local memory results when comparing short-lived counters, temporary coordination state, or server-side script overhead.
 

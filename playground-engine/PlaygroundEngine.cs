@@ -5,22 +5,19 @@ using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
 
-using Kahuna;
 using Kahuna.Server.KeyValues;
 using Kahuna.Server.KeyValues.Transactions.Data;
 using Kahuna.Shared.KeyValue;
-using Kommander.Time;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Kahuna.Playground;
 
 /// <summary>
-/// The JavaScript surface of the browser playground. It holds one embedded Kahuna node per page and
-/// runs Kahuna scripts against it.
+/// The JavaScript surface of the browser playground. It holds one in-tab Kahuna cluster per page
+/// (see <see cref="ClusterSession"/>) and runs Kahuna scripts on its servers.
 ///
-/// <para>The node is the real engine: the same script parser, transaction coordinator, Raft log and
-/// key/value actors the server runs, on the thread-free browser build of Kahuna.Core. Storage and
-/// WAL are in memory, so a reload starts empty.</para>
+/// <para>Every server is the real engine: the same script parser, transaction coordinator, Raft log,
+/// placement rebalancer and key/value actors the server runs, on the thread-free browser build of
+/// Kahuna.Core. Storage and WAL are in memory, so a reload starts empty.</para>
 ///
 /// <para>Calls are serialized through one gate. The runtime has one thread, so they cannot run in
 /// parallel, but without the gate a second call issued before the first one resolves would
@@ -31,75 +28,118 @@ public static partial class PlaygroundEngine
 {
     private static readonly SemaphoreSlim gate = new(1, 1);
 
-    private static EmbeddedKahunaNode? node;
-
-    /// <summary>Starts the node. A second call returns once the first node is up.</summary>
-    [JSExport]
-    public static async Task InitAsync()
-    {
-        await gate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            node ??= await StartNodeAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
-
-    /// <summary>Discards every key by disposing the node and starting a new one.</summary>
-    [JSExport]
-    public static async Task ResetAsync()
-    {
-        await gate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            if (node is not null)
-                await node.DisposeAsync().ConfigureAwait(false);
-
-            node = null;
-            node = await StartNodeAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
+    private static ClusterSession? cluster;
 
     /// <summary>
-    /// Runs <paramref name="script"/> as one transaction script and returns its outcome as JSON:
-    /// <c>{"ok","type","reason"?,"values":[{"key","value","revision","expires","lastModified"}],"ms"}</c>.
-    /// <c>value</c> is the UTF-8 text of the stored bytes, or null. <c>expires</c> and
-    /// <c>lastModified</c> are Unix milliseconds, or 0 when not set.
+    /// Starts a cluster of <paramref name="nodeCount"/> servers, replacing any running one, and
+    /// returns its status (see <see cref="ClusterStatusAsync"/>). It takes several seconds: every
+    /// server elects partition leaders with production-like Raft timings on one event loop.
+    /// </summary>
+    [JSExport]
+    public static Task<string> StartClusterAsync(int nodeCount) => Gated(async () =>
+    {
+        if (cluster is not null)
+            await cluster.DisposeAsync().ConfigureAwait(false);
+
+        cluster = null;
+        cluster = await ClusterSession.StartAsync(nodeCount).ConfigureAwait(false);
+
+        return await cluster.StatusJsonAsync().ConfigureAwait(false);
+    });
+
+    /// <summary>Stops every server of the cluster. Doing it twice is not an error.</summary>
+    [JSExport]
+    public static Task StopClusterAsync() => Gated(async () =>
+    {
+        if (cluster is not null)
+            await cluster.DisposeAsync().ConfigureAwait(false);
+
+        cluster = null;
+        return "";
+    });
+
+    /// <summary>
+    /// The state of the cluster as JSON:
+    /// <c>{"replicationFactor","minNodes","maxNodes","membershipVersion","members":[…],
+    /// "partitions":[{"id","state","generation","replicas":[{"index","role"}]}],
+    /// "nodes":[{"index","name","endpoint","running","role","hosts":[…],"leads":[…]}]}</c>.
+    /// </summary>
+    [JSExport]
+    public static Task<string> ClusterStatusAsync() => Gated(() => RequireCluster().StatusJsonAsync());
+
+    /// <summary>Stops one server as if its host had crashed, including when fewer than a majority remain.</summary>
+    [JSExport]
+    public static Task<string> StopNodeAsync(int nodeIndex) => Gated(async () =>
+    {
+        ClusterSession running = RequireCluster();
+        await running.StopNodeAsync(nodeIndex).ConfigureAwait(false);
+        return await running.StatusJsonAsync().ConfigureAwait(false);
+    });
+
+    /// <summary>Starts a stopped server again. It comes back empty and catches up from the others.</summary>
+    [JSExport]
+    public static Task<string> StartNodeAsync(int nodeIndex) => Gated(async () =>
+    {
+        ClusterSession running = RequireCluster();
+        await running.StartNodeAsync(nodeIndex).ConfigureAwait(false);
+        return await running.StatusJsonAsync().ConfigureAwait(false);
+    });
+
+    /// <summary>Adds one voter. The placement rebalancer then moves replicas to it.</summary>
+    [JSExport]
+    public static Task<string> AddClusterNodeAsync() => Gated(async () =>
+    {
+        ClusterSession running = RequireCluster();
+        await running.AddNodeAsync().ConfigureAwait(false);
+        return await running.StatusJsonAsync().ConfigureAwait(false);
+    });
+
+    /// <summary>Drains the last server, removes it from the roster, and stops it.</summary>
+    [JSExport]
+    public static Task<string> RemoveClusterNodeAsync() => Gated(async () =>
+    {
+        ClusterSession running = RequireCluster();
+        await running.RemoveNodeAsync().ConfigureAwait(false);
+        return await running.StatusJsonAsync().ConfigureAwait(false);
+    });
+
+    /// <summary>
+    /// Runs <paramref name="script"/> as one transaction script on server <paramref name="nodeIndex"/>
+    /// and returns its outcome as JSON:
+    /// <c>{"ok","type","reason"?,"values":[{"key","partition","value","revision","expires","lastModified"}],"ms"}</c>.
+    /// <c>value</c> is the UTF-8 text of the stored bytes, or null. <c>partition</c> is the partition
+    /// that holds the key, or -1. <c>expires</c> and <c>lastModified</c> are Unix milliseconds, or 0.
     ///
     /// <para><paramref name="parametersJson"/> is an optional JSON object that maps placeholder names
     /// (with or without the leading <c>@</c>) to values, for example <c>{"@limit":"10"}</c>.</para>
     /// </summary>
     [JSExport]
-    public static async Task<string> ExecuteAsync(string script, string? parametersJson)
+    public static Task<string> ExecuteOnNodeAsync(int nodeIndex, string script, string? parametersJson) => Gated(async () =>
+    {
+        ClusterSession running = RequireCluster();
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        KeyValueTransactionResult result;
+
+        try
+        {
+            result = await running.ExecuteAsync(nodeIndex, script, ParseParameters(parametersJson)).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            result = new() { Type = KeyValueResponseType.Errored, Reason = ex.Message };
+        }
+
+        stopwatch.Stop();
+
+        return WriteOutcome(running, result, stopwatch.Elapsed.TotalMilliseconds);
+    });
+
+    private static async Task<string> Gated(Func<Task<string>> work)
     {
         await gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            node ??= await StartNodeAsync().ConfigureAwait(false);
-
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            KeyValueTransactionResult result;
-
-            try
-            {
-                List<KeyValueParameter>? parameters = ParseParameters(parametersJson);
-                result = await node.Kahuna.TryExecuteTransactionScript(Encoding.UTF8.GetBytes(script), null, parameters).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                result = new() { Type = KeyValueResponseType.Errored, Reason = ex.Message };
-            }
-
-            stopwatch.Stop();
-
-            return WriteOutcome(result, stopwatch.Elapsed.TotalMilliseconds);
+            return await work().ConfigureAwait(false);
         }
         finally
         {
@@ -107,85 +147,8 @@ public static partial class PlaygroundEngine
         }
     }
 
-    /// <summary>
-    /// Lists every live key of the store, persistent and ephemeral, as JSON:
-    /// <c>[{"key","value","revision","expires","lastModified","durability"}]</c>, sorted by key.
-    /// The page shows it next to the results, so a visitor sees what a script changed.
-    /// </summary>
-    [JSExport]
-    public static async Task<string> KeysAsync()
-    {
-        await gate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            node ??= await StartNodeAsync().ConfigureAwait(false);
-
-            List<(string Key, ReadOnlyKeyValueEntry Entry, string Durability)> items = [];
-
-            foreach ((KeyValueDurability durability, string label) in new[] { (KeyValueDurability.Persistent, "persistent"), (KeyValueDurability.Ephemeral, "ephemeral") })
-            {
-                KeyValueGetByBucketResult scan = await node.Kahuna.ScanAllByPrefix("", HLCTimestamp.Zero, durability, CancellationToken.None).ConfigureAwait(false);
-
-                foreach ((string key, ReadOnlyKeyValueEntry entry) in scan.Items)
-                    items.Add((key, entry, label));
-            }
-
-            items.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
-
-            ArrayBufferWriter<byte> buffer = new();
-            using (Utf8JsonWriter writer = new(buffer))
-            {
-                writer.WriteStartArray();
-
-                foreach ((string key, ReadOnlyKeyValueEntry entry, string durability) in items)
-                {
-                    writer.WriteStartObject();
-                    writer.WriteString("key", key);
-                    WriteValue(writer, entry.Value);
-                    writer.WriteNumber("revision", entry.Revision);
-                    writer.WriteNumber("expires", entry.Expires.L);
-                    writer.WriteNumber("lastModified", entry.LastModified.L);
-                    writer.WriteString("durability", durability);
-                    writer.WriteEndObject();
-                }
-
-                writer.WriteEndArray();
-            }
-
-            return Encoding.UTF8.GetString(buffer.WrittenSpan);
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
-
-    private static async Task<EmbeddedKahunaNode> StartNodeAsync()
-    {
-        // Single-node timings: a lone node wins its own election uncontested, so a short election
-        // timeout is safe and keeps the first load and every reset well under a second. Kommander
-        // requires the heartbeat and the leader check to stay at most a fifth of the election timeout.
-        EmbeddedKahunaNode started = new(new()
-        {
-            NodeName = "kahuna-playground",
-            Storage = "memory",
-            WalStorage = "memory",
-            InitialPartitions = 1,
-            HeartbeatInterval = TimeSpan.FromMilliseconds(20),
-            RecentHeartbeat = TimeSpan.FromMilliseconds(10),
-            VotingTimeout = TimeSpan.FromMilliseconds(300),
-            CheckLeaderInterval = TimeSpan.FromMilliseconds(25),
-            UpdateNodesInterval = TimeSpan.FromMilliseconds(250),
-            TimerInitialDelay = TimeSpan.FromMilliseconds(25),
-            StartElectionTimeout = 150,
-            EndElectionTimeout = 300,
-        }, NullLoggerFactory.Instance);
-
-        await started.StartAsync(CancellationToken.None).ConfigureAwait(false);
-        await started.WaitForLeaderForKeyAsync("playground", CancellationToken.None).ConfigureAwait(false);
-
-        return started;
-    }
+    private static ClusterSession RequireCluster()
+        => cluster ?? throw new InvalidOperationException("No cluster is running. Call StartClusterAsync first.");
 
     private static List<KeyValueParameter>? ParseParameters(string? parametersJson)
     {
@@ -214,7 +177,7 @@ public static partial class PlaygroundEngine
         return parameters.Count == 0 ? null : parameters;
     }
 
-    private static string WriteOutcome(KeyValueTransactionResult result, double ms)
+    private static string WriteOutcome(ClusterSession running, KeyValueTransactionResult result, double ms)
     {
         ArrayBufferWriter<byte> buffer = new();
         using (Utf8JsonWriter writer = new(buffer))
@@ -235,9 +198,15 @@ public static partial class PlaygroundEngine
                     writer.WriteStartObject();
 
                     if (value.Key is null)
+                    {
                         writer.WriteNull("key");
+                        writer.WriteNumber("partition", -1);
+                    }
                     else
+                    {
                         writer.WriteString("key", value.Key);
+                        writer.WriteNumber("partition", running.PartitionOf(value.Key));
+                    }
 
                     WriteValue(writer, value.Value);
                     writer.WriteNumber("revision", value.Revision);

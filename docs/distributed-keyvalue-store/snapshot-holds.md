@@ -1,10 +1,10 @@
 # Snapshot Holds
 
-Historical reads with `AS OF <timestamp>` work only while Kahuna still keeps the old [revisions](/docs/glossary/#revision) they need, and cleanup removes old revisions over time. A snapshot hold keeps the history at a chosen timestamp readable for as long as you renew it, while the cluster continues accepting writes.
+Historical reads with `AS OF <timestamp>` need old [revisions](/docs/glossary/#revision) that cleanup would otherwise remove. A snapshot hold protects the history still available at a chosen timestamp while the cluster continues accepting writes. Acquire it before relying on that history; it cannot restore revisions already lost or omitted during a transfer.
 
 Use holds for long-lived historical views such as database branches, audit sessions, or tools that need to keep reading "as of timestamp T" for longer than normal revision cleanup might retain that history.
 
-## Why Holds Exist
+## What a Hold Protects
 
 Kahuna supports historical reads with `AS OF <timestamp>` and the `snapshotMs` parameter in the .NET and TypeScript clients. Those reads return the newest revision whose commit timestamp is at or before the requested time.
 
@@ -167,6 +167,22 @@ Snapshot holds default to a maximum requested lease of one day, 4096 registratio
 
 Configure `--snapshot-hold-max-lease-ms`, `--snapshot-hold-max-per-holder`, and `--snapshot-hold-max-total`, or the corresponding [embedded options](/docs/embedded-kahuna-node/#client-request-limits). `0` removes the respective bound.
 
+## History Across Replica and Range Moves
+
+When a replica receives a whole-partition snapshot, or a split or merge moves keys to another partition, Kahuna carries the revisions needed at registered hold timestamps, including expired holds not yet purged. It also carries a recent continuous history window. It records which timestamps the transferred history can answer:
+
+- Each carried hold protects its **exact timestamp**, not every timestamp between holds.
+- Reads at or after the transfer's recorded **complete-from timestamp** have continuous coverage. Whole-partition exports normally start this window five seconds before export begins, subject to the source's own coverage limit.
+- Other older timestamps return `MustRetry`, rather than a value or missing-key result based on incomplete history. This applies to point reads and scans, including keys whose current value happens to predate the requested timestamp.
+
+A move records coverage in the replicated range descriptor; all replicas enforce it. A merge applies one coverage bound to the entire merged range, including keys that did not move. Whole-partition installation instead records a local, restart-persistent bound, so a replica with fuller history may answer a timestamp that an installed replica refuses.
+
+Only holds the source can answer are carried. Registering an old hold after history has disappeared, or too late for the final move capture, cannot recover that history. Releasing a hold allows later cleanup; it does not promise indefinite retention of a transferred pin.
+
+Do not retry a refused historical timestamp forever: the missing history may remain unavailable on that replica or range. Where your application permits it, restart the read or transaction at a fresh timestamp. For a long-lived view that requires the original timestamp, treat persistent refusal as an unavailable view and investigate its hold registration and transfer history.
+
+On upgrade, a recorded whole-partition install without coverage metadata is conservatively fenced at startup time. Installing a snapshot from an older exporter without that metadata also refuses older reads. See [snapshot recovery](/docs/snapshot-and-raft-recovery/) and [fixed-timestamp read semantics](/docs/distributed-keyvalue-store/read-and-lock-semantics/#fixed-timestamp-reads).
+
 ## Operational Notes
 
 - Renew well before the lease expires. If the holder stops renewing, the hold becomes purge-eligible. Protection ends when replicated removal commits; do not depend on a delay between expiry and purge.
@@ -185,14 +201,17 @@ Snapshot holds publish metrics under the `Kahuna` meter:
 | `kahuna.snapshot_floor.live_holds` | Number of live, non-expired holds. |
 | `kahuna.snapshot_floor.effective_floor_ms` | Physical millisecond component of the effective floor, or `0` when no hold is live. |
 | `kahuna.snapshot_floor.prune_skipped_unconfirmed_total` | Prune cycles skipped because local partition 0 catch-up could not be confirmed. |
+| `kahuna.snapshot_floor.prune_confirm_timed_out_total` | Catch-up confirmations exceeding the prune-confirm timeout; also counted as skipped prune cycles. Persistent increases indicate missing partition 0 catch-up. |
 | `kahuna.snapshot_floor.missing_protected_version_total` | Fault counter that should remain `0`; it increments if cleanup ever tries to remove a floor-protected revision. |
+| `kahuna.kv.snapshot_installed_history_refused_total` | Historical reads refused because a whole-partition install did not carry the requested timestamp. |
+| `kahuna.kv.snapshot_range_history_refused_total` | Historical reads refused by a moved range's recorded history coverage. |
 
 Alert if `kahuna.snapshot_floor.missing_protected_version_total` becomes non-zero. Use live hold count and effective floor age to understand how much history clients are pinning.
 
 ## Acquire and Prune Races
 
-In short: acquire the hold before you depend on the history. A hold protects history that still exists; it never brings back revisions that cleanup already removed. If an acquire overlaps a cleanup pass, Kahuna can return `MustRetry`; retry with the same `(holderId, timestamp)`. A small cross-node race window remains, and a hold does not make an arbitrary timestamp safe to read.
+Acquire the hold before you depend on the history. A hold protects history that still exists; it never brings back revisions that cleanup already removed. If an acquire overlaps a cleanup pass, Kahuna can return `MustRetry`; retry with the same `(holderId, timestamp)`. A small cross-node race window remains, and a hold does not make an arbitrary timestamp safe to read.
 
-Acquire/renew/release replication uses keyed deltas; the full local snapshot and partition 0 transfer still scale with registered hold count. Destructive pruning first confirms local application of partition 0; failure skips that prune cycle. A local prune-generation guard detects acquire overlapping a deletion pass and returns `MustRetry`, even if the hold was replicated. Retry the same `(holderId, timestamp)`.
+Acquire/renew/release replication uses keyed deltas; the full local snapshot and partition 0 transfer still scale with registered hold count. Destructive pruning first confirms local application of partition 0; failure skips that prune cycle and retains queued cleanup keys. Confirmation waits at most `RevisionPruneConfirmTimeout` (default 1 second). After a timeout, `RevisionPruneConfirmRetryInterval` (default 5 seconds) delays another attempt; an immediate failure retries next cycle. This bounds how long cleanup can stall the background writer. A local prune-generation guard detects acquire overlapping a deletion pass and returns `MustRetry`, even if the hold was replicated. Retry the same `(holderId, timestamp)`.
 
 This guard does not recreate history already deleted. Catch-up confirmation followed by sampling the protective floor is not a cluster-wide atomic acquire/prune barrier; a residual cross-node window remains. Holds protect retention, not an arbitrary timestamp's clock safety or cluster-wide snapshot consistency. See [historical read semantics](/docs/distributed-keyvalue-store/read-and-lock-semantics/#fixed-timestamp-reads).

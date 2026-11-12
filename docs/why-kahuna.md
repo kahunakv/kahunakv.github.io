@@ -1,8 +1,8 @@
-# Why Kahuna?
+# What Kahuna Solves
 
-Many teams build locks, counters, and shared state on Redis or Postgres and assume the edge cases are already covered. These tools work well on the happy path, but a server failure, a timeout, or a resize exposes the gaps. A lock can end up with two owners after a failover. A retried increment can give one order two numbers. Teams then write their own glue code to fill these gaps, and the cases they miss stay hidden until a production incident.
+Locks, counters, and shared state built on Redis or Postgres work until a server fails, a request times out, or the cluster resizes. Then a lock can have two owners after a failover, and a retried increment can give one order two numbers. Teams patch these gaps with their own glue code, and the cases they miss surface in production.
 
-Kahuna goes beyond the happy path. It handles these edge cases on the server, so you do not have to find them and patch them in every application. It is built for systems where downtime is not an option and consistency is critical, such as fintech, healthcare, airline reservations, hospitality, online games and many more. 
+Kahuna handles these cases on the server, so each application does not have to. It targets systems that must stay consistent and online, such as fintech, healthcare, reservations, and online games.
 
 It gives you three building blocks in one self-hosted cluster that [stays online](#built-to-stay-online) through node failures, upgrades, and scaling:
 
@@ -14,9 +14,7 @@ It gives you three building blocks in one self-hosted cluster that [stays online
 
 Use Kahuna when several application instances must agree on **state**, **ownership**, or **ordering**, especially when a wrong answer is worse than a temporary error. For the full story, read [Couldn't You Just Use Redis and Postgres?](/blog/redis-postgres-and-kahuna/).
 
-## Why Single-Server Patterns Break
-
-Commands such as `GET`, `SET`, expiration, and increment look sufficient until a server fails, a request times out, or the network splits.
+## Where Single-Server Patterns Break
 
 ### Shared State Needs an Authority
 
@@ -104,7 +102,7 @@ All three building blocks share the same replication, persistence, and clients, 
 
 ## Built to Stay Online
 
-Kahuna is built for systems that run 24/7:
+A Kahuna cluster keeps serving through failures and maintenance:
 
 - **No single point of failure:** a partition keeps serving while a minority of its replicas is down. See [Raft Consensus](/docs/architecture/raft/).
 - **Rolling upgrades:** the [Kubernetes operator](/docs/kubernetes-operator/) replaces one node at a time.

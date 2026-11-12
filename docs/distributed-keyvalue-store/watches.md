@@ -101,11 +101,21 @@ For a cache, register a new watch and then refresh all state it covers. Register
 
 Consumers that must process every change need progress watermarks and retained history. A `Progress` frame gives a timestamp for one partition: no event at or below that timestamp will arrive later on that partition. Store the latest watermark **for each partition** after your consumer has committed its own progress. Resume from those watermarks, never from the timestamp of the last event; events between progress frames can arrive out of timestamp order.
 
-Progress frames and resume require `--commit-admission-lag-ms` to be positive and equal on every node. The default is `0`, which supports live watches but sends no progress watermarks. With the window enabled, a prepare or write whose timestamp falls outside the admitted window is refused retryably. A larger lag window accommodates slower commits but keeps watermarks further behind. See [Server Configuration](/docs/server-configuration/#keyvalue-watch-and-history).
+Progress frames and resume require `--commit-admission-lag-ms` to be positive and equal on every node. The default is `0`, which supports live watches but sends no progress watermarks. With the window enabled, a prepare or write whose timestamp falls outside the admitted window is refused retryably. Direct writes that first load the key from the backend mint their commit timestamp after that read, so cold-read latency does not consume their admission window. A larger lag window accommodates slower commits but keeps watermarks further behind. See [Server Configuration](/docs/server-configuration/#keyvalue-watch-and-history).
 
 The .NET client can try automatic resume with `WatchKeyValues(request, autoResume: true)`; TypeScript uses `client.watchKeyValues(request, { autoResume: true })`. They reopen interrupted node streams from their latest progress watermarks when they have one for every partition in that stream. Replayed events can repeat. Range-map changes, watermark violations, refusals, and `HistoryUnavailable` still end the watch.
 
 The log needed for replay can be compacted. A history hold pins a partition's log from a timestamp on its replicas for a leased period. The watch does not acquire holds automatically; consumers must acquire, renew, advance, and release them. A hold improves the chance of replay, but cannot restore history already lost. On `HistoryUnavailable`, rebuild from a fresh snapshot before continuing. The [source guide](https://github.com/kahunakv/kahuna/blob/main/docs/keyvalue-watch-streams-guide.md) walks through the snapshot and history hold workflow.
+
+## Buffer and Connection Limits
+
+A watch can overflow its own frame capacity or byte limit, or be ended because aggregate node buffering is too large. The per-watch byte default is 64 MiB; `--watch-max-buffered-bytes-per-node` defaults to **1 GiB** across all watches (`0` is unbounded). When a frame would exceed the node budget, the broker ends the watch currently buffering the most with `Lagged(Overflow)`, which may be a different watch from the one receiving that frame. Replay buffers and frames waiting behind pending intents count too. These are buffer accounting limits, not total process heap limits.
+
+Keep the aggregate budget above `--max-value-bytes`. `kahuna.kv.watch.node_budget_overflows_total` counts these terminations; they also appear in `kahuna.kv.watch.streams_lagged_total`. Refresh or resume through the usual [watch recovery flow](#when-a-watch-ends); increasing one watch's capacity does not bypass the node budget.
+
+REST watches write an SSE keep-alive comment after 15 idle seconds by default (`--watch-sse-keepalive-seconds`; `0` disables it). SSE clients ignore the comment. A failed keep-alive write closes the request and unregisters its watch; this helps detect disconnected idle clients, without guaranteeing an exact disconnect deadline.
+
+`--max-concurrent-connections` defaults to 16,384 across the server's Kestrel listeners. Excess connections close immediately; `0` removes the cap. Peer connections count when Raft uses those listeners, so leave capacity for peers to reconnect. A connection can carry several watches; this limit is separate from watch-count limits. See [Server Configuration](/docs/server-configuration/#keyvalue-watch-and-history) for all watch limits.
 
 ## Interfaces
 

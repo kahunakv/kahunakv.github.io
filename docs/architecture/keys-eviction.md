@@ -2,13 +2,11 @@
 
 Kahuna serves hot keys from memory, but memory is limited. Eviction is how each node keeps its memory use bounded: it first removes expired and deleted entries, and if that is not enough, it drops the least recently used entries.
 
-What this means for you:
-
 - **Persistent keys are safe.** Eviction drops only the in-memory copy. The next read loads the value from disk, which is slower but returns the same data.
 - **Ephemeral keys can disappear.** Their only copy is in memory, so an evicted ephemeral key is gone, even before its expiration time. Use [ephemeral durability](/docs/architecture/durability-levels/) only for data you can rebuild, such as caches and counters.
 - **The budget is configurable.** If a node uses too much memory, or evicts hot data too often, see [Configuration Surface](#configuration-surface).
 
-Most deployments do not need to change anything. The rest of this page describes the algorithm.
+Most deployments keep the defaults.
 
 Kahuna keeps key/value state in memory inside each `KeyValueActor`, an [actor](/docs/glossary/#actor) that owns a group of keys. Persistent keys also have durable storage behind them, but the in-memory copy avoids disk reads for hot data. Ephemeral keys live only in memory, so eviction of an ephemeral key removes the value from the node.
 
@@ -101,7 +99,7 @@ Eviction is not the only way Kahuna reduces memory. Revision and transaction met
 - If an MVCC snapshot hold is active, trimming also keeps the boundary revision at or before the protective registered-hold floor.
 - When a transaction commits, rolls back, or releases a lock, its MVCC snapshot is removed and expired sibling snapshots are cleaned up.
 
-This matters for hot keys. A hot key may never be selected by LRU, but its revision or transaction metadata can still grow. Inline trimming lets Kahuna reduce memory without scanning the entire store or evicting the current value. Snapshot holds protect a boundary revision in memory; unflushed revisions can add more. Persistent history keeps the boundary and all newer revisions until the protective floor advances.
+A hot key may never be selected by LRU, but its revision or transaction metadata can still grow. Inline trimming lets Kahuna reduce memory without scanning the entire store or evicting the current value. Snapshot holds protect a boundary revision in memory; unflushed revisions can add more. Persistent history keeps the boundary and all newer revisions until the protective floor advances.
 
 | Setting | Meaning | Default |
 |---------|---------|---------|
@@ -128,6 +126,8 @@ Destructive revision cleanup confirms local system-partition application before 
 ### Idle RocksDB Revision Sweeps
 
 After a complete clean sweep, RocksDB can skip later backend-wide revision-pruning cycles while no relevant state has changed. New writes, retention settings, snapshot-floor changes, or reaching the next age-expiry frontier reopen sweep work. `kahuna.persistence.revision_prune.sweep_idle_total` counts skipped idle cycles. Quiescence avoids repeated scans; it does not disable configured retention or remove snapshot-hold protection.
+
+If a pass deleted rows and exhausted its budget, an idle writer immediately runs another pass; queued writes take priority. Deletes use shared unsynced batches, so a crash can leave history to reclaim again. Ending a sweep flushes the memtable, and delete-heavy tables become candidates for background compaction. Filesystem space is reclaimed asynchronously. See [deleted-key history cleanup](/docs/storage/overview/#reclaiming-deleted-key-history) for age retention, hold protection, and the current deletion record that remains.
 
 ## Persistent vs Ephemeral Keys
 

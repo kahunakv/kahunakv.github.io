@@ -28,7 +28,7 @@ For a persistent mutation:
 
 [Request Flow](/docs/internals/request-flow/) shows this path as a sequence diagram, from the receiving node through [quorum](/docs/glossary/#quorum) commit to background persistence.
 
-This is why a local actor accepting a request is not enough. The committed Raft log is the source of truth for ordering and durability.
+Acceptance by the leader actor alone does not make a mutation durable. The committed Raft log is the source of truth for ordering and durability.
 
 ## Log Types
 
@@ -69,6 +69,10 @@ The gRPC batchers can coalesce independent server-to-server envelopes onto one s
 
 Forwarded key/value and lock requests include a hop count. If leadership or placement metadata is briefly inconsistent, the hop budget turns a potential forwarding loop into `MustRetry`, letting the client retry after the cluster view converges.
 
+After a shared inter-node stream fails, reopening backs off per peer from 100 ms, doubling to a maximum of 2 seconds. Requests arriving during backoff receive their operation's retryable unavailable response; the batcher does not open a stream for each request. A successful write resets backoff. Logs report the failure episode at Warning, summarize ongoing failures at most every 10 seconds, and report recovery at Information. The `Kahuna` meter exposes `kahuna.internode.stream_opens_total`, `kahuna.internode.stream_failures_total`, and `kahuna.internode.requests_refused_by_backoff_total`, tagged by `peer`.
+
+Grouped commit probes also tolerate a stale leader hint: a follower resolves the actual leaders for keys it cannot answer and forwards one grouped probe per leader. This avoids repeatedly probing the same follower; it does not remove retryable outcomes while leadership is unavailable.
+
 With [replica placement](/docs/replica-placement/), the receiving node may also be a non-host for the target partition. It still accepts the client request, resolves the partition's hosting replicas, and forwards to a node that can serve the partition. Hosting changes can race with requests, so callers may see retryable responses while a partition is moving.
 
 ## Replica Placement
@@ -108,7 +112,7 @@ These details explain how the placement controller converges. The operator proce
 
 ### Legacy Full-Replication Conversion
 
-Kahuna, pinned to Kommander 1.12.3, can convert legacy full-replication partitions when a positive effective replication factor and the placement rebalancer are enabled. Each eligible active partition with an empty replica set first receives an explicit set of **all committed roster voters**. This preserves its existing quorum; it does not immediately replace that quorum with an arbitrary factor-sized subset. Normal placement trims then remove surplus replicas one step at a time toward the target. Conversion is bounded by `MaxReplicaMovesPerPass` (`--raft-max-replica-moves-per-pass`), and a failed map commit is retried on a later pass.
+Kahuna, pinned to Kommander 1.13.3, can convert legacy full-replication partitions when a positive effective replication factor and the placement rebalancer are enabled. Each eligible active partition with an empty replica set first receives an explicit set of **all committed roster voters**. This preserves its existing quorum; it does not immediately replace that quorum with an arbitrary factor-sized subset. Normal placement trims then remove surplus replicas one step at a time toward the target. Conversion is bounded by `MaxReplicaMovesPerPass` (`--raft-max-replica-moves-per-pass`), and a failed map commit is retried on a later pass.
 
 With rebalancing disabled the partitions stay fully replicated and a warning explains why conversion has not begun. Full replication with an effective factor of zero remains an intentional mode, not pending migration.
 
@@ -150,7 +154,7 @@ For durable transaction decisions, the node that becomes leader for the anchor p
 
 ### Leadership Transfer
 
-A leadership transfer, such as one suggested by the [leader balancer](/docs/leader-balancing/), is best-effort. Winning an election is not enough for the target to serve: it must drain committed log entries and pass the leadership barrier, and a contained or incomplete target can relinquish immediately. Kommander (since 1.9.7; Kahuna pins 1.12.3) reads the WAL on each promotion-drain attempt, so a readable entry is not held up solely by its completion callback being queued behind promotion. Entries that remain unreadable still prevent promotion.
+A leadership transfer, such as one suggested by the [leader balancer](/docs/leader-balancing/), is best-effort. Winning an election is not enough for the target to serve: it must drain committed log entries and pass the leadership barrier, and a contained or incomplete target can relinquish immediately. Kommander (since 1.9.7; Kahuna pins 1.13.3) reads the WAL on each promotion-drain attempt, so a readable entry is not held up solely by its completion callback being queued behind promotion. Entries that remain unreadable still prevent promotion.
 
 ## Apply Fingerprints
 

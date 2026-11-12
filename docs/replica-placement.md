@@ -4,7 +4,7 @@ Kahuna splits keys into [partitions](/docs/glossary/#partition). A **replica** i
 
 A replication factor lets you add nodes for capacity without adding a copy of every partition to each new node. The trade-off is that fault tolerance is counted per partition: with replication factor `3`, each partition tolerates one replica failure, whatever the node count.
 
-## Why It Matters
+## Scaling Past Full Replication
 
 Full replication has a hard scaling ceiling: every node stores every partition, every persistent write is copied to every voter for that partition, and adding nodes can increase coordination cost instead of increasing usable storage.
 
@@ -19,9 +19,9 @@ flowchart LR
     P3[Partition 3] --> N4 & N5 & N1
 ```
 
-This differs from etcd and ZooKeeper, where every member stores a full copy of the data. Kahuna still provides strongly consistent partitions, but the cluster does not have to make every node a replica of every partition.
+In etcd and ZooKeeper, every member stores a full copy of the data. In Kahuna, each partition stays strongly consistent on its own replicas only.
 
-It does not give unlimited scale by itself. Hot keys, partition count, network bandwidth, storage throughput, and transaction shape still matter. Replication factor gives Kahuna the horizontal scaling model needed to grow past the limits of full replication.
+Replication factor alone does not give unlimited scale: hot keys, partition count, network bandwidth, storage throughput, and transaction shape still set limits.
 
 ## When to Use It
 
@@ -211,3 +211,9 @@ A learner below retained history receives a whole-partition snapshot. Size the s
 ## Kubernetes
 
 For Kubernetes deployment and traffic-driven node counts, use the [Kubernetes Operator](/docs/kubernetes-operator/). It combines placement with roster-gated changes. The server performs eligible legacy conversion; the operator can hold growth while that placement remains pending. Automatic PITR seeding of new pods remains a separate workflow.
+
+## Dead-Member Eviction
+
+`--raft-dead-member-eviction-grace` now defaults to **600,000 ms (10 minutes)**, matching Kommander. It begins after the failure detector marks a member `Dead`; it is separate from ping and suspicion timeouts. Embedded hosts use nullable `RaftDeadMemberEvictionGrace`, which keeps the same default unless set.
+
+Size this grace for outages the roster should tolerate intact. An evicted node rejoins as a learner and must catch up before voting again. In a three-voter cluster, removing a temporarily paused node can leave only two voters during its rejoin; another pause can then stop quorum progress. Clusters with spare nodes can instead repair placed replicas elsewhere. The system-partition leader warns once per minute while evicted members leave the roster short; use that signal alongside catch-up and placement status.

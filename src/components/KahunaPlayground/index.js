@@ -1,9 +1,10 @@
+// The Kahuna Script console of the playground: example scripts, a highlighted editor, parameters
+// and result cards. The cluster playground (src/components/ClusterPlayground) gives it a function
+// that runs a script on the selected server.
 import clsx from 'clsx';
 import {useEffect, useMemo, useRef, useState} from 'react';
 import Link from '@docusaurus/Link';
-import useBaseUrl from '@docusaurus/useBaseUrl';
-import {examples, parseParameters, seedScript} from './examples.mjs';
-import {loadEngine} from './runtime';
+import {examples, parseParameters} from './examples.mjs';
 import styles from './styles.module.css';
 
 // Keep these lists in sync with the Prism grammar in src/theme/prism-include-languages.js.
@@ -121,19 +122,41 @@ function formatMs(value) {
   return value < 10 ? value.toFixed(1) : Math.round(value);
 }
 
-function formatExpires(expires, now) {
-  if (!expires) return '—';
-  const seconds = Math.round((expires - now) / 1000);
-  if (seconds <= 0) return 'expired';
-  return seconds < 120 ? `in ${seconds} s` : `in ${Math.round(seconds / 60)} min`;
+function formatRemaining(ms) {
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds < 120) return `in ${seconds} s`;
+  if (seconds < 7200) return `in ${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2, '0')} s`;
+  return `in ${Math.round(seconds / 3600)} h`;
 }
 
-function Status({state, text}) {
+// The current time, updated every second while `active` is true.
+function useNow(active) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
+// Counts down to a key's expiration. The bar shows the share of the lease that is left, from the
+// last write to the expiration.
+function ExpiresCell({expires, lastModified, now}) {
+  if (!expires) return <td className={styles.nullValue}>never</td>;
+  const left = expires - now;
+  const at = new Date(expires).toLocaleTimeString();
+  if (left <= 0) {
+    return <td className={styles.expired} title={`Expired at ${at}`}>expired</td>;
+  }
+  const total = lastModified && expires > lastModified ? expires - lastModified : left;
+  const share = Math.max(0, Math.min(1, left / total));
   return (
-    <div className={styles.status} data-state={state} role="status" aria-live="polite">
-      <span className={styles.statusDot} aria-hidden="true" />
-      <span>{text}</span>
-    </div>
+    <td className={styles.expires} title={`Expires at ${at}`}>
+      <span>{formatRemaining(left)}</span>
+      <span className={styles.leaseBar} aria-hidden="true"><span style={{width: `${share * 100}%`}} /></span>
+    </td>
   );
 }
 
@@ -143,7 +166,25 @@ function ValueCell({value}) {
   return <td className={styles.valueCell}>{value}</td>;
 }
 
-function ValuesTable({values, now}) {
+function PartitionCell({partition, describePartition}) {
+  if (partition === undefined || partition < 0) return <td className={styles.nullValue}>—</td>;
+  return (
+    <td>
+      <span className={styles.partitionChip}>P{partition}</span>
+      {describePartition && <span className={styles.partitionLeader}>{describePartition(partition)}</span>}
+    </td>
+  );
+}
+
+function ValuesTable({values, describePartition}) {
+  // Tick only while some key still has time left; the countdown stops once every key expired.
+  const latest = Math.max(0, ...values.map((value) => value.expires || 0));
+  const [ticking, setTicking] = useState(latest > Date.now());
+  const now = useNow(ticking);
+  useEffect(() => {
+    setTicking(latest > now);
+  }, [latest, now]);
+
   return (
     <div className={styles.tableWrap}>
       <table>
@@ -152,6 +193,7 @@ function ValuesTable({values, now}) {
             <th>Key</th>
             <th>Value</th>
             <th className={styles.num}>Revision</th>
+            <th>Partition</th>
             <th>Expires</th>
           </tr>
         </thead>
@@ -161,7 +203,8 @@ function ValuesTable({values, now}) {
               <td className={styles.keyCell}>{value.key ?? '—'}</td>
               <ValueCell value={value.value} />
               <td className={styles.num}>{value.revision >= 0 ? value.revision : '—'}</td>
-              <td>{formatExpires(value.expires, now)}</td>
+              <PartitionCell partition={value.partition} describePartition={describePartition} />
+              <ExpiresCell expires={value.expires} lastModified={value.lastModified} now={now} />
             </tr>
           ))}
         </tbody>
@@ -170,16 +213,34 @@ function ValuesTable({values, now}) {
   );
 }
 
-function ResultCard({run}) {
+function ResultCard({run, describePartition}) {
   const {outcome} = run;
   const values = outcome.values ?? [];
   const returned = values.length === 1 && values[0].key === null;
+  // A read of a missing key answers with the key, no value and no revision.
+  const missing = outcome.type === 'DoesNotExist';
   // A write answers with the key and its new revision, but no value.
-  const writes = outcome.type !== 'Get' && values.length > 0 && values.every((value) => value.value === null);
+  const writes = !missing && outcome.type !== 'Get' && values.length > 0 && values.every((value) => value.value === null);
 
   let body;
   if (!outcome.ok) {
     body = <p className={styles.errorText}>{outcome.reason ?? 'The script failed.'}</p>;
+  } else if (missing) {
+    const key = values.find((value) => value.key !== null);
+    body = (
+      <div className={styles.missing}>
+        <p>
+          {key ? <><span className={styles.keyCell}>{key.key}</span> does not exist.</> : 'The key does not exist.'}{' '}
+          It was never written, it was deleted, or its expiration passed.
+        </p>
+        {key?.partition >= 0 && (
+          <p className={styles.missingWhere}>
+            <span className={styles.partitionChip}>P{key.partition}</span>
+            {describePartition && <span>{describePartition(key.partition)}</span>}
+          </p>
+        )}
+      </div>
+    );
   } else if (returned) {
     body = (
       <p className={styles.returnValue}>
@@ -193,13 +254,16 @@ function ResultCard({run}) {
         {values.map((value, index) => (
           <li key={`${value.key}-${index}`}>
             <span className={styles.keyCell}>{value.key ?? '—'}</span>
+            {value.partition >= 0 && (
+              <span className={styles.partitionChip} title={describePartition?.(value.partition)}>P{value.partition}</span>
+            )}
             {value.revision >= 0 && <span>revision {value.revision}</span>}
           </li>
         ))}
       </ul>
     );
   } else if (values.length) {
-    body = <ValuesTable values={values} now={run.at} />;
+    body = <ValuesTable values={values} describePartition={describePartition} />;
   } else {
     body = <p className={styles.empty}>No values returned.</p>;
   }
@@ -215,140 +279,58 @@ function ResultCard({run}) {
         </span>
       </header>
       {body}
+      {run.servedBy && <p className={styles.servedBy}>Sent to <strong>{run.servedBy}</strong></p>}
     </article>
   );
 }
 
-function StoreTable({keys, now}) {
-  if (!keys.length) return <p className={styles.empty}>The store is empty.</p>;
-  return (
-    <div className={styles.tableWrap}>
-      <table>
-        <thead>
-          <tr>
-            <th>Key</th>
-            <th>Value</th>
-            <th className={styles.num}>Revision</th>
-            <th>Expires</th>
-          </tr>
-        </thead>
-        <tbody>
-          {keys.map((entry) => (
-            <tr key={`${entry.durability}-${entry.key}`}>
-              <td className={styles.keyCell}>
-                {entry.key}
-                {entry.durability === 'ephemeral' && <span className={styles.ephemeral}>ephemeral</span>}
-              </td>
-              <ValueCell value={entry.value} />
-              <td className={styles.num}>{entry.revision}</td>
-              <td>{formatExpires(entry.expires, now)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-export default function KahunaPlayground() {
-  const dotnetUrl = useBaseUrl('/playground-engine/_framework/dotnet.js');
-  const [engine, setEngine] = useState(null);
-  const [busy, setBusy] = useState(true);
-  const [status, setStatus] = useState({state: 'loading', text: 'Loading the engine...'});
+/**
+ * The script console.
+ *
+ * - `onRun(script, parametersJson)` runs one script and resolves to `{outcome, servedBy}`.
+ * - `ready` is false while the engine starts; `busy` is true while any operation runs.
+ * - `blocked` is a message that explains why the target cannot run scripts, or null.
+ * - `target` names the server the next run goes to. `toolbar` holds extra controls.
+ * - `describePartition(id)` returns a short text about a partition, such as its leader.
+ */
+export function ScriptConsole({onRun, ready, busy, blocked, target, toolbar, describePartition, loadingText}) {
   const [example, setExample] = useState(examples[0]);
   const [script, setScript] = useState(examples[0].script);
   const [parameters, setParameters] = useState(examples[0].parameters ?? '');
   const [lastRun, setLastRun] = useState(null);
-  const [keys, setKeys] = useState([]);
-  const [tab, setTab] = useState('output');
+  const [error, setError] = useState('');
   const [runKey, setRunKey] = useState('Ctrl Enter');
   const [hasSelection, setHasSelection] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const textareaRef = useRef(null);
   const highlightRef = useRef(null);
   const lineNumbersRef = useRef(null);
 
-  // Expiration times count down while a key with a TTL is in the store.
   useEffect(() => {
-    if (!keys.some((entry) => entry.expires)) return undefined;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [keys]);
+    if (/Mac|iPhone|iPad/.test(navigator.platform)) setRunKey('⌘ Enter');
+  }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function start() {
-      try {
-        if (/Mac|iPhone|iPad/.test(navigator.platform)) setRunKey('⌘ Enter');
-
-        const playground = await loadEngine(dotnetUrl, (loaded, total) => {
-          if (!cancelled) setStatus({state: 'loading', text: `Downloading the engine... ${loaded}/${total}`});
-        });
-        if (cancelled) return;
-
-        setStatus({state: 'loading', text: 'Electing a leader...'});
-        await playground.InitAsync();
-        await playground.ResetAsync();
-        await seed(playground);
-
-        if (!cancelled) {
-          setKeys(JSON.parse(await playground.KeysAsync()));
-          setNow(Date.now());
-          setEngine(playground);
-          setBusy(false);
-          setStatus({state: 'ready', text: 'Ready'});
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setBusy(false);
-          setStatus({state: 'error', text: `The engine could not start: ${error.message}`});
-        }
-      }
-    }
-
-    start();
-    return () => {
-      cancelled = true;
-    };
-  }, [dotnetUrl]);
-
-  async function seed(playground) {
-    const outcome = JSON.parse(await playground.ExecuteAsync(seedScript.trim(), null));
-    if (!outcome.ok) throw new Error(`the sample data did not load (${outcome.type}: ${outcome.reason})`);
-  }
-
-  async function refreshKeys() {
-    setKeys(JSON.parse(await engine.KeysAsync()));
-    setNow(Date.now());
-  }
+  const canRun = ready && !busy && !blocked;
 
   async function run(source = script) {
     const code = source.trim();
-    if (!engine || busy || !code) return;
+    if (!canRun || !code) return;
 
-    setBusy(true);
-    setStatus({state: 'loading', text: 'Running...'});
+    let parametersJson = null;
     try {
-      let parametersJson = null;
-      try {
-        const parsed = parseParameters(parameters);
-        if (Object.keys(parsed).length) parametersJson = JSON.stringify(parsed);
-      } catch (error) {
-        setStatus({state: 'error', text: error.message});
-        return;
-      }
+      const parsed = parseParameters(parameters);
+      if (Object.keys(parsed).length) parametersJson = JSON.stringify(parsed);
+    } catch (parseError) {
+      setError(parseError.message);
+      return;
+    }
 
-      const outcome = JSON.parse(await engine.ExecuteAsync(code, parametersJson));
+    setError('');
+    try {
+      const result = await onRun(code, parametersJson);
       // Each run replaces the previous result, so the panel always shows the script just run.
-      setLastRun({script: code, outcome, at: Date.now()});
-      setTab('output');
-      await refreshKeys();
-      setStatus(outcome.ok ? {state: 'ready', text: 'Ready'} : {state: 'error', text: `The script failed: ${outcome.type}`});
-    } catch (error) {
-      setStatus({state: 'error', text: `Engine error: ${error.message}`});
-    } finally {
-      setBusy(false);
+      if (result) setLastRun({script: code, outcome: result.outcome, servedBy: result.servedBy, at: Date.now()});
+    } catch (runError) {
+      setError(`Engine error: ${runError.message}`);
     }
   }
 
@@ -356,24 +338,6 @@ export default function KahunaPlayground() {
     const target = textareaRef.current;
     if (!target) return '';
     return script.slice(target.selectionStart, target.selectionEnd).trim();
-  }
-
-  async function reset() {
-    if (!engine || busy) return;
-
-    setBusy(true);
-    setStatus({state: 'loading', text: 'Resetting...'});
-    try {
-      await engine.ResetAsync();
-      await seed(engine);
-      await refreshKeys();
-      setLastRun(null);
-      setStatus({state: 'ready', text: 'Ready'});
-    } catch (error) {
-      setStatus({state: 'error', text: `Reset failed: ${error.message}`});
-    } finally {
-      setBusy(false);
-    }
   }
 
   function chooseExample(next) {
@@ -398,20 +362,7 @@ export default function KahunaPlayground() {
   }
 
   return (
-    <section className={styles.playground}>
-      <div className={styles.header}>
-        <div>
-          <p className={styles.eyebrow}>Kahuna Script · WebAssembly</p>
-          <h1>Kahuna playground</h1>
-          <p>
-            Run Kahuna scripts against a real Kahuna node in this browser tab: the script parser,
-            the transaction coordinator, the Raft log and the key/value store. Nothing goes to a
-            server.
-          </p>
-        </div>
-        <Status state={status.state} text={status.text} />
-      </div>
-
+    <div className={styles.playground}>
       <div className={styles.shell}>
         <div className={styles.editorPane}>
           <div className={styles.exampleBar} aria-label="Example scripts">
@@ -480,67 +431,46 @@ export default function KahunaPlayground() {
               className={styles.primaryButton}
               type="button"
               onClick={() => run()}
-              disabled={!engine || busy || !script.trim()}>
-              Run <kbd>{runKey}</kbd>
+              disabled={!canRun || !script.trim()}>
+              {target ? `Run on ${target}` : 'Run'} <kbd>{runKey}</kbd>
             </button>
             <button
               type="button"
               onClick={() => run(selectedScript())}
-              disabled={!engine || busy || !hasSelection}>
+              disabled={!canRun || !hasSelection}>
               Run selected <kbd>Shift {runKey}</kbd>
             </button>
-            <button type="button" onClick={reset} disabled={!engine || busy}>
-              Reset data
-            </button>
-            <Link className={styles.docsLink} to="/docs/scripts">
+            {toolbar}
+            <Link className={styles.docsLink} to="/docs/scripts/">
               Script reference
             </Link>
           </div>
+          {(blocked || error) && <p className={styles.consoleNotice} role="status">{error || blocked}</p>}
         </div>
 
         <div className={styles.resultsPane}>
-          <div className={styles.tabs} role="tablist" aria-label="Results">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === 'output'}
-              onClick={() => setTab('output')}>
-              Output
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === 'store'}
-              onClick={() => setTab('store')}>
-              Store <span>{keys.length}</span>
-            </button>
-            {tab === 'output' && lastRun && (
+          <div className={styles.tabs} aria-label="Results">
+            <span className={styles.tabTitle}>Output</span>
+            {lastRun && (
               <button type="button" className={styles.clearButton} onClick={() => setLastRun(null)}>
                 Clear output
               </button>
             )}
           </div>
 
-          <div className={styles.tabPanel} role="tabpanel">
-            {tab === 'store' ? (
-              <StoreTable keys={keys} now={now} />
-            ) : lastRun ? (
-              <ResultCard run={lastRun} />
+          <div className={styles.tabPanel} role="region" aria-label="Script output" aria-live="polite">
+            {lastRun ? (
+              <ResultCard run={lastRun} describePartition={describePartition} />
             ) : (
               <p className={styles.empty}>
-                {engine
+                {ready
                   ? 'Run a script to see its result here. Each run is one transaction.'
-                  : 'The engine is loading. The first visit downloads the WebAssembly runtime.'}
+                  : loadingText ?? 'The engine is loading. The first visit downloads the WebAssembly runtime.'}
               </p>
             )}
           </div>
         </div>
       </div>
-
-      <p className={styles.note}>
-        A single in-memory Kahuna node compiled to WebAssembly. The data stays in this tab, and a
-        reload starts again from the sample data.
-      </p>
-    </section>
+    </div>
   );
 }

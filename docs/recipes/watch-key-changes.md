@@ -109,7 +109,7 @@ async function watchFlag(client: KahunaClient, signal: AbortSignal): Promise<voi
 
 Replace the log statement with an update to your application's local configuration. The loop registers a new watch and refreshes after a terminal frame, including buffer overflow, disconnection, or a partition move. Add retry and backoff around the watch opening call for transient failures in a long-running service.
 
-## Why Refresh After Reopening?
+## Reopen Before You Refresh
 
 A terminal frame means the stream may have missed changes. The loop opens another watch before re-reading the flag, so changes during that read are queued for the new watch. Re-reading after every event also handles duplicate deliveries. This pattern keeps a local copy current; a consumer that must process every mutation needs resume cursors and retained history.
 

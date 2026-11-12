@@ -155,7 +155,13 @@ kahuna-server \
 
 `--pitr-backup-dir` enables the backup APIs; Kahuna creates the directory when needed. Use the same shared directory on every production node (see [Coordinator and Catalog Placement](#coordinator-and-catalog-placement)). The cluster ID and MAC key protect manifests (see [Confidentiality and Authenticity](#confidentiality-and-authenticity)), and the restore root confines remote restores (see [Restore Target Safety](#restore-target-safety)).
 
-The built-in backup target is `local`. The backup storage layer also supports host-registered targets for object storage or other artifact stores, but those providers live outside the default server package. When using a non-local target, configure `--pitr-backup-target` to the provider name and set `--pitr-backup-scratch-dir` if the target needs a local checkpoint staging area. Size the scratch directory for one whole full backup.
+### Backup Targets
+
+The built-in target is `local`. To use an external artifact store, load an extension implementing `IBackupStorageProvider` with `--extension-assembly`, then select its case-sensitive target name with `--pitr-backup-target`. Object-storage providers ship separately; choosing a name alone does not install one. Deploy the same provider bundle and settings on every participating node.
+
+Keep `--pitr-backup-dir` set even for a remote target: it enables backup APIs and provides local host state, while the provider determines where manifests and artifacts live. Supply provider settings through `--extension-option key=value`. When the provider requires scratch storage, `--pitr-backup-scratch-dir` is mandatory; size it for one full backup. Backup and scratch directories must not be symlinks or group/world writable; Kahuna creates scratch storage with owner-only permissions.
+
+Kahuna opens and starts the selected target before joining the cluster. Unknown names, missing scratch storage, invalid settings, or a failed target connection stop startup instead of deferring failure to the first backup. PITR bootstrap uses the same provider to read the chain before opening the backend. See [implementing and loading backup providers](/docs/storage/custom-storage-engines/#backup-storage-providers).
 
 <Tabs groupId="client-examples">
 <TabItem value="cli" label="CLI">
