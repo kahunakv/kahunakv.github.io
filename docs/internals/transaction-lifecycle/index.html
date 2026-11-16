@@ -12,7 +12,7 @@
 <link rel="search" type="application/opensearchdescription+xml" title="Kahuna" href="/opensearch.xml">
 
 <meta name="algolia-site-verification" content="CCAE52A1C7A7537A"><link rel="stylesheet" href="/assets/css/styles.46b30dae.css">
-<script src="/assets/js/runtime~main.6277b1fb.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.d40668e7.js" defer="defer"></script>
 <script src="/assets/js/main.7467e1b2.js" defer="defer"></script>
 </head>
 <body>
@@ -47,7 +47,7 @@
 <p>Both shapes converge on the same coordinator machinery. A script builds the working set while the script executor runs statements on the server. An interactive session builds the working set across several client round trips.</p>
 <p>A bare multi-statement script is treated as one auto-commit transaction. A single-command script can be optimized into the direct command path and does not need the full transaction coordinator.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="entry-and-routing">Entry and Routing<a href="#entry-and-routing" class="hash-link" aria-label="Direct link to Entry and Routing" title="Direct link to Entry and Routing" translate="no">​</a></h2>
-<p>Routing answers two questions: which partition owns the key, and which node currently leads that partition? The request then reaches the local worker that owns the key&#x27;s mutable state. In code, the path is:</p>
+<p>Routing finds the partition that owns the key and the node that currently leads that partition. The request then reaches the local worker that owns the key&#x27;s mutable state. In code, the path is:</p>
 <div class="language-text codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#393A34;--prism-background-color:#f6f8fa"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-text codeBlock_bY9V thin-scrollbar" style="color:#393A34;background-color:#f6f8fa"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#393A34"><span class="token plain">REST / gRPC / embedded</span><br></div><div class="token-line" style="color:#393A34"><span class="token plain">  -&gt; IKahuna</span><br></div><div class="token-line" style="color:#393A34"><span class="token plain">  -&gt; KahunaManager</span><br></div><div class="token-line" style="color:#393A34"><span class="token plain">  -&gt; KeyValuesManager</span><br></div><div class="token-line" style="color:#393A34"><span class="token plain">  -&gt; partition routing</span><br></div><div class="token-line" style="color:#393A34"><span class="token plain">  -&gt; actor routing</span><br></div></code></pre></div></div>
 <p><code>KeyValuesManager</code> first resolves the key space and data partition. The partition leader is the only node allowed to commit durable state for that partition. If the receiving node is not the leader, the request is forwarded over inter-node communication.</p>
 <p>After leader routing, a consistent-hash actor router selects the local <code>KeyValueActor</code> shard that owns the key, bucket, or range state. Actors process one message at a time, so the mutable entry, lock, proposal, and MVCC maps do not need broad shared locking.</p>
