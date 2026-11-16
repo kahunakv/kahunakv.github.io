@@ -12,7 +12,7 @@
 <link rel="search" type="application/opensearchdescription+xml" title="Kahuna" href="/opensearch.xml">
 
 <meta name="algolia-site-verification" content="CCAE52A1C7A7537A"><link rel="stylesheet" href="/assets/css/styles.46b30dae.css">
-<script src="/assets/js/runtime~main.d40668e7.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.7b862ec4.js" defer="defer"></script>
 <script src="/assets/js/main.7467e1b2.js" defer="defer"></script>
 </head>
 <body>
@@ -27,7 +27,7 @@
 <li class=""><strong>One consistent read of the whole group.</strong> <code>get by bucket &quot;services&quot;</code> returns every key in the bucket from one partition in one operation, instead of several separate reads that can each see a different moment.</li>
 <li class=""><strong>Local multi-key transactions.</strong> A transaction that only touches keys in one bucket stays on one partition instead of spanning several.</li>
 </ul>
-<p>You get buckets automatically from how you name keys; there is nothing to configure. If you know Redis Cluster, a bucket plays the role of a hash tag such as <code>{services}</code>, except that Kahuna takes it from the key name itself. Buckets fit small, related sets such as service discovery entries, a tenant&#x27;s settings, or a group of feature flags. For large or growing key spaces, see <a class="" href="/docs/distributed-keyvalue-store/key-range-sharding/#choosing-between-buckets-and-key-ranges">Choosing Between Buckets and Key Ranges</a>.</p>
+<p>You get buckets automatically from how you name keys, without any configuration. If you know Redis Cluster, a bucket plays the role of a hash tag such as <code>{services}</code>, except that Kahuna takes it from the key name itself. Buckets fit small, related sets such as service discovery entries, a tenant&#x27;s settings, or a group of feature flags. For large or growing key spaces, see <a class="" href="/docs/distributed-keyvalue-store/key-range-sharding/#choosing-between-buckets-and-key-ranges">Choosing Between Buckets and Key Ranges</a>.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-a-bucket-means">What a Bucket Means<a href="#what-a-bucket-means" class="hash-link" aria-label="Direct link to What a Bucket Means" title="Direct link to What a Bucket Means" translate="no">​</a></h2>
 <p>For keys shaped like <code>bucket/item</code>, the <strong>bucket</strong> is the part before the last <code>/</code>.</p>
 <p>Examples:</p>

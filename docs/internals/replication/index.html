@@ -12,7 +12,7 @@
 <link rel="search" type="application/opensearchdescription+xml" title="Kahuna" href="/opensearch.xml">
 
 <meta name="algolia-site-verification" content="CCAE52A1C7A7537A"><link rel="stylesheet" href="/assets/css/styles.46b30dae.css">
-<script src="/assets/js/runtime~main.d40668e7.js" defer="defer"></script>
+<script src="/assets/js/runtime~main.7b862ec4.js" defer="defer"></script>
 <script src="/assets/js/main.7467e1b2.js" defer="defer"></script>
 </head>
 <body>
@@ -61,6 +61,7 @@
 <p>Clients may contact any node. If the receiving node is not the leader for a resource&#x27;s partition, Kahuna forwards the operation through <code>IInterNodeCommunication</code>.</p>
 <p>The production implementation uses gRPC and shared batchers. This lets Kahuna combine related inter-node requests and reduce per-operation network overhead.</p>
 <p>The gRPC batchers can coalesce independent server-to-server envelopes onto one stream message while keeping each inner request&#x27;s own ID, type, hop count, and response. Order-sensitive maintenance and placement operations are serialized per stream so a later maintenance request cannot overtake an earlier one from the same peer.</p>
+<p>Forwarded durable operations, bundles, one-phase bundles, decisions, and transaction-record lookups start on arrival rather than waiting on that ordered lane. They can reach the partition write aggregator together; its admission controls backpressure. Transaction identities, term and range fences, apply-time duplicate handling, and the coordinator&#x27;s awaited dependencies govern their ordering. Placement operations still use the lane. <code>kahuna.internode.ordered_lane_wait_ms</code> measures the remaining ordered placement work, without durable-request tags.</p>
 <p>Forwarded key/value and lock requests include a hop count. If leadership or placement metadata is briefly inconsistent, the hop budget turns a potential forwarding loop into <code>MustRetry</code>, letting the client retry after the cluster view converges.</p>
 <p>After a shared inter-node stream fails, reopening backs off per peer from 100 ms, doubling to a maximum of 2 seconds. Requests arriving during backoff receive their operation&#x27;s retryable unavailable response; the batcher does not open a stream for each request. A successful write resets backoff. Logs report the failure episode at Warning, summarize ongoing failures at most every 10 seconds, and report recovery at Information. The <code>Kahuna</code> meter exposes <code>kahuna.internode.stream_opens_total</code>, <code>kahuna.internode.stream_failures_total</code>, and <code>kahuna.internode.requests_refused_by_backoff_total</code>, tagged by <code>peer</code>.</p>
 <p>Grouped commit probes also tolerate a stale leader hint: a follower resolves the actual leaders for keys it cannot answer and forwards one grouped probe per leader. This avoids repeatedly probing the same follower; it does not remove retryable outcomes while leadership is unavailable.</p>
